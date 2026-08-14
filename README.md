@@ -82,6 +82,21 @@ uv sync
 | `read_memory` | Reads 32-bit words | Fails loudly if nothing was read |
 | `core_registers` | Reads the core registers. Halts the core | This is the ground truth when there is no console |
 | `capture_console` | Captures serial output | |
+| `release_probe` | Frees a held GDB server | |
+
+### Why the GDB server is kept alive
+
+`run_firmware` starts a GDB server and **holds it** rather than tearing it down.
+That is not laziness. On the STM32N6, once firmware has run the debug access port
+cannot be re-acquired: a new connection fails and no reset clears it, only removing
+power. An already established connection keeps working indefinitely, including
+repeated load-and-run cycles. Holding the server is therefore the difference
+between one power cycle per session and one per run.
+
+The cost is that the server owns the probe, so `read_memory`, `core_registers` and
+`flash_firmware` cannot reach it until you call `release_probe`. On a part with
+this behaviour, releasing means a power cycle before firmware can run again, so it
+is never done implicitly and the tools say so instead of failing obscurely.
 
 `run_firmware` is the one to use while developing. It is faster than programming
 flash, and an image placed straight into RAM by a debugger bypasses the boot ROM,

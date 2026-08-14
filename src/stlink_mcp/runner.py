@@ -56,11 +56,10 @@ class RunResult:
 
 
 class GdbServer:
-    """A GDB server for one load-and-run, torn down afterwards.
+    """A GDB server process.
 
-    Not left running between operations on purpose: it holds the probe, which
-    then blocks every other tool with a connect error that does not mention the
-    real cause.
+    Prefer `acquire_server()` over constructing this directly: on some parts the
+    server must be kept alive across runs, and that policy lives there.
     """
 
     def __init__(self, toolchain: Toolchain, access_port: int, port: int = 61234) -> None:
@@ -115,6 +114,59 @@ class GdbServer:
                 self._proc.kill()
                 self._proc.wait(timeout=5)
         self._proc = None
+
+
+# ---------------------------------------------------------------------------
+# Server lifetime
+#
+# The server is kept alive across runs, deliberately, and this is the single most
+# useful thing measured about the STM32N6.
+#
+# Once firmware has run, the debug access port cannot be RE-acquired: a fresh
+# connect fails with "Cannot connect to access port 1", and neither a software
+# nor a hardware reset clears it. Only removing power does. But an already
+# established server connection keeps working indefinitely: two consecutive
+# load-and-run cycles through one server both restart cleanly, where tearing the
+# server down in between needs a power cycle. So holding the server turns a power
+# cycle per run into a power cycle per session.
+#
+# The cost is real and is surfaced rather than hidden: the server holds the probe,
+# so the STM32_Programmer_CLI-based tools cannot run while it is held, and
+# releasing it to use them forfeits the ability to run firmware again until the
+# board is power cycled. Callers are told that instead of getting a bare
+# "Device connect error".
+# ---------------------------------------------------------------------------
+
+_session: GdbServer | None = None
+
+
+def acquire_server(toolchain: Toolchain, access_port: int, port: int = 61234) -> GdbServer:
+    """The live server, starting one if needed. Reused across calls."""
+    global _session
+    if _session is not None:
+        return _session
+    server = GdbServer(toolchain, access_port, port)
+    server.__enter__()
+    _session = server
+    return server
+
+
+def server_is_held() -> bool:
+    return _session is not None
+
+
+def release_server() -> bool:
+    """Shut the server down. Returns whether one was actually held.
+
+    On parts where the access port cannot be re-acquired this is a one-way door
+    until the board is power cycled, so it is never done implicitly.
+    """
+    global _session
+    if _session is None:
+        return False
+    _session.__exit__()
+    _session = None
+    return True
 
 
 _GDB_SCRIPT = """\

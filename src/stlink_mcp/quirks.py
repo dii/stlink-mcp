@@ -59,12 +59,16 @@ class FamilyQuirks:
     """
 
     debug_closes_on_run: bool = False
-    """Whether running firmware closes the debug access port until power is removed.
+    """Whether the debug access port cannot be RE-acquired once firmware has run.
 
-    True on parts where the firmware brings up TrustZone: the access port stops
-    answering as soon as the image runs, and a reset does not reopen it. Without
-    this flag the second run of the day fails with an error about the access
-    port and looks like a regression in the tool.
+    The precise behaviour matters, and a first reading of it was too pessimistic.
+    A *new* connection fails once firmware has started, and no reset clears it;
+    only removing power does. But an *already established* GDB server connection
+    keeps working indefinitely, including repeated load-and-run cycles.
+
+    So this flag does not mean "one run per power cycle". It means the server must
+    be kept alive rather than torn down between runs, which is what
+    runner.acquire_server does.
     """
 
     notes: str = ""
@@ -90,10 +94,15 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "the port is right. The debug port is only open in DEV boot mode "
             "(BOOT1 high); in the standalone boot configuration a connect fails "
             "with 'Unable to get core ID', which is expected and not a fault. "
-            "Running a TrustZone-enabling FSBL closes AP1 as soon as the image "
-            "starts, and a reset does not reopen it: only removing power does. "
-            "That is measured, not inferred, and it means the edit-run loop needs "
-            "a power cycle between runs. Verified on NUCLEO-N657X0-Q (MB1940C)."
+            "Once firmware has run, AP1 cannot be re-acquired: a new connect fails "
+            "with 'Cannot connect to access port 1' and no reset clears it, only "
+            "removing power. An already established GDB server connection, however, "
+            "keeps working indefinitely across repeated load-and-run cycles, so the "
+            "server is held rather than torn down and the cost is one power cycle "
+            "per session, not per run. Measured, including a negative result: it is "
+            "NOT caused by the SAU configuration in ST's FSBL SystemInit, since "
+            "removing those writes changes nothing (that code never enables the SAU "
+            "in the first place). Verified on NUCLEO-N657X0-Q (MB1940C)."
         ),
     ),
 }

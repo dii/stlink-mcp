@@ -21,14 +21,32 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import console as console_mod
-from .probe import Probe, explain_connect_failure
-from .runner import GdbServer, RunError, load_and_run
+from .probe import Probe, TargetInfo, explain_connect_failure
+from .runner import (
+    RunError,
+    acquire_server,
+    load_and_run,
+    release_server,
+    server_is_held,
+)
 from .toolchain import ToolchainError, find_toolchain
 
 mcp = MCPServer("stlink-mcp")
 
 _GDB_PORT = int(os.environ.get("STLINK_MCP_GDB_PORT", "61234"))
 _CONSOLE_BAUD = int(os.environ.get("STLINK_MCP_CONSOLE_BAUD", "115200"))
+
+# Cached while a GDB server is held. Re-identifying would mean running
+# STM32_Programmer_CLI, which cannot reach the probe while the server has it.
+_held: tuple[Probe, TargetInfo] | None = None
+
+_HELD_MESSAGE = (
+    "A GDB server is currently holding the probe, so this tool cannot reach it. "
+    "That is deliberate: on some parts the debug access port cannot be "
+    "re-acquired once firmware has run, so the server is kept alive to allow "
+    "repeated runs. Call release_probe() to free it, but note that on those parts "
+    "the board then needs a power cycle before firmware can be run again."
+)
 
 
 def _probe() -> Probe:
@@ -44,12 +62,17 @@ def board_state() -> dict[str, Any]:
     Tries each debug access port, because a wrong access port and an absent
     target produce the same error message from the vendor tools.
     """
-    try:
-        probe = _probe()
-    except ToolchainError as exc:
-        return {"ok": False, "error": str(exc)}
+    if _held is not None:
+        # Reuse what was learned when the server was acquired; the programmer CLI
+        # cannot reach the probe while the server holds it.
+        probe, info = _held
+    else:
+        try:
+            probe = _probe()
+        except ToolchainError as exc:
+            return {"ok": False, "error": str(exc)}
+        info = probe.identify()
 
-    info = probe.identify()
     quirks = info.quirks
     port = console_mod.find_console_port()
 
@@ -87,6 +110,7 @@ def board_state() -> dict[str, Any]:
         state["ok"] = False
         state["warning"] = probe.degraded_reason
 
+    state["gdb_server_held"] = server_is_held()
     return state
 
 
@@ -102,19 +126,29 @@ def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
     Needs a family with a known RAM load address. It does not sign anything: an
     image placed directly in RAM by a debugger bypasses the boot ROM.
     """
-    try:
-        probe = _probe()
-    except ToolchainError as exc:
-        return {"ok": False, "error": str(exc)}
+    global _held
 
-    info = probe.identify()
-    if not info.connected:
-        return {
-            "ok": False,
-            "error": "No target",
-            "errors": info.errors,
-            "hint": explain_connect_failure(info),
-        }
+    if _held is not None:
+        # A server is already up. Reuse the identification made when it was
+        # acquired: re-running the programmer CLI now would fail, because the
+        # server has the probe.
+        probe, info = _held
+    else:
+        try:
+            probe = _probe()
+        except ToolchainError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        info = probe.identify()
+        if not info.connected:
+            return {
+                "ok": False,
+                "error": "No target",
+                "errors": info.errors,
+                "hint": explain_connect_failure(info),
+            }
+        if probe.degraded_reason:
+            return {"ok": False, "error": probe.degraded_reason}
 
     quirks = info.quirks
     if quirks.vector_table_addr is None:
@@ -130,20 +164,23 @@ def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
     port = console_mod.find_console_port()
 
     try:
+        # Acquired, not scoped: the server stays alive so the next run does not
+        # need to re-acquire an access port that firmware has already closed.
+        acquire_server(probe.toolchain, probe.access_port, _GDB_PORT)
+        _held = (probe, info)
+
         if port:
             with console_mod.ConsoleCapture(port, _CONSOLE_BAUD) as cap:
-                with GdbServer(probe.toolchain, probe.access_port, _GDB_PORT):
-                    sp, pc, size, output = load_and_run(
-                        probe.toolchain, elf, quirks.vector_table_addr,
-                        probe.access_port, _GDB_PORT,
-                    )
-                text = cap.collect(console_seconds)
-        else:
-            with GdbServer(probe.toolchain, probe.access_port, _GDB_PORT):
                 sp, pc, size, output = load_and_run(
                     probe.toolchain, elf, quirks.vector_table_addr,
                     probe.access_port, _GDB_PORT,
                 )
+                text = cap.collect(console_seconds)
+        else:
+            sp, pc, size, output = load_and_run(
+                probe.toolchain, elf, quirks.vector_table_addr,
+                probe.access_port, _GDB_PORT,
+            )
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError) as exc:
         return {"ok": False, "error": str(exc)}
@@ -160,10 +197,12 @@ def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
 
     if quirks.debug_closes_on_run:
         result["next_run_note"] = (
-            f"On {quirks.name}, running firmware closes the debug access port and "
-            "a reset does not reopen it. Power cycle the board (unplug and replug "
-            "USB) before the next run, or the next call will report the access "
-            "port as unreachable."
+            f"On {quirks.name}, firmware closes the debug access port as it starts, "
+            "and no reset reopens it. The GDB server is therefore being HELD so "
+            "further run_firmware calls keep working without a power cycle. The "
+            "trade is that read_memory, core_registers and flash_firmware cannot "
+            "reach the probe until release_probe() is called, and releasing it "
+            "means a power cycle before firmware can run again."
         )
 
     if not port:
@@ -194,6 +233,8 @@ def flash_firmware(image_path: str, address: int | None = None) -> dict[str, Any
     signed. This tool does not sign it, because signing needs keys and options
     that belong to the project rather than to the programmer.
     """
+    if server_is_held():
+        return {"ok": False, "error": _HELD_MESSAGE}
     try:
         probe = _probe()
     except ToolchainError as exc:
@@ -232,8 +273,33 @@ def flash_firmware(image_path: str, address: int | None = None) -> dict[str, Any
 
 
 @mcp.tool()
+def release_probe() -> dict[str, Any]:
+    """Shut down the held GDB server and free the probe.
+
+    Needed before read_memory, core_registers or flash_firmware can be used after
+    a run. On parts where the debug access port cannot be re-acquired once
+    firmware has run, this is a one-way door: the board will need a power cycle
+    before firmware can be run again. Never done implicitly for that reason.
+    """
+    global _held
+    was_held = release_server()
+    quirks = _held[1].quirks if _held else None
+    _held = None
+
+    result: dict[str, Any] = {"ok": True, "released": was_held}
+    if was_held and quirks is not None and quirks.debug_closes_on_run:
+        result["warning"] = (
+            f"On {quirks.name} the debug access port cannot be re-acquired now that "
+            "firmware has run. Power cycle the board before the next run_firmware."
+        )
+    return result
+
+
+@mcp.tool()
 def read_memory(address: int, length_bytes: int = 32) -> dict[str, Any]:
     """Read target memory as 32-bit words. Does not halt the core."""
+    if server_is_held():
+        return {"ok": False, "error": _HELD_MESSAGE}
     try:
         probe = _probe()
         probe.identify()
@@ -255,6 +321,8 @@ def core_registers() -> dict[str, Any]:
     that settles "did it actually start" when there is no console. Perturbing, so
     it is never used inside the routine checks.
     """
+    if server_is_held():
+        return {"ok": False, "error": _HELD_MESSAGE}
     try:
         probe = _probe()
         probe.identify()
