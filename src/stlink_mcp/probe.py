@@ -121,9 +121,18 @@ def explain_connect_failure(info: TargetInfo) -> str:
 class Probe:
     """A thin, verified wrapper over STM32_Programmer_CLI."""
 
-    def __init__(self, toolchain: Toolchain, access_port: int | None = None) -> None:
+    def __init__(
+        self,
+        toolchain: Toolchain,
+        access_port: int | None = None,
+        serial: str | None = None,
+    ) -> None:
         self.toolchain = toolchain
         self._access_port = access_port
+        self.serial = serial
+        """Which probe to talk to. Required once more than one is attached, since
+        the tools silently pick the first otherwise, and "the first" is not
+        stable across replugs."""
         self.degraded_reason: str | None = None
         """Set when the access port in use is not the one the family wants.
 
@@ -133,13 +142,16 @@ class Probe:
         """
 
     def _connect_args(self, access_port: int) -> list[str]:
-        return [
+        argv = [
             str(self.toolchain.programmer),
             "-c",
             "port=SWD",
             "mode=HOTPLUG",
             f"ap={access_port}",
         ]
+        if self.serial:
+            argv.append(f"sn={self.serial}")
+        return argv
 
     def identify(self) -> TargetInfo:
         """Identify the target and settle on the right debug access port.
@@ -240,3 +252,90 @@ class Probe:
         if "File download complete" not in result.stdout:
             raise ProbeError(f"Programming failed:\n{result.stdout.strip()}")
         return result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Probe enumeration
+#
+# `STM32_Programmer_CLI -l` prints the same serial number in two unrelated
+# sections: a "Connected ST-LINK Probes List" with firmware and access-port
+# count, and a "UART Interface" listing of every serial port on the machine,
+# where each probe's virtual COM port is annotated with its serial. A naive
+# scan for "ST-LINK SN" therefore reports twice as many probes as exist. The
+# first version of this parser did exactly that and claimed 4 probes for 2
+# boards.
+#
+# The UART section is worth parsing rather than skipping, because it is the only
+# place that says WHICH /dev/ttyACM* belongs to which board. With two boards
+# attached, picking the first ttyACM* would verify a run against the wrong
+# board's console around half the time, and that failure would look like the
+# firmware working.
+# ---------------------------------------------------------------------------
+
+_SECTION = re.compile(r"^=+\s*(.+?)\s*=+\s*$", re.M)
+_PROBE_ENTRY = re.compile(r"^ST-Link Probe\s+\d+\s*:", re.M)
+
+
+@dataclass(frozen=True)
+class ProbeInfo:
+    serial: str
+    firmware: str | None = None
+    board: str | None = None
+    console_port: str | None = None
+
+
+def _section(output: str, name_fragment: str) -> str:
+    """The body of a '===== X =====' section, up to the next section header."""
+    for match in _SECTION.finditer(output):
+        if name_fragment.lower() in match.group(1).lower():
+            nxt = _SECTION.search(output, match.end())
+            return output[match.end():nxt.start() if nxt else len(output)]
+    return ""
+
+
+def _console_ports(output: str) -> dict[str, str]:
+    """Map probe serial to serial-port path, from the UART section."""
+    uart = _section(output, "UART")
+    mapping: dict[str, str] = {}
+    # Each virtual COM entry reads: ST-LINK SN: <sn> / Port: .. / Location: <path>
+    for match in re.finditer(
+        r"ST-LINK SN:\s*(\S+).*?^Location:\s*(\S+)", uart, re.M | re.S
+    ):
+        mapping[match.group(1)] = match.group(2)
+    return mapping
+
+
+def parse_probe_list(output: str) -> list[ProbeInfo]:
+    """One entry per physically attached probe."""
+    stlink = _section(output, "STLink")
+    consoles = _console_ports(output)
+
+    entries: list[ProbeInfo] = []
+    positions = [m.start() for m in _PROBE_ENTRY.finditer(stlink)]
+
+    for index, begin in enumerate(positions):
+        end = positions[index + 1] if index + 1 < len(positions) else len(stlink)
+        block = stlink[begin:end]
+
+        sn = re.search(r"ST-LINK SN\s*:\s*(\S+)", block)
+        if not sn:
+            continue
+        serial = sn.group(1)
+
+        def field(pattern: str) -> str | None:
+            found = re.search(pattern, block, re.M)
+            return found.group(1).strip() if found else None
+
+        entries.append(ProbeInfo(
+            serial=serial,
+            firmware=field(r"ST-LINK FW\s*:\s*(\S+)"),
+            board=field(r"Board Name\s*:\s*(.+?)\s*$"),
+            console_port=consoles.get(serial),
+        ))
+
+    return entries
+
+
+def list_probes(toolchain: Toolchain) -> list[ProbeInfo]:
+    result = run_command([str(toolchain.programmer), "-l"], timeout=90)
+    return parse_probe_list(result.stdout)

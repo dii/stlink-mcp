@@ -63,10 +63,17 @@ class GdbServer:
     server must be kept alive across runs, and that policy lives there.
     """
 
-    def __init__(self, toolchain: Toolchain, access_port: int, port: int = 61234) -> None:
+    def __init__(
+        self,
+        toolchain: Toolchain,
+        access_port: int,
+        port: int = 61234,
+        serial: str | None = None,
+    ) -> None:
         self.toolchain = toolchain
         self.access_port = access_port
         self.port = port
+        self.serial = serial
         self._proc: subprocess.Popen[str] | None = None
         self._log = ""
 
@@ -90,6 +97,8 @@ class GdbServer:
             "--halt",                  # reset and halt, so every run starts clean
             "-cp", str(self.toolchain.programmer_bin_dir),
         ]
+        if self.serial:
+            argv += ["-i", self.serial]
         self._proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
@@ -138,46 +147,81 @@ class GdbServer:
 # "Device connect error".
 # ---------------------------------------------------------------------------
 
-_session: GdbServer | None = None
+# One server per probe, keyed by serial. A multi-board rig needs a server per
+# board, each on its own port; a single global session would silently hand back a
+# server attached to the wrong board and load firmware onto it while reporting
+# success.
+_sessions: dict[str | None, GdbServer] = {}
 _atexit_registered = False
 
 
-def acquire_server(toolchain: Toolchain, access_port: int, port: int = 61234) -> GdbServer:
-    """The live server, starting one if needed. Reused across calls."""
-    global _session, _atexit_registered
-    if _session is not None:
-        return _session
+def acquire_server(
+    toolchain: Toolchain,
+    access_port: int,
+    port: int = 61234,
+    serial: str | None = None,
+) -> GdbServer:
+    """The live server for one probe, starting it if needed."""
+    global _atexit_registered
 
-    # The server must not outlive this process. If it does it keeps holding the
-    # probe, and every later tool fails with a bare "Device connect error" that
-    # names neither the cause nor the orphan. Found the hard way immediately
+    existing = _sessions.get(serial)
+    if existing is not None:
+        return existing
+
+    # A held server must not outlive this process. If it does it keeps holding
+    # the probe, and every later tool fails with a bare "Device connect error"
+    # naming neither the cause nor the orphan. Found the hard way immediately
     # after introducing the held server.
     if not _atexit_registered:
-        atexit.register(release_server)
+        atexit.register(release_all_servers)
         _atexit_registered = True
 
-    server = GdbServer(toolchain, access_port, port)
+    if any(existing.port == port for existing in _sessions.values()):
+        raise RunError(
+            f"Port {port} is already used by a server for another probe. "
+            "Give each board its own GDB port."
+        )
+
+    server = GdbServer(toolchain, access_port, port, serial=serial)
     server.__enter__()
-    _session = server
+    _sessions[serial] = server
     return server
 
 
-def server_is_held() -> bool:
-    return _session is not None
+def server_is_held(serial: str | None = None) -> bool:
+    """Whether a server is held. With no serial, whether ANY is held, since the
+    programmer CLI is blocked by any of them."""
+    if serial is None:
+        return bool(_sessions)
+    return serial in _sessions
 
 
-def release_server() -> bool:
-    """Shut the server down. Returns whether one was actually held.
+def held_serials() -> list[str | None]:
+    return list(_sessions)
+
+
+def release_server(serial: str | None = None) -> bool:
+    """Shut down one probe's server, or all of them when given no serial.
 
     On parts where the access port cannot be re-acquired this is a one-way door
     until the board is power cycled, so it is never done implicitly.
     """
-    global _session
-    if _session is None:
+    if serial is None:
+        return release_all_servers()
+    server = _sessions.pop(serial, None)
+    if server is None:
         return False
-    _session.__exit__()
-    _session = None
+    server.__exit__()
     return True
+
+
+def release_all_servers() -> bool:
+    released = False
+    for server in list(_sessions.values()):
+        server.__exit__()
+        released = True
+    _sessions.clear()
+    return released
 
 
 _GDB_SCRIPT = """\

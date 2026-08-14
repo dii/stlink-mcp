@@ -10,6 +10,11 @@ nothing. An agent driving those CLIs directly inherits both lies.
 So: "ran" means the target produced output, not that a command exited zero.
 Where a claim cannot be verified, the result says so rather than implying it
 was checked.
+
+With more than one board attached, every tool takes a `probe_serial`. Leaving it
+out is only safe with a single probe, and the tools say so rather than quietly
+picking one, because "the first probe" is not stable across replugs and loading
+firmware onto the wrong board is a failure that looks like success.
 """
 
 from __future__ import annotations
@@ -21,67 +26,156 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import console as console_mod
-from .probe import Probe, TargetInfo, explain_connect_failure
+from .probe import (
+    Probe,
+    ProbeInfo,
+    TargetInfo,
+    explain_connect_failure,
+    list_probes as _list_probes,
+)
 from .runner import (
     RunError,
     acquire_server,
+    held_serials,
     load_and_run,
     release_server,
     server_is_held,
 )
-from .toolchain import ToolchainError, find_toolchain
+from .toolchain import Toolchain, ToolchainError, find_toolchain
 
 mcp = MCPServer("stlink-mcp")
 
-_GDB_PORT = int(os.environ.get("STLINK_MCP_GDB_PORT", "61234"))
+_GDB_PORT_BASE = int(os.environ.get("STLINK_MCP_GDB_PORT", "61234"))
 _CONSOLE_BAUD = int(os.environ.get("STLINK_MCP_CONSOLE_BAUD", "115200"))
 
-# Cached while a GDB server is held. Re-identifying would mean running
-# STM32_Programmer_CLI, which cannot reach the probe while the server has it.
-_held: tuple[Probe, TargetInfo] | None = None
+# Cached per probe while its GDB server is held. Re-identifying would mean
+# running STM32_Programmer_CLI, which cannot reach a probe the server has.
+_held: dict[str | None, tuple[Probe, TargetInfo, ProbeInfo | None]] = {}
 
 _HELD_MESSAGE = (
-    "A GDB server is currently holding the probe, so this tool cannot reach it. "
-    "That is deliberate: on some parts the debug access port cannot be "
-    "re-acquired once firmware has run, so the server is kept alive to allow "
-    "repeated runs. Call release_probe() to free it, but note that on those parts "
-    "the board then needs a power cycle before firmware can be run again."
+    "A GDB server is holding the probe, so this tool cannot reach it. That is "
+    "deliberate: on some parts the debug access port cannot be re-acquired once "
+    "firmware has run, so the server is kept alive to allow repeated runs. Call "
+    "release_probe() to free it, but note that on those parts the board then "
+    "needs a power cycle before firmware can be run again."
 )
 
 
-def _probe() -> Probe:
+def _toolchain() -> Toolchain:
     toolchain = find_toolchain()
     toolchain.check()
-    return Probe(toolchain)
+    return toolchain
+
+
+def _resolve_probe(
+    toolchain: Toolchain, probe_serial: str | None
+) -> tuple[str | None, ProbeInfo | None, str | None]:
+    """Pick which probe to talk to. Returns (serial, info, error)."""
+    if server_is_held():
+        # Enumeration needs the programmer CLI, which a held server blocks. Fall
+        # back to what was cached when the server was acquired.
+        if probe_serial in _held:
+            return probe_serial, _held[probe_serial][2], None
+        if probe_serial is None and len(_held) == 1:
+            only = next(iter(_held))
+            return only, _held[only][2], None
+
+    attached = _list_probes(toolchain)
+    if not attached:
+        return None, None, "No ST-LINK probes found."
+
+    if probe_serial is None:
+        if len(attached) > 1:
+            listing = ", ".join(p.serial for p in attached)
+            return None, None, (
+                f"{len(attached)} probes are attached and no probe_serial was given. "
+                f"Pass one of: {listing}. Not choosing for you, because probe order "
+                "is not stable across replugs and using the wrong board is a "
+                "failure that looks like success."
+            )
+        return attached[0].serial, attached[0], None
+
+    for info in attached:
+        if info.serial == probe_serial:
+            return info.serial, info, None
+
+    listing = ", ".join(p.serial for p in attached)
+    return None, None, f"No probe with serial {probe_serial}. Attached: {listing}"
+
+
+def _gdb_port_for(serial: str | None, toolchain: Toolchain) -> int:
+    """A stable, distinct GDB port per probe, so boards do not collide."""
+    if serial is None:
+        return _GDB_PORT_BASE
+    attached = [p.serial for p in _list_probes(toolchain)] if not server_is_held() else []
+    if serial in attached:
+        return _GDB_PORT_BASE + attached.index(serial)
+    return _GDB_PORT_BASE + (hash(serial) % 100)
 
 
 @mcp.tool()
-def board_state() -> dict[str, Any]:
-    """Identify the attached target and report what is known about it.
+def list_probes() -> dict[str, Any]:
+    """List every attached ST-LINK, with its firmware and its serial console.
+
+    The serial-to-console mapping is the useful part with more than one board:
+    it is not positional, so pairing probes with /dev/ttyACM* by order gets it
+    wrong.
+    """
+    try:
+        toolchain = _toolchain()
+    except ToolchainError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    if server_is_held():
+        return {
+            "ok": False,
+            "error": _HELD_MESSAGE,
+            "held_serials": [s for s in held_serials()],
+        }
+
+    probes = _list_probes(toolchain)
+    return {
+        "ok": True,
+        "count": len(probes),
+        "probes": [
+            {
+                "serial": p.serial,
+                "firmware": p.firmware,
+                "board": p.board,
+                "console_port": p.console_port,
+            }
+            for p in probes
+        ],
+    }
+
+
+@mcp.tool()
+def board_state(probe_serial: str | None = None) -> dict[str, Any]:
+    """Identify a target and report what is known about it.
 
     Tries each debug access port, because a wrong access port and an absent
     target produce the same error message from the vendor tools.
     """
-    if _held is not None:
-        # Reuse what was learned when the server was acquired; the programmer CLI
-        # cannot reach the probe while the server holds it.
-        probe, info = _held
+    try:
+        toolchain = _toolchain()
+    except ToolchainError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
+    if error:
+        return {"ok": False, "error": error}
+
+    if serial in _held:
+        probe, info, probe_info = _held[serial]
     else:
-        try:
-            probe = _probe()
-        except ToolchainError as exc:
-            return {"ok": False, "error": str(exc)}
+        probe = Probe(toolchain, serial=serial)
         info = probe.identify()
 
     quirks = info.quirks
-    port = console_mod.find_console_port()
-
     state: dict[str, Any] = {
         "ok": info.connected,
-        "stlink": {
-            "serial": info.stlink_serial,
-            "firmware": info.stlink_firmware,
-        },
+        "probe_serial": serial,
+        "stlink": {"serial": info.stlink_serial, "firmware": info.stlink_firmware},
         "board": info.board,
         "device": {
             "id": f"0x{info.device_id:X}" if info.device_id is not None else None,
@@ -99,56 +193,61 @@ def board_state() -> dict[str, Any]:
             "external_loader": quirks.external_loader,
             "notes": quirks.notes,
         },
-        "console_port": port,
+        "console_port": probe_info.console_port if probe_info else None,
+        "gdb_server_held": server_is_held(serial),
     }
 
     if not info.connected:
         state["errors"] = info.errors
         state["hint"] = explain_connect_failure(info)
-
     if probe.degraded_reason:
         state["ok"] = False
         state["warning"] = probe.degraded_reason
 
-    state["gdb_server_held"] = server_is_held()
     return state
 
 
 @mcp.tool()
-def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
+def run_firmware(
+    elf_path: str,
+    probe_serial: str | None = None,
+    console_seconds: float = 3.0,
+) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
-    Verification is console output, captured from before the target is resumed
-    so that start-up banners are not missed. If the target produces nothing, this
-    reports ok=false even though every underlying command succeeded, because a
-    silent target is the symptom this whole project exists to catch.
+    Verification is console output from THAT board's own serial port, captured
+    from before the target is resumed so start-up banners are not missed. If the
+    target produces nothing, this reports ok=false even though every underlying
+    command succeeded, because a silent target is the symptom this project
+    exists to catch.
 
-    Needs a family with a known RAM load address. It does not sign anything: an
-    image placed directly in RAM by a debugger bypasses the boot ROM.
+    Does not sign anything: an image placed directly in RAM by a debugger
+    bypasses the boot ROM.
     """
-    global _held
+    try:
+        toolchain = _toolchain()
+    except ToolchainError as exc:
+        return {"ok": False, "error": str(exc)}
 
-    if _held is not None:
-        # A server is already up. Reuse the identification made when it was
-        # acquired: re-running the programmer CLI now would fail, because the
-        # server has the probe.
-        probe, info = _held
+    serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
+    if error:
+        return {"ok": False, "error": error}
+
+    if serial in _held:
+        probe, info, probe_info = _held[serial]
     else:
-        try:
-            probe = _probe()
-        except ToolchainError as exc:
-            return {"ok": False, "error": str(exc)}
-
+        probe = Probe(toolchain, serial=serial)
         info = probe.identify()
         if not info.connected:
             return {
                 "ok": False,
                 "error": "No target",
+                "probe_serial": serial,
                 "errors": info.errors,
                 "hint": explain_connect_failure(info),
             }
         if probe.degraded_reason:
-            return {"ok": False, "error": probe.degraded_reason}
+            return {"ok": False, "probe_serial": serial, "error": probe.degraded_reason}
 
     quirks = info.quirks
     if quirks.vector_table_addr is None:
@@ -161,33 +260,33 @@ def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
         }
 
     elf = Path(elf_path).expanduser()
-    port = console_mod.find_console_port()
+    # This board's own console, not whichever ttyACM* happens to be first.
+    port = probe_info.console_port if probe_info else console_mod.find_console_port()
+    gdb_port = _gdb_port_for(serial, toolchain)
 
     try:
-        # Acquired, not scoped: the server stays alive so the next run does not
-        # need to re-acquire an access port that firmware has already closed.
-        acquire_server(probe.toolchain, probe.access_port, _GDB_PORT)
-        _held = (probe, info)
+        acquire_server(toolchain, probe.access_port, gdb_port, serial=serial)
+        _held[serial] = (probe, info, probe_info)
 
         if port:
             with console_mod.ConsoleCapture(port, _CONSOLE_BAUD) as cap:
-                sp, pc, size, output = load_and_run(
-                    probe.toolchain, elf, quirks.vector_table_addr,
-                    probe.access_port, _GDB_PORT,
+                sp, pc, size, _ = load_and_run(
+                    toolchain, elf, quirks.vector_table_addr, probe.access_port, gdb_port
                 )
                 text = cap.collect(console_seconds)
         else:
-            sp, pc, size, output = load_and_run(
-                probe.toolchain, elf, quirks.vector_table_addr,
-                probe.access_port, _GDB_PORT,
+            sp, pc, size, _ = load_and_run(
+                toolchain, elf, quirks.vector_table_addr, probe.access_port, gdb_port
             )
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError) as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "probe_serial": serial, "error": str(exc)}
 
     started = bool(text.strip())
     result: dict[str, Any] = {
         "ok": started if port else True,
+        "probe_serial": serial,
+        "console_port": port,
         "stack_pointer": _hex(sp),
         "program_counter": _hex(pc),
         "load_size_bytes": size,
@@ -199,47 +298,75 @@ def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
         result["next_run_note"] = (
             f"On {quirks.name}, firmware closes the debug access port as it starts, "
             "and no reset reopens it. The GDB server is therefore being HELD so "
-            "further run_firmware calls keep working without a power cycle. The "
-            "trade is that read_memory, core_registers and flash_firmware cannot "
-            "reach the probe until release_probe() is called, and releasing it "
-            "means a power cycle before firmware can run again."
+            "further run_firmware calls on this board keep working without a power "
+            "cycle. read_memory, core_registers and flash_firmware cannot reach the "
+            "probe until release_probe() is called, and releasing it means a power "
+            "cycle before firmware can run again."
         )
 
     if not port:
         result["warning"] = (
-            "No serial console was found, so this reports that the commands "
-            "succeeded, NOT that the firmware is running. Set STLINK_MCP_CONSOLE "
-            "to verify properly."
+            "No serial console for this probe, so this reports that the commands "
+            "succeeded, NOT that the firmware is running."
         )
     elif not started:
         result["error"] = (
             "The load and start commands succeeded but the target produced no "
-            "console output. The firmware is probably not running, or it does "
-            "not print. Check with core_registers(), which shows where the "
-            "program counter actually is."
+            "console output. The firmware is probably not running, or it does not "
+            "print. core_registers() shows where the program counter actually is, "
+            "after release_probe()."
         )
 
     return result
 
 
 @mcp.tool()
-def flash_firmware(image_path: str, address: int | None = None) -> dict[str, Any]:
-    """Program a signed image into the target's boot memory for standalone boot.
+def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
+    """Shut down held GDB servers and free the probes.
 
-    This is the standalone path, not the development one. Prefer run_firmware
-    for edit-build-run: it is faster and needs no signing.
+    With no serial, releases all of them. Needed before read_memory,
+    core_registers or flash_firmware can be used after a run. On parts where the
+    access port cannot be re-acquired once firmware has run, this is a one-way
+    door until the board is power cycled, so it is never done implicitly.
+    """
+    affected = [probe_serial] if probe_serial is not None else list(_held)
+    quirks = [_held[s][1].quirks for s in affected if s in _held]
 
-    On families whose boot ROM authenticates the image, the file must already be
-    signed. This tool does not sign it, because signing needs keys and options
-    that belong to the project rather than to the programmer.
+    released = release_server(probe_serial)
+    for s in affected:
+        _held.pop(s, None)
+
+    result: dict[str, Any] = {"ok": True, "released": released, "probes": affected}
+    if released and any(q.debug_closes_on_run for q in quirks):
+        result["warning"] = (
+            "The debug access port cannot be re-acquired now that firmware has "
+            "run. Power cycle the affected board(s) before the next run_firmware."
+        )
+    return result
+
+
+@mcp.tool()
+def flash_firmware(
+    image_path: str, probe_serial: str | None = None, address: int | None = None
+) -> dict[str, Any]:
+    """Program a signed image into a target's boot memory for standalone boot.
+
+    Prefer run_firmware for edit-build-run: it is faster and needs no signing.
+    This tool does not sign, because signing needs keys and options that belong
+    to the project rather than to a programmer.
     """
     if server_is_held():
-        return {"ok": False, "error": _HELD_MESSAGE}
+        return {"ok": False, "error": _HELD_MESSAGE, "held_serials": held_serials()}
     try:
-        probe = _probe()
+        toolchain = _toolchain()
     except ToolchainError as exc:
         return {"ok": False, "error": str(exc)}
 
+    serial, _, error = _resolve_probe(toolchain, probe_serial)
+    if error:
+        return {"ok": False, "error": error}
+
+    probe = Probe(toolchain, serial=serial)
     info = probe.identify()
     if not info.connected:
         return {"ok": False, "error": "No target", "hint": explain_connect_failure(info)}
@@ -256,52 +383,35 @@ def flash_firmware(image_path: str, address: int | None = None) -> dict[str, Any
         output = probe.program_flash(
             str(Path(image_path).expanduser()), target_address, quirks.external_loader
         )
-    except Exception as exc:  # noqa: BLE001 - surfaced to the caller verbatim
+    except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 
     return {
         "ok": True,
+        "probe_serial": serial,
         "address": _hex(target_address),
-        "external_loader": quirks.external_loader,
         "signing_required": quirks.requires_signing,
         "detail": output.strip().splitlines()[-3:],
         "next_step": (
-            "This does not start the image. Set the board's boot configuration "
-            "to boot from flash and reset it."
+            "This does not start the image. Set the board's boot configuration to "
+            "boot from flash and reset it."
         ),
     }
 
 
 @mcp.tool()
-def release_probe() -> dict[str, Any]:
-    """Shut down the held GDB server and free the probe.
-
-    Needed before read_memory, core_registers or flash_firmware can be used after
-    a run. On parts where the debug access port cannot be re-acquired once
-    firmware has run, this is a one-way door: the board will need a power cycle
-    before firmware can be run again. Never done implicitly for that reason.
-    """
-    global _held
-    was_held = release_server()
-    quirks = _held[1].quirks if _held else None
-    _held = None
-
-    result: dict[str, Any] = {"ok": True, "released": was_held}
-    if was_held and quirks is not None and quirks.debug_closes_on_run:
-        result["warning"] = (
-            f"On {quirks.name} the debug access port cannot be re-acquired now that "
-            "firmware has run. Power cycle the board before the next run_firmware."
-        )
-    return result
-
-
-@mcp.tool()
-def read_memory(address: int, length_bytes: int = 32) -> dict[str, Any]:
+def read_memory(
+    address: int, length_bytes: int = 32, probe_serial: str | None = None
+) -> dict[str, Any]:
     """Read target memory as 32-bit words. Does not halt the core."""
     if server_is_held():
-        return {"ok": False, "error": _HELD_MESSAGE}
+        return {"ok": False, "error": _HELD_MESSAGE, "held_serials": held_serials()}
     try:
-        probe = _probe()
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return {"ok": False, "error": error}
+        probe = Probe(toolchain, serial=serial)
         probe.identify()
         words = probe.read_memory(address, length_bytes)
     except Exception as exc:  # noqa: BLE001
@@ -309,22 +419,27 @@ def read_memory(address: int, length_bytes: int = 32) -> dict[str, Any]:
 
     return {
         "ok": True,
-        "words": {f"0x{addr:08X}": f"0x{value:08X}" for addr, value in sorted(words.items())},
+        "probe_serial": serial,
+        "words": {f"0x{a:08X}": f"0x{v:08X}" for a, v in sorted(words.items())},
     }
 
 
 @mcp.tool()
-def core_registers() -> dict[str, Any]:
+def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
     """Read the core registers. This HALTS the core.
 
-    The most direct way to find out what a program is really doing, and the tool
-    that settles "did it actually start" when there is no console. Perturbing, so
-    it is never used inside the routine checks.
+    The most direct way to find out what a program is really doing, and what
+    settles "did it actually start" when there is no console. Perturbing, so it
+    is never used inside the routine checks.
     """
     if server_is_held():
-        return {"ok": False, "error": _HELD_MESSAGE}
+        return {"ok": False, "error": _HELD_MESSAGE, "held_serials": held_serials()}
     try:
-        probe = _probe()
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return {"ok": False, "error": error}
+        probe = Probe(toolchain, serial=serial)
         probe.identify()
         regs = probe.core_registers()
     except Exception as exc:  # noqa: BLE001
@@ -332,6 +447,7 @@ def core_registers() -> dict[str, Any]:
 
     return {
         "ok": True,
+        "probe_serial": serial,
         "halted": True,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
         "note": "The core is now halted. Resume it by running firmware again.",
@@ -339,14 +455,29 @@ def core_registers() -> dict[str, Any]:
 
 
 @mcp.tool()
-def capture_console(seconds: float = 5.0) -> dict[str, Any]:
-    """Capture whatever the target prints on its serial console."""
-    port = console_mod.find_console_port()
+def capture_console(
+    seconds: float = 5.0, probe_serial: str | None = None
+) -> dict[str, Any]:
+    """Capture what a target prints on its serial console.
+
+    Resolves the port from the probe's serial rather than taking the first
+    /dev/ttyACM*, which with two boards attached is the wrong one about half the
+    time.
+    """
+    port: str | None = None
+    try:
+        toolchain = _toolchain()
+        _, probe_info, error = _resolve_probe(toolchain, probe_serial)
+        if not error and probe_info is not None:
+            port = probe_info.console_port
+    except ToolchainError:
+        pass
+
     if port is None:
-        return {
-            "ok": False,
-            "error": "No serial console found. Set STLINK_MCP_CONSOLE to the device path.",
-        }
+        port = console_mod.find_console_port()
+    if port is None:
+        return {"ok": False, "error": "No serial console found."}
+
     try:
         text = console_mod.capture(port, seconds, _CONSOLE_BAUD)
     except console_mod.ConsoleError as exc:

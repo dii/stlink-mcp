@@ -83,6 +83,7 @@ uv sync
 | `core_registers` | Reads the core registers. Halts the core | This is the ground truth when there is no console |
 | `capture_console` | Captures serial output | |
 | `release_probe` | Frees a held GDB server | |
+| `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing |
 
 ### Why the GDB server is kept alive
 
@@ -101,6 +102,17 @@ is never done implicitly and the tools say so instead of failing obscurely.
 `run_firmware` is the one to use while developing. It is faster than programming
 flash, and an image placed straight into RAM by a debugger bypasses the boot ROM,
 so no signing is involved even on parts that require signed images to boot.
+
+### More than one board
+
+Every tool takes a `probe_serial`. With several boards attached, omitting it is
+an **error**, not a guess: probe order is not stable across replugs, and loading
+firmware onto the wrong board is a failure that looks like success.
+
+`list_probes` also reports which serial port belongs to which probe. That mapping
+is not positional, so pairing probes with `/dev/ttyACM*` by order gets it wrong,
+and `run_firmware` uses each board's own console to verify it. Each board gets
+its own GDB server on its own port.
 
 ## Configuration
 
