@@ -21,6 +21,7 @@ entry point, so nothing has to be kept in sync as the image grows.
 
 from __future__ import annotations
 
+import atexit
 import socket
 import subprocess
 import tempfile
@@ -138,13 +139,23 @@ class GdbServer:
 # ---------------------------------------------------------------------------
 
 _session: GdbServer | None = None
+_atexit_registered = False
 
 
 def acquire_server(toolchain: Toolchain, access_port: int, port: int = 61234) -> GdbServer:
     """The live server, starting one if needed. Reused across calls."""
-    global _session
+    global _session, _atexit_registered
     if _session is not None:
         return _session
+
+    # The server must not outlive this process. If it does it keeps holding the
+    # probe, and every later tool fails with a bare "Device connect error" that
+    # names neither the cause nor the orphan. Found the hard way immediately
+    # after introducing the held server.
+    if not _atexit_registered:
+        atexit.register(release_server)
+        _atexit_registered = True
+
     server = GdbServer(toolchain, access_port, port)
     server.__enter__()
     _session = server
