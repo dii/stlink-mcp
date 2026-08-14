@@ -80,6 +80,11 @@ class GdbServer:
         argv = [
             str(self.toolchain.gdb_server),
             "-d",                      # SWD
+            "-e",                      # persistent; without it the server drops
+                                       # the GDB client on connect with
+                                       # "Target disconnected: Connection reset
+                                       # by peer", which reads like a target
+                                       # fault rather than a missing flag
             "-p", str(self.port),
             "--apid", str(self.access_port),
             "--halt",                  # reset and halt, so every run starts clean

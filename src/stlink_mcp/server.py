@@ -158,6 +158,14 @@ def run_firmware(elf_path: str, console_seconds: float = 3.0) -> dict[str, Any]:
         "verified_by": "console output" if port else "nothing",
     }
 
+    if quirks.debug_closes_on_run:
+        result["next_run_note"] = (
+            f"On {quirks.name}, running firmware closes the debug access port and "
+            "a reset does not reopen it. Power cycle the board (unplug and replug "
+            "USB) before the next run, or the next call will report the access "
+            "port as unreachable."
+        )
+
     if not port:
         result["warning"] = (
             "No serial console was found, so this reports that the commands "

@@ -58,6 +58,15 @@ class FamilyQuirks:
     by a debugger bypasses the boot ROM and needs no signature.
     """
 
+    debug_closes_on_run: bool = False
+    """Whether running firmware closes the debug access port until power is removed.
+
+    True on parts where the firmware brings up TrustZone: the access port stops
+    answering as soon as the image runs, and a reset does not reopen it. Without
+    this flag the second run of the day fails with an error about the access
+    port and looks like a regression in the tool.
+    """
+
     notes: str = ""
 
 
@@ -71,6 +80,7 @@ FAMILIES: dict[str, FamilyQuirks] = {
         flash_base=0x70000000,
         external_loader="MX25UM51245G_STM32N6570-NUCLEO.stldr",
         requires_signing=True,
+        debug_closes_on_run=True,
         notes=(
             "No internal flash. The boot ROM reads a signed FSBL out of external "
             "XSPI flash and loads it into AXISRAM2 at the vector table address. "
@@ -80,7 +90,10 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "the port is right. The debug port is only open in DEV boot mode "
             "(BOOT1 high); in the standalone boot configuration a connect fails "
             "with 'Unable to get core ID', which is expected and not a fault. "
-            "Verified on NUCLEO-N657X0-Q (MB1940C)."
+            "Running a TrustZone-enabling FSBL closes AP1 as soon as the image "
+            "starts, and a reset does not reopen it: only removing power does. "
+            "That is measured, not inferred, and it means the edit-run loop needs "
+            "a power cycle between runs. Verified on NUCLEO-N657X0-Q (MB1940C)."
         ),
     ),
 }
