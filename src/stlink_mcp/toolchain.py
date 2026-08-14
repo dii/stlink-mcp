@@ -1,0 +1,144 @@
+"""Locating and invoking the STM32CubeCLT command line tools."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def strip_ansi(text: str) -> str:
+    """CubeCLT tools colour their output even when not on a terminal."""
+    return _ANSI.sub("", text)
+
+
+class ToolchainError(RuntimeError):
+    """The toolchain is missing or misconfigured. Always raised, never returned
+    as a success with a warning, because a silently degraded toolchain is how
+    you end up debugging the wrong layer."""
+
+
+@dataclass(frozen=True)
+class Toolchain:
+    """Paths to the CubeCLT executables this server drives."""
+
+    root: Path
+
+    @property
+    def programmer(self) -> Path:
+        return self.root / "STM32CubeProgrammer" / "bin" / "STM32_Programmer_CLI"
+
+    @property
+    def signing_tool(self) -> Path:
+        return self.root / "STM32CubeProgrammer" / "bin" / "STM32_SigningTool_CLI"
+
+    @property
+    def gdb_server(self) -> Path:
+        return self.root / "STLink-gdb-server" / "bin" / "ST-LINK_gdbserver"
+
+    @property
+    def gdb(self) -> Path:
+        return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-gdb"
+
+    @property
+    def readelf(self) -> Path:
+        return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-readelf"
+
+    @property
+    def programmer_bin_dir(self) -> Path:
+        """The GDB server needs this passed with -cp."""
+        return self.root / "STM32CubeProgrammer" / "bin"
+
+    def external_loader(self, name: str) -> Path:
+        return self.programmer_bin_dir / "ExternalLoader" / name
+
+    def check(self) -> None:
+        """Fail loudly and specifically if anything required is missing."""
+        missing = [
+            str(p)
+            for p in (self.programmer, self.gdb_server, self.gdb, self.readelf)
+            if not p.exists()
+        ]
+        if missing:
+            raise ToolchainError(
+                "STM32CubeCLT is incomplete at {root}. Missing:\n  {items}\n"
+                "Set STLINK_MCP_CLT_ROOT to your install, or install STM32CubeCLT.".format(
+                    root=self.root, items="\n  ".join(missing)
+                )
+            )
+
+
+def _candidate_roots() -> list[Path]:
+    env = os.environ.get("STLINK_MCP_CLT_ROOT")
+    if env:
+        return [Path(env)]
+
+    roots: list[Path] = []
+    for base in (Path("/opt/st"), Path.home() / "st", Path("/usr/local/st")):
+        if base.is_dir():
+            roots.extend(sorted(base.glob("stm32cubeclt*"), reverse=True))
+    # macOS default
+    mac = Path("/Applications/STMicroelectronics/STM32CubeCLT")
+    if mac.is_dir():
+        roots.append(mac)
+    return roots
+
+
+def find_toolchain() -> Toolchain:
+    """Locate STM32CubeCLT, newest first when several are installed."""
+    candidates = _candidate_roots()
+    for root in candidates:
+        tc = Toolchain(root=root)
+        if tc.programmer.exists():
+            return tc
+
+    raise ToolchainError(
+        "No STM32CubeCLT install found. Looked in: "
+        + (", ".join(str(c) for c in candidates) if candidates else "/opt/st, ~/st")
+        + ". Set STLINK_MCP_CLT_ROOT to the install directory."
+    )
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    argv: list[str]
+    returncode: int
+    stdout: str
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+
+def run_command(argv: list[str], timeout: float = 120.0) -> CommandResult:
+    """Run a toolchain command, merging stderr into stdout and stripping colour.
+
+    Note the exit status of these tools is not trustworthy on its own. It is
+    returned here for completeness, but callers should verify the effect they
+    wanted rather than believe a zero.
+    """
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolchainError(
+            f"{argv[0]} did not finish within {timeout}s. "
+            "The probe may be held by another process, such as a GDB server or an IDE."
+        ) from exc
+    except FileNotFoundError as exc:
+        raise ToolchainError(f"Not found: {argv[0]}") from exc
+
+    return CommandResult(
+        argv=argv,
+        returncode=proc.returncode,
+        stdout=strip_ansi((proc.stdout or "") + (proc.stderr or "")),
+    )
