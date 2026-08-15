@@ -330,6 +330,7 @@ def run_firmware(
     # This board's own console, not whichever ttyACM* happens to be first.
     port = probe_info.console_port if probe_info else console_mod.find_console_port()
     gdb_port = _gdb_port_for(serial)
+    console_error: str | None = None
 
     try:
         # Family's port, not the one the programmer settled on: see
@@ -343,7 +344,17 @@ def run_firmware(
                     toolchain, elf, quirks.vector_table_addr,
                     probe.gdb_access_port(info), gdb_port
                 )
-                text = cap.collect(console_seconds)
+                try:
+                    text = cap.collect(console_seconds)
+                except Exception as exc:  # noqa: BLE001
+                    # A USB replug mid-capture raises SerialException, which is
+                    # an OSError and so is not the ConsoleError the outer clause
+                    # catches. Letting it out would discard work already done and
+                    # already known good: the load completed, the markers are in
+                    # hand, and the server is now HELD. Keep the partial buffer
+                    # and report the interruption instead of losing all of it.
+                    text = cap.text
+                    console_error = str(exc)
         else:
             sp, pc, size, _ = load_and_run(
                 toolchain, elf, quirks.vector_table_addr,
@@ -387,6 +398,20 @@ def run_firmware(
             "The GDB batch did not reach its end markers, so the load did not "
             "complete. Any console output here is the PREVIOUS image still "
             "running, not the one just requested.",
+            **detail,
+        )
+
+    if console_error is not None:
+        detail["console_error"] = console_error
+        if text.strip():
+            return verified(
+                "partial console output from this board's own port, before the "
+                "capture was interrupted",
+                **detail,
+            )
+        return unverified(
+            f"The load completed, but the console could not be read: "
+            f"{console_error}. Nothing observed whether the image started.",
             **detail,
         )
 

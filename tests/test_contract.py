@@ -170,11 +170,12 @@ def bench(monkeypatch, tmp_path):
         markers=(0x34200000, 0x34180841, 2048),
         console_text="",
         console_port="/dev/fake0",
+        console_raises=None,
     )
 
     class _FakeCapture:
         def __init__(self, port: str, baud: int) -> None:
-            pass
+            self._buffer = ""
 
         def __enter__(self):
             return self
@@ -183,7 +184,16 @@ def bench(monkeypatch, tmp_path):
             pass
 
         def collect(self, seconds: float) -> str:
+            if state.console_raises:
+                # Whatever arrived before the device went away stays readable,
+                # which is what pyserial leaves behind too.
+                self._buffer = state.console_text
+                raise OSError(state.console_raises)
             return state.console_text
+
+        @property
+        def text(self) -> str:
+            return self._buffer
 
     monkeypatch.setattr(server, "_toolchain", lambda: object())
     monkeypatch.setattr(
@@ -272,6 +282,34 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert_contract(r)
         assert r["status"] == result.VERIFIED
         assert "console" in r["verified_by"]
+
+    def test_a_console_that_drops_mid_capture_keeps_what_it_already_had(
+        self, bench
+    ) -> None:
+        """A USB replug raises SerialException, an OSError, which the outer
+        clause does not catch. Letting it out discarded the completed load, the
+        markers, the partial buffer, and the fact that the server is now held."""
+        bench.console_text = "target link test: tx\n"
+        bench.console_raises = "device reports readiness to read but returned no data"
+
+        r = call("run_firmware", elf_path=str(bench.elf))
+
+        assert_contract(r)
+        assert r["console"] == "target link test: tx\n"
+        assert r["image_initial_sp"] == "0x34200000"
+        assert "readiness to read" in r["console_error"]
+
+    def test_a_console_that_drops_before_saying_anything_is_unverified(
+        self, bench
+    ) -> None:
+        bench.console_text = ""
+        bench.console_raises = "device disconnected"
+
+        r = call("run_firmware", elf_path=str(bench.elf))
+
+        assert_contract(r)
+        assert r["status"] == result.UNVERIFIED
+        assert "device disconnected" in r["unverified_because"]
 
     def test_the_reported_addresses_are_not_claimed_as_observations(self, bench) -> None:
         """image_initial_sp and image_entry_point come from the ELF's vector
