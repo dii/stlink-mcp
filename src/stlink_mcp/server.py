@@ -41,6 +41,7 @@ from .probe import (
 )
 from .runner import (
     RunError,
+    port_is_taken,
     acquire_server,
     held_serials,
     load_and_run,
@@ -77,6 +78,7 @@ def _cached_for(serial: str | None):
         return _held[serial]
     _held.pop(serial, None)
     return None
+
 
 _HELD_MESSAGE = (
     "A GDB server is holding THIS probe, so the programmer cannot connect to "
@@ -144,13 +146,37 @@ def _gdb_port_for(serial: str | None) -> int:
     and nothing prevented two serials colliding on one port. With four boards
     attached that collision showed up on the fourth, as a refusal to start a
     second server on a port already in use.
+
+    Ports already in use are stepped over rather than collided with. Counting
+    from the base was enough while this was the only thing on the machine, and
+    stopped being enough the moment a second instance existed: another copy of
+    this server, an IDE, or the project's own dev harness starts numbering from
+    the same base, so the newcomer's first probe lands on the incumbent's first
+    probe and the run fails with "port already in use" for a reason that has
+    nothing to do with the board. Both ports of the pair are checked, since a
+    server opens -p and -p+1.
     """
     if serial in _gdb_ports:
         return _gdb_ports[serial]
 
-    port = _GDB_PORT_BASE + len(_gdb_ports) * _GDB_PORT_STRIDE
-    _gdb_ports[serial] = port
-    return port
+    taken = set(_gdb_ports.values())
+    port = _GDB_PORT_BASE
+    ceiling = _GDB_PORT_BASE + _GDB_PORT_STRIDE * 64
+    while port < ceiling:
+        if (
+            port not in taken
+            and not port_is_taken(port)
+            and not port_is_taken(port + 1)
+        ):
+            _gdb_ports[serial] = port
+            return port
+        port += _GDB_PORT_STRIDE
+
+    raise RunError(
+        f"No free GDB port pair between {_GDB_PORT_BASE} and {ceiling}. Something "
+        "is holding a great many of them: `ss -ltnp` will say what. "
+        "STLINK_MCP_GDB_PORT moves the base."
+    )
 
 
 @mcp.tool()

@@ -52,7 +52,42 @@ class RunError(RuntimeError):
     pass
 
 
-def _port_is_listening(port: int, host: str = "127.0.0.1") -> bool:
+def port_is_taken(port: int, host: str = "") -> bool:
+    """Whether anything already holds this port.
+
+    Tested by trying to BIND it, never by connecting to it. Connecting is wrong
+    twice over. It opens a real client connection to whatever is there, and for
+    a GDB server that means touching a live debug session in order to ask
+    whether it exists. And it is unreliable in the direction that costs most: a
+    busy server that does not accept within the timeout reads as absent.
+
+    Measured 2026-08-15, with four held gdbservers on this machine. The previous
+    connect-based check, with a 0.25 s timeout, reported four of their eight
+    ports free while `ss -ltnp` listed every one of them listening. Port
+    allocation built on that would have handed a second server a port already in
+    use, and reported the resulting failure as a fault of the board.
+
+    Binds the wildcard address by default, so a server bound to 0.0.0.0 and one
+    bound only to loopback are both detected.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return True
+        return False
+
+
+def port_is_accepting(port: int, host: str = "127.0.0.1") -> bool:
+    """Whether a server on this port is up and taking connections yet.
+
+    A different question from port_is_taken, and it needs the opposite
+    instrument. Waiting for our OWN server to come up cannot use the bind test,
+    because that test binds the port for an instant and would race the child we
+    are waiting for, occasionally stealing the port from it. Connecting is
+    correct here: the connection is to a server we started, and its purpose is
+    exactly to find out whether it is ready.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
         return sock.connect_ex((host, port)) == 0
@@ -95,7 +130,7 @@ class GdbServer:
         # the GDB port lets a collision surface later as an opaque failure from
         # the server itself rather than here, where the cause is obvious.
         for port in (self.port, self.port + 1):
-            if _port_is_listening(port):
+            if port_is_taken(port):
                 raise RunError(
                     f"Port {port} is already in use. A GDB server instance needs "
                     f"{self.port} and {self.port + 1} (the second is SWO). Likely "
@@ -128,7 +163,7 @@ class GdbServer:
 
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
-            if _port_is_listening(self.port):
+            if port_is_accepting(self.port):
                 self._start_draining()
                 return self
             if self._proc.poll() is not None:
@@ -177,7 +212,7 @@ class GdbServer:
         """
         if self._proc is None or self._proc.poll() is not None:
             return False
-        return _port_is_listening(self.port)
+        return port_is_taken(self.port)
 
     def __exit__(self, *exc_info: object) -> None:
         if self._proc is not None and self._proc.poll() is None:
@@ -259,7 +294,7 @@ def acquire_server(
     # no SIGTERM handler, so `kill` and any supervisor bypass this entirely.
     # __main__ installs handlers for SIGTERM and SIGHUP to close that gap.
     # SIGKILL is not coverable by anything in-process, so an orphan is still
-    # possible and _port_is_listening below is what surfaces it.
+    # possible and port_is_taken below is what surfaces it.
     if not _atexit_registered:
         atexit.register(release_all_servers)
         _atexit_registered = True
