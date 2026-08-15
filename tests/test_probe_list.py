@@ -139,3 +139,15 @@ class TestGdbPortAllocation:
         first = server._gdb_port_for("AAAA")
         server._gdb_port_for("BBBB")
         assert server._gdb_port_for("AAAA") == first
+
+
+    def test_ports_are_spaced_for_the_swo_port(self) -> None:
+        """Each server opens -p and -p+1, so consecutive probes must not be
+        one apart. Measured against a running server; a stride of 1 puts board
+        two's GDB port on board one's SWO port."""
+        from stlink_mcp import server
+
+        server._gdb_ports.clear()
+        ports = sorted(server._gdb_port_for(f"SN{i}") for i in range(4))
+        gaps = [b - a for a, b in zip(ports, ports[1:])]
+        assert all(gap >= 2 for gap in gaps), ports

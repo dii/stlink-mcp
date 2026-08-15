@@ -78,11 +78,16 @@ class GdbServer:
         self._log = ""
 
     def __enter__(self) -> "GdbServer":
-        if _port_is_listening(self.port):
-            raise RunError(
-                f"Something is already listening on port {self.port}. "
-                "Another GDB server or an IDE is probably holding the probe."
-            )
+        # Both ports, because the server opens -p and -p+1 (SWO). Checking only
+        # the GDB port lets a collision surface later as an opaque failure from
+        # the server itself rather than here, where the cause is obvious.
+        for port in (self.port, self.port + 1):
+            if _port_is_listening(port):
+                raise RunError(
+                    f"Port {port} is already in use. A GDB server instance needs "
+                    f"{self.port} and {self.port + 1} (the second is SWO). Another "
+                    "server, an IDE, or too small a port stride between boards."
+                )
 
         argv = [
             str(self.toolchain.gdb_server),
@@ -93,6 +98,8 @@ class GdbServer:
                                        # by peer", which reads like a target
                                        # fault rather than a missing flag
             "-p", str(self.port),
+            "-z", str(self.port + 1),   # SWO; explicit so the pair is documented
+                                        # rather than relying on the +1 default
             "--apid", str(self.access_port),
             "--halt",                  # reset and halt, so every run starts clean
             "-cp", str(self.toolchain.programmer_bin_dir),

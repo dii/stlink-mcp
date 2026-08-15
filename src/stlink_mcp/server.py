@@ -46,6 +46,12 @@ from .toolchain import Toolchain, ToolchainError, find_toolchain
 mcp = MCPServer("stlink-mcp")
 
 _GDB_PORT_BASE = int(os.environ.get("STLINK_MCP_GDB_PORT", "61234"))
+
+# One GDB server instance opens TWO ports: the one given with -p, and -p + 1 for
+# SWO. Measured, not assumed: `ss -ltnp` against a running server shows both.
+# With a stride of 1, the second board's GDB port lands exactly on the first
+# board's SWO port, which is how a four-board rig fails on its second load.
+_GDB_PORT_STRIDE = 4
 _CONSOLE_BAUD = int(os.environ.get("STLINK_MCP_CONSOLE_BAUD", "115200"))
 
 # Cached per probe while its GDB server is held. Re-identifying would mean
@@ -121,10 +127,7 @@ def _gdb_port_for(serial: str | None) -> int:
     if serial in _gdb_ports:
         return _gdb_ports[serial]
 
-    taken = set(_gdb_ports.values())
-    port = _GDB_PORT_BASE
-    while port in taken:
-        port += 1
+    port = _GDB_PORT_BASE + len(_gdb_ports) * _GDB_PORT_STRIDE
     _gdb_ports[serial] = port
     return port
 
