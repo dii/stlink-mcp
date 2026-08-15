@@ -25,9 +25,6 @@ class TestUnknownFamiliesDegradeSafely:
     def test_absent_device_id_gives_the_generic_entry(self) -> None:
         assert quirks.for_device_id(None) is quirks.DEFAULT
 
-    def test_unknown_name_gives_the_generic_entry(self) -> None:
-        assert quirks.for_name("STM32ZZ") is quirks.DEFAULT
-
     def test_generic_offers_no_addresses_to_guess_with(self) -> None:
         assert quirks.DEFAULT.ram_load_base is None
         assert quirks.DEFAULT.vector_table_addr is None

@@ -36,9 +36,11 @@ debugger one.
 from __future__ import annotations
 
 import atexit
+import collections
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,7 +77,18 @@ class GdbServer:
         self.port = port
         self.serial = serial
         self._proc: subprocess.Popen[str] | None = None
-        self._log = ""
+        # Bounded, and drained by a thread for the life of the server. The pipe
+        # used to be created and then never read on the success path, which is
+        # fine for a short-lived process and not fine here, because this server
+        # is deliberately held across many runs. Once the OS pipe buffer fills
+        # (65536 bytes on this machine, by F_GETPIPE_SZ) the server blocks
+        # writing to it and simply stops, which would look like the probe or the
+        # target failing. Measured rate is a 370-byte banner plus 54 bytes per
+        # connect/detach cycle, with nothing periodic, so the old code had well
+        # over a thousand cycles of headroom. That is a reason it was never hit,
+        # not a reason it was safe.
+        self._log: collections.deque[str] = collections.deque(maxlen=400)
+        self._drain: threading.Thread | None = None
 
     def __enter__(self) -> "GdbServer":
         # Both ports, because the server opens -p and -p+1 (SWO). Checking only
@@ -85,8 +98,11 @@ class GdbServer:
             if _port_is_listening(port):
                 raise RunError(
                     f"Port {port} is already in use. A GDB server instance needs "
-                    f"{self.port} and {self.port + 1} (the second is SWO). Another "
-                    "server, an IDE, or too small a port stride between boards."
+                    f"{self.port} and {self.port + 1} (the second is SWO). Likely "
+                    "another server, an IDE, too small a port stride between "
+                    "boards, or a server orphaned by a previous run that was "
+                    f"killed. `ss -ltnp | grep {port}` names the process holding "
+                    "it, and its command line carries the probe serial."
                 )
 
         argv = [
@@ -113,6 +129,7 @@ class GdbServer:
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
             if _port_is_listening(self.port):
+                self._start_draining()
                 return self
             if self._proc.poll() is not None:
                 out = strip_ansi(self._proc.stdout.read() if self._proc.stdout else "")
@@ -121,6 +138,34 @@ class GdbServer:
 
         self.__exit__()
         raise RunError(f"GDB server did not start listening on port {self.port}")
+
+    def _start_draining(self) -> None:
+        """Keep reading the server's stdout so it can never block writing to it.
+
+        A daemon thread, because it must not keep the interpreter alive, and
+        because the read is blocking. It ends by itself when the pipe closes.
+        """
+        if self._proc is None or self._proc.stdout is None:
+            return
+
+        stream = self._proc.stdout
+
+        def pump() -> None:
+            try:
+                for line in stream:
+                    self._log.append(strip_ansi(line.rstrip("\n")))
+            except (ValueError, OSError):
+                # Closed under us by __exit__. Not an error worth surfacing.
+                pass
+
+        self._drain = threading.Thread(
+            target=pump, name=f"gdbserver-drain-{self.port}", daemon=True
+        )
+        self._drain.start()
+
+    def recent_output(self, lines: int = 20) -> list[str]:
+        """The last thing the server said, for diagnosing why it stopped."""
+        return list(self._log)[-lines:]
 
     def is_alive(self) -> bool:
         """Whether this server is still running AND still serving.
@@ -209,6 +254,12 @@ def acquire_server(
     # the probe, and every later tool fails with a bare "Device connect error"
     # naming neither the cause nor the orphan. Found the hard way immediately
     # after introducing the held server.
+    #
+    # atexit covers a normal exit and SIGINT, and nothing else: CPython installs
+    # no SIGTERM handler, so `kill` and any supervisor bypass this entirely.
+    # __main__ installs handlers for SIGTERM and SIGHUP to close that gap.
+    # SIGKILL is not coverable by anything in-process, so an orphan is still
+    # possible and _port_is_listening below is what surfaces it.
     if not _atexit_registered:
         atexit.register(release_all_servers)
         _atexit_registered = True

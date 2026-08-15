@@ -31,8 +31,22 @@ So the rule here is simple:
 > actually happened.**
 
 `run_firmware` does not report success because GDB exited zero. It reports
-success because the target produced console output. When it cannot verify a
-claim, it says so in the result instead of implying it checked.
+success because the target produced console output.
+
+Every result therefore has one of three states, and `ok` is never set by hand:
+
+| `status` | `ok` | meaning |
+| --- | --- | --- |
+| `verified` | `true` | checked, and `verified_by` names the observation |
+| `unverified` | `false` | may well have worked, but nothing watched it |
+| `failed` | `false` | it did not work, and `error` says why |
+
+`unverified` is the one that matters, and it is deliberately not `ok`. A run
+nobody watched is not a success however likely it is to have worked, so
+`unverified_because` is there to tell it apart from a real failure. Reporting
+that case as success is exactly the harm this project exists to prevent, and an
+earlier version of this tool did it: `ok: true` alongside `verified_by:
+"nothing"`.
 
 ## Status
 
@@ -45,8 +59,8 @@ family specific and this project would rather have a gap than a guess.
 ## Requirements
 
 * [STM32CubeCLT](https://www.st.com/en/development-tools/stm32cubeclt.html).
-  It bundles STM32CubeProgrammer, the GDB server, the Arm toolchain and the
-  signing tool. Found automatically under `/opt/st`, `~/st` or the macOS default;
+  It bundles STM32CubeProgrammer, the GDB server and the Arm toolchain. Found
+  automatically under `/opt/st`, `~/st`, `/usr/local/st` or the macOS default;
   override with `STLINK_MCP_CLT_ROOT`.
 * Python 3.11 or newer.
 * An ST-LINK, which on most development boards is on the board itself.
@@ -76,28 +90,34 @@ uv sync
 
 | tool | what it does | how it verifies |
 | --- | --- | --- |
-| `board_state` | Identifies the target, the probe, and the family's quirks | Tries every access port, since a wrong port and an absent target look identical |
-| `run_firmware` | Loads an ELF into RAM and starts it | Captures console output from before the target resumes |
-| `flash_firmware` | Programs a signed image into boot memory | Requires the programmer to confirm the download completed |
-| `read_memory` | Reads 32-bit words | Fails loudly if nothing was read |
-| `core_registers` | Reads the core registers. Halts the core | This is the ground truth when there is no console |
-| `capture_console` | Captures serial output | |
-| `release_probe` | Frees a held GDB server | |
-| `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing |
+| `board_state` | Identifies the target, the probe, and the family's quirks | Tries every access port, since a wrong port and an absent target look identical. Reports `unverified` when a held server means it is answering from cache |
+| `run_firmware` | Loads an ELF into RAM and starts it | Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
+| `flash_firmware` | Programs a signed image into boot memory | The programmer's own report that the download completed. Nothing is read back, and `verified_by` says so |
+| `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port |
+| `core_registers` | Reads the core registers. Halts the core | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset |
+| `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, and refuses if it cannot resolve one |
+| `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |
+| `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing. Works while other probes are held |
 
 ### Why the GDB server is kept alive
 
 `run_firmware` starts a GDB server and **holds it** rather than tearing it down.
 That is not laziness. On the STM32N6, once firmware has run the debug access port
-cannot be re-acquired: a new connection fails and no reset clears it, only removing
-power. An already established connection keeps working indefinitely, including
-repeated load-and-run cycles. Holding the server is therefore the difference
-between one power cycle per session and one per run.
+cannot be re-acquired. Measured 2026-08-15, with nothing else holding the probe:
+a hotplug connect fails, a resetting connect fails, and a freshly started GDB
+server fails with "Failed to connect to device", while the same tooling reaches a
+different board on the same hub without trouble.
 
-The cost is that the server owns the probe, so `read_memory`, `core_registers` and
-`flash_firmware` cannot reach it until you call `release_probe`. On a part with
-this behaviour, releasing means a power cycle before firmware can run again, so it
-is never done implicitly and the tools say so instead of failing obscurely.
+An already established connection keeps working across repeated load-and-run
+cycles, **provided the target is reset before every load**. That precondition is
+not optional and is easy to lose: the server's own `--halt` resets once, when the
+server starts, so without an explicit reset each image inherits the previous
+run's live peripherals and interrupt state, and faults during start-up in a way
+that reads as a firmware bug.
+
+The cost is that the server owns **that** probe, so `read_memory`,
+`core_registers` and `flash_firmware` cannot reach it until you call
+`release_probe`. Other probes are unaffected, and so is enumeration.
 
 `run_firmware` is the one to use while developing. It is faster than programming
 flash, and an image placed straight into RAM by a debugger bypasses the boot ROM,
@@ -138,8 +158,15 @@ of external flash, and its debug is on access port 1 rather than 0.
 * It does not build your firmware. That is your build system's job.
 * It does not sign images, because signing needs keys and options that belong to
   your project rather than to a programmer.
-* Only ST-LINK with STM32CubeCLT is supported today. The backend is behind a
-  seam so OpenOCD could be added, but that work has not been done.
+* Only ST-LINK with STM32CubeCLT is supported. There is no abstraction layer
+  waiting for a second backend: adding OpenOCD would mean introducing one first.
+* Linux is the tested platform. macOS should work, since the toolchain search
+  and the console device patterns both cover it, but it has not been run there.
+  Windows is not supported: the executable names and device paths are wrong for
+  it throughout.
+* Exactly one device family, STM32N6, is verified on hardware. Everything else
+  falls back to a generic entry that can identify a target but will refuse to
+  run firmware on it, because it has no verified RAM layout to load into.
 * It is not affiliated with STMicroelectronics.
 
 ## Licence

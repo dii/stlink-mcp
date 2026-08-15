@@ -32,9 +32,10 @@ class Toolchain:
     def programmer(self) -> Path:
         return self.root / "STM32CubeProgrammer" / "bin" / "STM32_Programmer_CLI"
 
-    @property
-    def signing_tool(self) -> Path:
-        return self.root / "STM32CubeProgrammer" / "bin" / "STM32_SigningTool_CLI"
+    # No signing_tool property. STM32_SigningTool_CLI sits next to the
+    # programmer, and it is tempting to expose it, but this project does not
+    # sign: keys and header options belong to the project being built, not to a
+    # programmer. A path nothing calls only suggests otherwise.
 
     @property
     def gdb_server(self) -> Path:

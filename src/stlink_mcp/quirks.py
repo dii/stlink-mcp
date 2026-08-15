@@ -69,6 +69,17 @@ class FamilyQuirks:
     So this flag does not mean "one run per power cycle". It means the server must
     be kept alive rather than torn down between runs, which is what
     runner.acquire_server does.
+
+    Holding the server is necessary and NOT sufficient. Every load must also be
+    preceded by an explicit reset, because the server's own `--halt` resets the
+    target once, when the server starts. Without that, each image after the first
+    inherits the previous run's live state: configured peripherals, enabled NVIC
+    lines, and an external device still asserting its interrupt. It then starts at
+    Reset_Handler with that interrupt pending, vectors through a handler pointer
+    in .bss that has not been zeroed yet, and faults during start-up. The symptom
+    is a board that prints its first couple of bytes and stops, which reads as a
+    firmware bug and cost an evening as one. `runner._GDB_SCRIPT` carries the
+    reset; do not remove it on the grounds that `--halt` already does it.
     """
 
     notes: str = ""
@@ -94,12 +105,18 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "the port is right. The debug port is only open in DEV boot mode "
             "(BOOT1 high); in the standalone boot configuration a connect fails "
             "with 'Unable to get core ID', which is expected and not a fault. "
-            "Once firmware has run, AP1 cannot be re-acquired: a new connect fails "
-            "with 'Cannot connect to access port 1' and no reset clears it, only "
-            "removing power. An already established GDB server connection, however, "
-            "keeps working indefinitely across repeated load-and-run cycles, so the "
-            "server is held rather than torn down and the cost is one power cycle "
-            "per session, not per run. Measured, including a negative result: it is "
+            "Once firmware has run, AP1 cannot be re-acquired. Re-measured "
+            "2026-08-15 with nothing holding the probe, because an earlier run of "
+            "this test was invalid (a controller still held it): a hotplug connect "
+            "fails, a RESETTING connect fails, and a freshly started GDB server "
+            "fails with 'Failed to connect to device', while the same tooling "
+            "reaches a NUCLEO-H743ZI on the same hub. Whether removing power "
+            "restores it is the one part not yet re-measured. An already "
+            "established GDB server connection keeps working across repeated "
+            "load-and-run cycles, but ONLY with an explicit reset before each "
+            "load: --halt resets once at server start, and without that reset "
+            "every later image inherits the previous run's live interrupt state "
+            "and faults during start-up. Measured, including a negative result: it is "
             "NOT caused by the SAU configuration in ST's FSBL SystemInit, since "
             "removing those writes changes nothing (that code never enables the SAU "
             "in the first place). Verified on NUCLEO-N657X0-Q (MB1940C)."
@@ -132,10 +149,8 @@ def for_device_id(device_id: int | None) -> FamilyQuirks:
     return FAMILIES.get(DEVICE_ID_TO_FAMILY.get(device_id, ""), DEFAULT)
 
 
-def for_name(name: str) -> FamilyQuirks:
-    """Quirks by family name, case-insensitive. Falls back to generic."""
-    wanted = name.strip().upper()
-    for key, quirks in FAMILIES.items():
-        if key.upper() == wanted:
-            return quirks
-    return DEFAULT
+# There was a for_name() lookup here. Nothing called it: a target is identified
+# by the device ID the probe reports, never by a name someone types, so
+# for_device_id above is the only entry point the code has ever needed. It was
+# removed rather than kept as convenience, because an exported lookup implies a
+# supported way in, and this one led nowhere.
