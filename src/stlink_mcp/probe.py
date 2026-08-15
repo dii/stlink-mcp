@@ -133,6 +133,11 @@ class Probe:
         """Which probe to talk to. Required once more than one is attached, since
         the tools silently pick the first otherwise, and "the first" is not
         stable across replugs."""
+        self.connect_mode: str = "HOTPLUG"
+        self.target_was_reset: bool = False
+        """True when identification needed a resetting connect, which restarts
+        whatever was running. Reported rather than hidden, because for anything
+        inspecting a live program that is a destructive act."""
         self.degraded_reason: str | None = None
         """Set when the access port in use is not the one the family wants.
 
@@ -141,19 +146,19 @@ class Probe:
         not an exception instead of both.
         """
 
-    def _connect_args(self, access_port: int) -> list[str]:
+    def _connect_args(self, access_port: int, mode: str = "HOTPLUG") -> list[str]:
         argv = [
             str(self.toolchain.programmer),
             "-c",
             "port=SWD",
-            "mode=HOTPLUG",
+            f"mode={mode}",
             f"ap={access_port}",
         ]
         if self.serial:
             argv.append(f"sn={self.serial}")
         return argv
 
-    def identify(self) -> TargetInfo:
+    def identify(self, allow_reset: bool = True) -> TargetInfo:
         """Identify the target and settle on the right debug access port.
 
         Two steps, and the second is not optional. Scanning finds a port that can
@@ -169,39 +174,58 @@ class Probe:
         ports = [self._access_port] if self._access_port is not None else [0, 1]
         last = TargetInfo(connected=False)
 
-        for port in ports:
-            result = run_command(self._connect_args(port), timeout=90)
-            info = parse_target_info(result.stdout)
-            if info.connected:
-                self._access_port = self._settle_access_port(info, port)
-                return info
-            last = info
+        # HOTPLUG first: it does not disturb a running program, so state can be
+        # inspected. HWRSTPULSE second: it pulses the reset line, which RECOVERS
+        # an access port that running firmware has closed, at the cost of
+        # restarting the target.
+        modes = ["HOTPLUG", "HWRSTPULSE"] if allow_reset else ["HOTPLUG"]
+
+        for mode in modes:
+            for port in ports:
+                result = run_command(self._connect_args(port, mode), timeout=90)
+                info = parse_target_info(result.stdout)
+                if info.connected:
+                    self.connect_mode = mode
+                    self.target_was_reset = mode != "HOTPLUG"
+                    self._access_port = self._settle_access_port(info, port, mode)
+                    return info
+                last = info
 
         return last
 
-    def _settle_access_port(self, info: TargetInfo, answered_on: int) -> int:
+    def _settle_access_port(self, info: TargetInfo, answered_on: int,
+                            mode: str = "HOTPLUG", allow_reset: bool = True) -> int:
         """Prefer the family's recorded access port over the one that answered.
 
-        Verified before adopting: if the recorded port cannot even identify the
-        target then the table is wrong for this board, or the port has been
-        closed, and staying on a port that demonstrably works beats trusting the
-        table. Either way the degradation is recorded rather than hidden, because
-        core control will then fail and the reason needs to be visible.
+        Two things make this more than a preference. Identity is readable on a
+        port that cannot halt the core, so answering is not the same as being
+        usable. And on parts where running firmware closes the debug port, the
+        wanted port only comes back on a RESETTING connect: HOTPLUG will keep
+        failing on it forever while AP0 answers happily.
+
+        So the wanted port is retried with a recovering mode before giving up,
+        and giving up is recorded as a degradation rather than hidden.
         """
         wanted = info.quirks.access_port
         if wanted == answered_on:
             return answered_on
 
-        result = run_command(self._connect_args(wanted), timeout=90)
-        if parse_target_info(result.stdout).connected:
-            return wanted
+        attempts = [mode]
+        if allow_reset and "HWRSTPULSE" not in attempts:
+            attempts.append("HWRSTPULSE")
+
+        for attempt in attempts:
+            result = run_command(self._connect_args(wanted, attempt), timeout=90)
+            if parse_target_info(result.stdout).connected:
+                self.connect_mode = attempt
+                self.target_was_reset = attempt != "HOTPLUG"
+                return wanted
 
         self.degraded_reason = (
-            f"{info.quirks.name} records debug on access port {wanted}, but that "
-            f"port is unreachable; falling back to AP{answered_on}, which can "
-            "identify the target but may not be able to halt it. A closed access "
-            "port on a TrustZone part is often the previously running firmware "
-            "having locked it: try a full power cycle, not just a reset."
+            f"{info.quirks.name} records debug on access port {wanted}, but it is "
+            f"unreachable even with a resetting connect; falling back to "
+            f"AP{answered_on}, which can identify the target but may not be able "
+            "to halt it."
         )
         return answered_on
 
@@ -210,7 +234,7 @@ class Probe:
         return 0 if self._access_port is None else self._access_port
 
     def read_memory(self, address: int, length_bytes: int) -> dict[int, int]:
-        argv = self._connect_args(self.access_port) + [
+        argv = self._connect_args(self.access_port, self.connect_mode) + [
             "-r32",
             f"0x{address:08X}",
             str(length_bytes),
@@ -230,7 +254,7 @@ class Probe:
         program is really doing, and it is also perturbing, so it is never used
         as part of a routine 'did it run' check.
         """
-        argv = self._connect_args(self.access_port) + ["-coreReg"]
+        argv = self._connect_args(self.access_port, self.connect_mode) + ["-coreReg"]
         result = run_command(argv, timeout=90)
         regs = parse_core_registers(result.stdout)
         if "PC" not in regs:
@@ -244,7 +268,7 @@ class Probe:
     def program_flash(
         self, image: str, address: int, external_loader: str | None = None
     ) -> str:
-        argv = self._connect_args(self.access_port)
+        argv = self._connect_args(self.access_port, self.connect_mode)
         if external_loader:
             argv += ["-el", str(self.toolchain.external_loader(external_loader))]
         argv += ["-w", image, f"0x{address:08X}"]

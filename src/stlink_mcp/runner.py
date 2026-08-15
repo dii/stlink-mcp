@@ -17,6 +17,20 @@ Two details are load-bearing and both are easy to get wrong:
 
 SP and PC come from the loaded image's vector table rather than from the ELF
 entry point, so nothing has to be kept in sync as the image grows.
+
+RESET BEFORE EVERY LOAD. This is not optional and it is not the same as the
+server's own --halt, which resets only once when the server starts. Holding a
+server across runs means the second and subsequent images inherit the previous
+run's LIVE state: peripherals configured, NVIC lines still enabled, and any
+external device still asserting an interrupt. The new image then starts at
+Reset_Handler with that interrupt pending, vectors through a handler pointer in
+.bss that has not been zeroed yet, and HardFaults during start-up.
+
+Measured 2026-08-15: without this, every run after the first through a held
+session faulted, with IPSR reading 3 (HardFault) and SysTick pending but never
+serviced. It cost an evening, because the symptom is a target that prints its
+first two bytes and then stops, which reads as a firmware bug rather than a
+debugger one.
 """
 
 from __future__ import annotations
@@ -235,6 +249,7 @@ _GDB_SCRIPT = """\
 set confirm off
 set pagination off
 target extended-remote localhost:{port}
+monitor reset
 load
 set $sp = *(unsigned int *){vector:#x}
 set $pc = (*(unsigned int *)({vector:#x} + 4)) & ~1
