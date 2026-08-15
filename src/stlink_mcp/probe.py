@@ -317,6 +317,34 @@ class ProbeInfo:
     firmware: str | None = None
     board: str | None = None
     console_port: str | None = None
+    access_ports: int | None = None
+    """How many debug access ports the probe saw, from `Access Port Number`.
+
+    Zero means the probe enumerated but could not reach the target, which is
+    what a board whose running firmware has closed the debug port looks like.
+    Worth keeping because it separates "no board" from "board that will not
+    answer", which the connect error message alone does not.
+    """
+
+
+def _field(block: str, label: str) -> str | None:
+    """Value of a `Label : value` line, or None when the field is blank.
+
+    The separator is deliberately not `\\s*`. That matches newlines, so a blank
+    field captures the first token of the line below it: with the debug port
+    closed the probe prints an empty `ST-LINK FW`, and every such board was
+    reported as running firmware "Access", taken from `Access Port Number` on
+    the next line. The last probe in a list took the section's closing rule of
+    dashes as its board name the same way.
+    """
+    match = re.search(
+        rf"^[^\S\n]*{re.escape(label)}[^\S\n]*:[^\S\n]*(.*?)[^\S\n]*$",
+        block,
+        re.M,
+    )
+    if match is None:
+        return None
+    return match.group(1) or None
 
 
 def _section(output: str, name_fragment: str) -> str:
@@ -333,8 +361,11 @@ def _console_ports(output: str) -> dict[str, str]:
     uart = _section(output, "UART")
     mapping: dict[str, str] = {}
     # Each virtual COM entry reads: ST-LINK SN: <sn> / Port: .. / Location: <path>
+    # Same-line separators for the same reason as _field: a blank serial must
+    # fail to match and be skipped, never absorb the next line and map a real
+    # console path onto a serial that is not there.
     for match in re.finditer(
-        r"ST-LINK SN:\s*(\S+).*?^Location:\s*(\S+)", uart, re.M | re.S
+        r"ST-LINK SN:[^\S\n]*(\S+).*?^Location:[^\S\n]*(\S+)", uart, re.M | re.S
     ):
         mapping[match.group(1)] = match.group(2)
     return mapping
@@ -352,20 +383,18 @@ def parse_probe_list(output: str) -> list[ProbeInfo]:
         end = positions[index + 1] if index + 1 < len(positions) else len(stlink)
         block = stlink[begin:end]
 
-        sn = re.search(r"ST-LINK SN\s*:\s*(\S+)", block)
-        if not sn:
+        serial = _field(block, "ST-LINK SN")
+        if not serial:
             continue
-        serial = sn.group(1)
 
-        def field(pattern: str) -> str | None:
-            found = re.search(pattern, block, re.M)
-            return found.group(1).strip() if found else None
+        ports = _field(block, "Access Port Number")
 
         entries.append(ProbeInfo(
             serial=serial,
-            firmware=field(r"ST-LINK FW\s*:\s*(\S+)"),
-            board=field(r"Board Name\s*:\s*(.+?)\s*$"),
+            firmware=_field(block, "ST-LINK FW"),
+            board=_field(block, "Board Name"),
             console_port=consoles.get(serial),
+            access_ports=int(ports) if ports and ports.isdigit() else None,
         ))
 
     return entries

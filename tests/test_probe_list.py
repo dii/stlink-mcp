@@ -10,7 +10,17 @@ the probe list and again in the UART listing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from stlink_mcp.probe import parse_probe_list
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _fixture(name: str) -> str:
+    """Real captured tool output, kept in a file once it is too long to inline."""
+    return (_FIXTURES / name).read_text()
+
 
 TWO_BOARDS = """\
 =====  DFU Interface   =====
@@ -151,3 +161,54 @@ class TestGdbPortAllocation:
         ports = sorted(server._gdb_port_for(f"SN{i}") for i in range(4))
         gaps = [b - a for a, b in zip(ports, ports[1:])]
         assert all(gap >= 2 for gap in gaps), ports
+
+
+class TestEmptyFieldsDoNotCaptureTheNextLine:
+    """Captured with four NUCLEO-N657X0-Q and one NUCLEO-H743ZI attached.
+
+    The N6 boards were running firmware, so their debug ports were closed and
+    the probe reported blank `ST-LINK FW` and `Board Name` for all four, with
+    four `ST-LINK error (DEV_CONNECT_ERR)` lines above the list. The H743 was
+    the only board with those fields populated.
+
+    That mix is the point. Every earlier fixture had populated fields, so none
+    could reach this: a `\\s*` after the colon crosses the newline, and an empty
+    field then captures the first token of whatever follows. The four N6 boards
+    came back with firmware "Access", taken from `Access Port Number`, and the
+    last probe in the list came back with the section's closing rule as its
+    board name.
+    """
+
+    FIXTURE = _fixture("probe_list_n6_closed_plus_h743.txt")
+
+    def test_all_five_probes_are_found(self) -> None:
+        assert len(parse_probe_list(self.FIXTURE)) == 5
+
+    def test_an_empty_firmware_field_is_absent_not_invented(self) -> None:
+        by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
+        n6 = by_serial["0034004F3335510735383531"]
+        assert n6.firmware != "Access"
+        assert not n6.firmware
+
+    def test_the_populated_board_still_reads_correctly(self) -> None:
+        """The fix must not cost the case that already worked."""
+        by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
+        h743 = by_serial["0054003D3137511139383538"]
+        assert h743.firmware == "V3J7M2"
+        assert h743.board == "NUCLEO-H743ZI"
+
+    def test_the_last_probe_does_not_absorb_the_closing_rule(self) -> None:
+        """The final block runs to the end of the section, so it is the one that
+        can swallow the '------' separator as a board name."""
+        last = parse_probe_list(self.FIXTURE)[-1]
+        assert last.serial == "003C002C3335510535383531"
+        assert not last.board
+        assert "---" not in (last.board or "")
+
+    def test_console_mapping_survives_five_probes_out_of_order(self) -> None:
+        """Probe-list order and UART order disagree completely here, which is
+        the case that positional pairing gets wrong."""
+        by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
+        assert by_serial["0054003D3137511139383538"].console_port == "/dev/ttyACM4"
+        assert by_serial["003C002C3335510535383531"].console_port == "/dev/ttyACM1"
+        assert by_serial["0034004F3335510735383531"].console_port == "/dev/ttyACM2"
