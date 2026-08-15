@@ -388,8 +388,55 @@ def _console_ports(output: str) -> dict[str, str]:
     return mapping
 
 
+#: Values the vendor CLI prints where a serial should be, when it could not read
+#: the probe at all.
+_PLACEHOLDER_SERIALS = frozenset({"", "-", "--", "n/a", "none", "null"})
+
+
+def _looks_like_a_probe_serial(value: str) -> bool:
+    """Whether this is a serial rather than the CLI failing to read one.
+
+    Real probes report a long alphanumeric identifier, 24 hex digits on every
+    ST-LINK seen here across V2-1, V3 and V3E. When a probe is present but
+    unreadable, which happens on `DEV_USB_COMM_ERR`, the CLI still prints a
+    numbered entry for it and fills the fields with a placeholder dash, or with
+    uninitialised memory.
+
+    Captured 2026-08-16 from two probes in that state, in consecutive runs:
+
+        ST-LINK SN  : -              ST-LINK SN  : EAT
+        Access Port Number  : -      Access Port Number  : 1214198062
+
+    and a run earlier gave `-0_1_3` with 32512. The garbage differs each time,
+    so it cannot be matched on. A length floor and an alphanumeric test separate
+    both shapes from a real serial without assuming the serial is hex, since not
+    every ST-LINK generation is guaranteed to be.
+    """
+    if value.casefold() in _PLACEHOLDER_SERIALS:
+        return False
+    return len(value) >= 8 and value.isalnum()
+
+
+def count_unreadable_entries(output: str) -> int:
+    """Probe entries the CLI printed but could not fill in.
+
+    Reported rather than silently dropped: a board that is attached and not
+    readable is a different situation from one that is absent, and it usually
+    means a USB problem rather than anything about the target.
+    """
+    stlink = _section(output, "STLink")
+    positions = [m.start() for m in _PROBE_ENTRY.finditer(stlink)]
+    unreadable = 0
+    for index, begin in enumerate(positions):
+        end = positions[index + 1] if index + 1 < len(positions) else len(stlink)
+        serial = _field(stlink[begin:end], "ST-LINK SN")
+        if serial is None or not _looks_like_a_probe_serial(serial):
+            unreadable += 1
+    return unreadable
+
+
 def parse_probe_list(output: str) -> list[ProbeInfo]:
-    """One entry per physically attached probe."""
+    """One entry per physically attached and READABLE probe."""
     stlink = _section(output, "STLink")
     consoles = _console_ports(output)
 
@@ -401,7 +448,11 @@ def parse_probe_list(output: str) -> list[ProbeInfo]:
         block = stlink[begin:end]
 
         serial = _field(block, "ST-LINK SN")
-        if not serial:
+        if not serial or not _looks_like_a_probe_serial(serial):
+            # An entry the CLI could not fill in. Counted by
+            # count_unreadable_entries rather than presented as a probe: passing
+            # "-" or "EAT" on as a serial would put it in the "pass one of these"
+            # list and let a caller try to select it.
             continue
 
         ports = _field(block, "Access Port Number")
@@ -420,3 +471,9 @@ def parse_probe_list(output: str) -> list[ProbeInfo]:
 def list_probes(toolchain: Toolchain) -> list[ProbeInfo]:
     result = run_command([str(toolchain.programmer), "-l"], timeout=90)
     return parse_probe_list(result.stdout)
+
+
+def list_probes_with_unreadable(toolchain: Toolchain) -> tuple[list[ProbeInfo], int]:
+    """Readable probes, plus how many entries could not be read at all."""
+    result = run_command([str(toolchain.programmer), "-l"], timeout=90)
+    return parse_probe_list(result.stdout), count_unreadable_entries(result.stdout)

@@ -195,13 +195,13 @@ def bench(monkeypatch, tmp_path):
         def text(self) -> str:
             return self._buffer
 
+    def _attached(tc: object) -> list[probe_mod.ProbeInfo]:
+        return [probe_mod.ProbeInfo(serial="AAA1", console_port=state.console_port)]
+
     monkeypatch.setattr(server, "_toolchain", lambda: object())
+    monkeypatch.setattr(server, "_list_probes", _attached)
     monkeypatch.setattr(
-        server,
-        "_list_probes",
-        lambda tc: [
-            probe_mod.ProbeInfo(serial="AAA1", console_port=state.console_port)
-        ],
+        server, "list_probes_with_unreadable", lambda tc: (_attached(tc), 0)
     )
     monkeypatch.setattr(server, "Probe", _FakeProbe)
     monkeypatch.setattr(server, "acquire_server", lambda *a, **k: None)
@@ -234,6 +234,7 @@ class TestEveryToolKeepsTheContract:
     def test_with_no_probes_attached(self, name: str, monkeypatch) -> None:
         monkeypatch.setattr(server, "_toolchain", lambda: object())
         monkeypatch.setattr(server, "_list_probes", lambda tc: [])
+        monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: ([], 0))
         server._held.clear()
         assert_contract(call(name), name)
 

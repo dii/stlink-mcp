@@ -38,6 +38,7 @@ from .probe import (
     TargetInfo,
     explain_connect_failure,
     list_probes as _list_probes,
+    list_probes_with_unreadable,
 )
 from .runner import (
     RunError,
@@ -197,9 +198,20 @@ def list_probes() -> dict[str, Any]:
         return failed(str(exc))
 
     held = set(held_serials())
-    probes = _list_probes(toolchain)
+    probes, unreadable = list_probes_with_unreadable(toolchain)
+    detail: dict[str, Any] = {}
+    if unreadable:
+        detail["unreadable_entries"] = unreadable
+        detail["unreadable_note"] = (
+            f"{unreadable} probe entr{'y was' if unreadable == 1 else 'ies were'} "
+            "listed by the programmer but could not be read, which usually means a "
+            "USB problem rather than anything about the target. They are excluded "
+            "above rather than passed on, because the placeholder the tool prints "
+            "in place of a serial is not one."
+        )
     return verified(
         "programmer enumeration",
+        **detail,
         count=len(probes),
         probes=[
             {

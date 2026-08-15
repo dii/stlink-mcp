@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from stlink_mcp.probe import parse_probe_list
+from stlink_mcp.probe import count_unreadable_entries, parse_probe_list
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -161,6 +161,48 @@ class TestGdbPortAllocation:
         ports = sorted(server._gdb_port_for(f"SN{i}") for i in range(4))
         gaps = [b - a for a, b in zip(ports, ports[1:])]
         assert all(gap >= 2 for gap in gaps), ports
+
+
+class TestUnreadableProbesAreNotProbes:
+    """Captured 2026-08-16, with two probes in DEV_USB_COMM_ERR.
+
+    The programmer still prints a numbered entry for a probe it cannot read, and
+    fills the fields with either a placeholder dash or uninitialised memory. Two
+    consecutive runs gave `-` and `EAT` with an access-port number of
+    1214198062, and before that `-0_1_3` with 32512, so the garbage cannot be
+    matched on and has to be excluded by what a real serial looks like.
+
+    Passing one of those on as a probe is not harmless: it lands in the "pass
+    one of these serials" list that every tool prints when several boards are
+    attached, inviting a caller to select something that does not exist.
+    """
+
+    FIXTURE = _fixture("probe_list_with_unreadable_entries.txt")
+
+    def test_only_the_readable_probes_are_returned(self) -> None:
+        probes = parse_probe_list(self.FIXTURE)
+        assert len(probes) == 3
+        assert {p.serial for p in probes} == {
+            "0038004C3335510735383531",
+            "003E00463234510337333934",
+            "0054003D3137511139383538",
+        }
+
+    def test_the_junk_serials_are_not_among_them(self) -> None:
+        serials = {p.serial for p in parse_probe_list(self.FIXTURE)}
+        assert "-" not in serials
+        assert "EAT" not in serials
+
+    def test_unreadable_entries_are_counted_not_silently_dropped(self) -> None:
+        """A board attached but unreadable is a different situation from an
+        absent one, and usually means USB rather than the target."""
+        assert count_unreadable_entries(self.FIXTURE) == 2
+
+    def test_a_healthy_capture_reports_nothing_unreadable(self) -> None:
+        assert count_unreadable_entries(TWO_BOARDS) == 0
+        assert count_unreadable_entries(
+            _fixture("probe_list_n6_closed_plus_h743.txt")
+        ) == 0
 
 
 class TestEmptyFieldsDoNotCaptureTheNextLine:
