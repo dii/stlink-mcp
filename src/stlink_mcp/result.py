@@ -42,6 +42,16 @@ FAILED = "failed"
 #: verdict by hand, which is the thing this module exists to stop.
 _RESERVED = ("ok", "status", "verified_by", "unverified_because", "error")
 
+#: Strings that assert the ABSENCE of evidence. Passing one of these to
+#: verified() keeps the letter of the rule and breaks all of it, and it is not a
+#: hypothetical: the tool surface shipped with `verified_by: "nothing"` sitting
+#: beside `ok: True`. A non-empty check alone does not catch that, because
+#: "nothing" is a perfectly good non-empty string.
+NON_EVIDENCE = frozenset(
+    {"nothing", "none", "n/a", "na", "nil", "null", "unknown", "unverified",
+     "not verified", "nowt", "assumed", "-", "?"}
+)
+
 
 class EvidenceError(RuntimeError):
     """A result was constructed without the evidence its outcome requires."""
@@ -66,13 +76,19 @@ def verified(evidence: str, **fields: Any) -> dict[str, Any]:
     "the vendor tool said so", write that, because it tells the reader exactly
     how much the success is worth.
     """
-    if not evidence or not evidence.strip():
+    cleaned = (evidence or "").strip()
+    if not cleaned:
         raise EvidenceError(
             "verified() needs the evidence that established success. If nothing "
             "observed the effect, the honest constructor is unverified()."
         )
+    if cleaned.strip(".").casefold() in NON_EVIDENCE:
+        raise EvidenceError(
+            f"{cleaned!r} is not evidence, it is the absence of evidence, and a "
+            "success cannot rest on it. The constructor for that is unverified()."
+        )
     _check(fields)
-    return {**fields, "ok": True, "status": VERIFIED, "verified_by": evidence.strip()}
+    return {**fields, "ok": True, "status": VERIFIED, "verified_by": cleaned}
 
 
 def unverified(reason: str, **fields: Any) -> dict[str, Any]:
