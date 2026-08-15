@@ -229,6 +229,17 @@ class Probe:
         )
         return answered_on
 
+    def gdb_access_port(self, info: TargetInfo) -> int:
+        """Which access port the GDB server should be told to use.
+
+        Deliberately taken from the family table, not from whichever port
+        answered a programmer connect. Those are different questions:
+        STM32_Programmer_CLI cannot reach AP1 on a board that is actively
+        running firmware, but the GDB server attaches to it perfectly well. Using
+        the programmer's answer as a gate refuses runs that would have worked.
+        """
+        return info.quirks.access_port
+
     @property
     def access_port(self) -> int:
         return 0 if self._access_port is None else self._access_port

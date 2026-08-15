@@ -265,8 +265,9 @@ def run_firmware(
                 "errors": info.errors,
                 "hint": explain_connect_failure(info),
             }
-        if probe.degraded_reason:
-            return {"ok": False, "probe_serial": serial, "error": probe.degraded_reason}
+        # A degraded programmer connect is NOT a reason to refuse a run. The GDB
+        # server uses its own path and reaches AP1 when the programmer cannot.
+        degraded_note = probe.degraded_reason
 
     quirks = info.quirks
     if quirks.vector_table_addr is None:
@@ -284,18 +285,22 @@ def run_firmware(
     gdb_port = _gdb_port_for(serial)
 
     try:
-        acquire_server(toolchain, probe.access_port, gdb_port, serial=serial)
+        # Family's port, not the one the programmer settled on: see
+        # Probe.gdb_access_port for why those differ.
+        acquire_server(toolchain, probe.gdb_access_port(info), gdb_port, serial=serial)
         _held[serial] = (probe, info, probe_info)
 
         if port:
             with console_mod.ConsoleCapture(port, _CONSOLE_BAUD) as cap:
                 sp, pc, size, _ = load_and_run(
-                    toolchain, elf, quirks.vector_table_addr, probe.access_port, gdb_port
+                    toolchain, elf, quirks.vector_table_addr,
+                    probe.gdb_access_port(info), gdb_port
                 )
                 text = cap.collect(console_seconds)
         else:
             sp, pc, size, _ = load_and_run(
-                toolchain, elf, quirks.vector_table_addr, probe.access_port, gdb_port
+                toolchain, elf, quirks.vector_table_addr,
+                probe.gdb_access_port(info), gdb_port
             )
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError) as exc:
