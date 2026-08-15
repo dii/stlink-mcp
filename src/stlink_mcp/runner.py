@@ -122,6 +122,18 @@ class GdbServer:
         self.__exit__()
         raise RunError(f"GDB server did not start listening on port {self.port}")
 
+    def is_alive(self) -> bool:
+        """Whether this server is still running AND still serving.
+
+        Both are checked, because they fail apart: the process can exit while
+        the port lingers, and it can survive while no longer listening. A held
+        session that has quietly died is the worst state this tool can be in,
+        so the test is deliberately the strict one.
+        """
+        if self._proc is None or self._proc.poll() is not None:
+            return False
+        return _port_is_listening(self.port)
+
     def __exit__(self, *exc_info: object) -> None:
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
@@ -162,6 +174,22 @@ _sessions: dict[str | None, GdbServer] = {}
 _atexit_registered = False
 
 
+def prune_dead_servers() -> list[str | None]:
+    """Forget sessions whose server has died. Returns the serials affected.
+
+    A dead session left in the registry is worse than no session at all. Reads
+    are refused because a server is "held", while every load connects to a
+    closed port; GDB in -batch then aborts its script, so nothing is written and
+    the previous image simply carries on running and printing. That combination
+    reads as a working board.
+    """
+    dead = [serial for serial, server in _sessions.items() if not server.is_alive()]
+    for serial in dead:
+        _sessions[serial].__exit__()
+        _sessions.pop(serial, None)
+    return dead
+
+
 def acquire_server(
     toolchain: Toolchain,
     access_port: int,
@@ -170,6 +198,8 @@ def acquire_server(
 ) -> GdbServer:
     """The live server for one probe, starting it if needed."""
     global _atexit_registered
+
+    prune_dead_servers()
 
     existing = _sessions.get(serial)
     if existing is not None:
@@ -196,14 +226,22 @@ def acquire_server(
 
 
 def server_is_held(serial: str | None = None) -> bool:
-    """Whether a server is held. With no serial, whether ANY is held, since the
-    programmer CLI is blocked by any of them."""
+    """Whether a LIVE server is held. With no serial, whether any is, since the
+    programmer CLI is blocked by any of them.
+
+    Dead sessions are pruned first rather than counted. Membership of the
+    registry used to be the whole test, which meant a server that had died still
+    blocked every read with "a GDB server is holding the probe" while no longer
+    holding anything.
+    """
+    prune_dead_servers()
     if serial is None:
         return bool(_sessions)
     return serial in _sessions
 
 
 def held_serials() -> list[str | None]:
+    prune_dead_servers()
     return list(_sessions)
 
 

@@ -187,7 +187,13 @@ class Probe:
                 if info.connected:
                     self.connect_mode = mode
                     self.target_was_reset = mode != "HOTPLUG"
-                    self._access_port = self._settle_access_port(info, port, mode)
+                    # allow_reset is forwarded, not defaulted. Without this a
+                    # caller who asked not to disturb a running program still
+                    # got one: the scan honoured the flag and the settle step
+                    # then appended a resetting connect of its own.
+                    self._access_port = self._settle_access_port(
+                        info, port, mode, allow_reset=allow_reset
+                    )
                     return info
                 last = info
 

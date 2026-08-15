@@ -64,10 +64,25 @@ _CONSOLE_BAUD = int(os.environ.get("STLINK_MCP_CONSOLE_BAUD", "115200"))
 # running STM32_Programmer_CLI, which cannot reach a probe the server has.
 _held: dict[str | None, tuple[Probe, TargetInfo, ProbeInfo | None]] = {}
 
+
+def _cached_for(serial: str | None):
+    """The cached identity, but only while a live server actually holds it.
+
+    The cache exists because a held server blocks the programmer CLI. Once that
+    server dies the reason is gone, so the entry must go too: otherwise the
+    identity of a board nobody is holding keeps being served from memory long
+    after it stopped being true.
+    """
+    if serial in _held and server_is_held(serial):
+        return _held[serial]
+    _held.pop(serial, None)
+    return None
+
 _HELD_MESSAGE = (
-    "A GDB server is holding the probe, so this tool cannot reach it. That is "
-    "deliberate: on some parts the debug access port cannot be re-acquired once "
-    "firmware has run, so the server is kept alive to allow repeated runs. Call "
+    "A GDB server is holding THIS probe, so the programmer cannot connect to "
+    "it. Enumeration and other probes are unaffected. That is deliberate: on "
+    "some parts the debug access port cannot be re-acquired once firmware has "
+    "run, so the server is kept alive to allow repeated runs. Call "
     "release_probe() to free it, but note that on those parts the board then "
     "needs a power cycle before firmware can be run again."
 )
@@ -82,16 +97,16 @@ def _toolchain() -> Toolchain:
 def _resolve_probe(
     toolchain: Toolchain, probe_serial: str | None
 ) -> tuple[str | None, ProbeInfo | None, str | None]:
-    """Pick which probe to talk to. Returns (serial, info, error)."""
-    if server_is_held():
-        # Enumeration needs the programmer CLI, which a held server blocks. Fall
-        # back to what was cached when the server was acquired.
-        if probe_serial in _held:
-            return probe_serial, _held[probe_serial][2], None
-        if probe_serial is None and len(_held) == 1:
-            only = next(iter(_held))
-            return only, _held[only][2], None
+    """Pick which probe to talk to. Returns (serial, info, error).
 
+    Enumeration is run even when a server is held. This used to be skipped in
+    favour of a cache, on the belief that a held server blocks the programmer
+    CLI outright. Measured 2026-08-15 with five probes attached and a server
+    held: `STM32_Programmer_CLI -l` listed all five in 1.5 seconds, the same as
+    with nothing held. What a held server actually blocks is a CONNECT to the
+    probe it holds, which is a much narrower thing and is checked per probe by
+    the tools that need it.
+    """
     attached = _list_probes(toolchain)
     if not attached:
         return None, None, "No ST-LINK probes found."
@@ -145,15 +160,17 @@ def list_probes() -> dict[str, Any]:
     The serial-to-console mapping is the useful part with more than one board:
     it is not positional, so pairing probes with /dev/ttyACM* by order gets it
     wrong.
+
+    Works while other probes are held. This used to refuse outright whenever any
+    server was held, which was based on an untested assumption; enumeration is
+    not in fact blocked, so the held probes are simply marked.
     """
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
         return failed(str(exc))
 
-    if server_is_held():
-        return failed(_HELD_MESSAGE, held_serials=[s for s in held_serials()])
-
+    held = set(held_serials())
     probes = _list_probes(toolchain)
     return verified(
         "programmer enumeration",
@@ -167,6 +184,9 @@ def list_probes() -> dict[str, Any]:
                 # 0 means the probe answered but could not reach a target, which
                 # is what a closed debug port looks like from out here.
                 "access_ports": p.access_ports,
+                # A held probe still enumerates. What it will not do is accept a
+                # programmer connect until release_probe() frees it.
+                "gdb_server_held": p.serial in held,
             }
             for p in probes
         ],
@@ -195,9 +215,10 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
     if error:
         return failed(error)
 
-    cached = serial in _held
-    if cached:
-        probe, info, probe_info = _held[serial]
+    entry = _cached_for(serial)
+    cached = entry is not None
+    if entry is not None:
+        probe, info, probe_info = entry
     else:
         probe = Probe(toolchain, serial=serial)
         info = probe.identify()
@@ -214,6 +235,8 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
             "revision": info.revision,
         },
         "access_port": probe.access_port,
+        "connect_mode": probe.connect_mode,
+        "target_was_reset": probe.target_was_reset,
         "family": {
             "name": quirks.name,
             "requires_signing_for_flash": quirks.requires_signing,
@@ -280,8 +303,9 @@ def run_firmware(
     if error:
         return failed(error)
 
-    if serial in _held:
-        probe, info, probe_info = _held[serial]
+    entry = _cached_for(serial)
+    if entry is not None:
+        probe, info, probe_info = entry
     else:
         probe = Probe(toolchain, serial=serial)
         info = probe.identify()
@@ -428,8 +452,6 @@ def flash_firmware(
     This tool does not sign, because signing needs keys and options that belong
     to the project rather than to a programmer.
     """
-    if server_is_held():
-        return failed(_HELD_MESSAGE, held_serials=held_serials())
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
@@ -438,6 +460,9 @@ def flash_firmware(
     serial, _, error = _resolve_probe(toolchain, probe_serial)
     if error:
         return failed(error)
+    # Only this probe matters. Another board's held server does not stop us.
+    if server_is_held(serial):
+        return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials())
 
     probe = Probe(toolchain, serial=serial)
     info = probe.identify()
@@ -480,22 +505,41 @@ def flash_firmware(
 def read_memory(
     address: int, length_bytes: int = 32, probe_serial: str | None = None
 ) -> dict[str, Any]:
-    """Read target memory as 32-bit words. Does not halt the core."""
-    if server_is_held():
-        return failed(_HELD_MESSAGE, held_serials=held_serials())
+    """Read target memory as 32-bit words, without disturbing the target.
+
+    Connects hotplug-only, so it neither halts nor resets the core. That is a
+    real constraint rather than a preference: on a part where running firmware
+    has closed the family's debug access port, reopening it needs a reset, and a
+    reset destroys the very state you are reading memory to inspect. This
+    refuses instead, and says why.
+    """
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
+        if server_is_held(serial):
+            return failed(
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+            )
         probe = Probe(toolchain, serial=serial)
-        probe.identify()
+        info = probe.identify(allow_reset=False)
+        if not info.connected:
+            return failed(
+                "Could not reach the core without resetting it, and this tool "
+                "does not reset. core_registers() will reset if it must, at the "
+                "cost of the state you are inspecting.",
+                probe_serial=serial,
+                hint=explain_connect_failure(info),
+            )
         words = probe.read_memory(address, length_bytes)
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc))
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        "connect_mode": probe.connect_mode,
+        "target_was_reset": probe.target_was_reset,
         "words": {f"0x{a:08X}": f"0x{v:08X}" for a, v in sorted(words.items())},
     }
     if probe.degraded_reason:
@@ -512,13 +556,15 @@ def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
     settles "did it actually start" when there is no console. Perturbing, so it
     is never used inside the routine checks.
     """
-    if server_is_held():
-        return failed(_HELD_MESSAGE, held_serials=held_serials())
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
+        if server_is_held(serial):
+            return failed(
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+            )
         probe = Probe(toolchain, serial=serial)
         probe.identify()
         regs = probe.core_registers()
@@ -528,9 +574,20 @@ def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "halted": True,
+        "connect_mode": probe.connect_mode,
+        # Reported, not hidden. Reaching the family's access port on a part that
+        # closes it can need a resetting connect, and a reset restarts the very
+        # program being inspected. A caller cannot allow for that if it is not told.
+        "target_was_reset": probe.target_was_reset,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
         "note": "The core is now halted. Resume it by running firmware again.",
     }
+    if probe.target_was_reset:
+        detail["reset_note"] = (
+            "The target was RESET to reach its debug access port, so these "
+            "registers describe a freshly restarted program, not the one that "
+            "was running when you asked."
+        )
     if probe.degraded_reason:
         return unverified(probe.degraded_reason, **detail)
 
@@ -545,29 +602,48 @@ def capture_console(
 
     Resolves the port from the probe's serial rather than taking the first
     /dev/ttyACM*, which with two boards attached is the wrong one about half the
-    time.
+    time, and with the five attached while this was written is a one-in-five pick.
+
+    Refuses rather than guessing, like every other tool here. It used to compute
+    the ambiguity error and then discard it, falling through to the first
+    matching device path: the one behaviour its own docstring said it avoided.
+    Reading the wrong board is not harmless for a verification tool, because
+    silence from the wrong board reads as "firmware not running" and output from
+    the wrong board reads as "it works".
     """
-    port: str | None = None
     try:
         toolchain = _toolchain()
-        _, probe_info, error = _resolve_probe(toolchain, probe_serial)
-        if not error and probe_info is not None:
-            port = probe_info.console_port
-    except ToolchainError:
-        pass
+    except ToolchainError as exc:
+        return failed(str(exc))
 
+    serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
+    if error:
+        return failed(error)
+
+    port = probe_info.console_port if probe_info else None
     if port is None:
-        port = console_mod.find_console_port()
+        port = os.environ.get("STLINK_MCP_CONSOLE")
     if port is None:
-        return failed("No serial console found.")
+        return failed(
+            f"No serial console is mapped to probe {serial}: the probe list's "
+            "UART section did not name a port for it. Set STLINK_MCP_CONSOLE to "
+            "the device path if you know it. This does not fall back to the "
+            "first /dev/ttyACM*, because that path belongs to whichever board "
+            "enumerated first, not to this one.",
+            probe_serial=serial,
+        )
 
     try:
         text = console_mod.capture(port, seconds, _CONSOLE_BAUD)
     except console_mod.ConsoleError as exc:
-        return failed(str(exc))
+        return failed(str(exc), probe_serial=serial, port=port)
 
     return verified(
-        "serial console read", port=port, seconds=seconds, output=text
+        "serial console read from the port mapped to this probe's serial",
+        probe_serial=serial,
+        port=port,
+        seconds=seconds,
+        output=text,
     )
 
 
