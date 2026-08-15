@@ -11,6 +11,11 @@ So: "ran" means the target produced output, not that a command exited zero.
 Where a claim cannot be verified, the result says so rather than implying it
 was checked.
 
+That rule is enforced by construction rather than by care: no tool in this file
+sets `ok`. Every return goes through `result.verified`, `result.unverified` or
+`result.failed`, and the first of those will not build without the evidence that
+justifies it. See `result.py` for why that became necessary.
+
 With more than one board attached, every tool takes a `probe_serial`. Leaving it
 out is only safe with a single probe, and the tools say so rather than quietly
 picking one, because "the first probe" is not stable across replugs and loading
@@ -26,6 +31,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import console as console_mod
+from .result import failed, unverified, verified
 from .probe import (
     Probe,
     ProbeInfo,
@@ -143,48 +149,54 @@ def list_probes() -> dict[str, Any]:
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
     if server_is_held():
-        return {
-            "ok": False,
-            "error": _HELD_MESSAGE,
-            "held_serials": [s for s in held_serials()],
-        }
+        return failed(_HELD_MESSAGE, held_serials=[s for s in held_serials()])
 
     probes = _list_probes(toolchain)
-    return {
-        "ok": True,
-        "count": len(probes),
-        "probes": [
+    return verified(
+        "programmer enumeration",
+        count=len(probes),
+        probes=[
             {
                 "serial": p.serial,
                 "firmware": p.firmware,
                 "board": p.board,
                 "console_port": p.console_port,
+                # 0 means the probe answered but could not reach a target, which
+                # is what a closed debug port looks like from out here.
+                "access_ports": p.access_ports,
             }
             for p in probes
         ],
-    }
+    )
 
 
 @mcp.tool()
 def board_state(probe_serial: str | None = None) -> dict[str, Any]:
     """Identify a target and report what is known about it.
 
-    Tries each debug access port, because a wrong access port and an absent
-    target produce the same error message from the vendor tools.
+    When the probe is free, this tries each debug access port, because a wrong
+    access port and an absent target produce the same error message from the
+    vendor tools.
+
+    When a GDB server is holding the probe it cannot do that, because the
+    programmer CLI cannot reach a held probe. It then answers from what was
+    captured when the server was acquired and says so, rather than presenting a
+    remembered identity as a fresh reading of the hardware.
     """
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
     serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
     if error:
-        return {"ok": False, "error": error}
+        return failed(error)
 
-    if serial in _held:
+    cached = serial in _held
+    if cached:
         probe, info, probe_info = _held[serial]
     else:
         probe = Probe(toolchain, serial=serial)
@@ -192,7 +204,6 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
 
     quirks = info.quirks
     state: dict[str, Any] = {
-        "ok": info.connected,
         "probe_serial": serial,
         "stlink": {"serial": info.stlink_serial, "firmware": info.stlink_firmware},
         "board": info.board,
@@ -217,13 +228,26 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
     }
 
     if not info.connected:
-        state["errors"] = info.errors
-        state["hint"] = explain_connect_failure(info)
-    if probe.degraded_reason:
-        state["ok"] = False
-        state["warning"] = probe.degraded_reason
+        return failed(
+            "Could not reach the core.",
+            errors=info.errors,
+            hint=explain_connect_failure(info),
+            **state,
+        )
 
-    return state
+    if cached:
+        return unverified(
+            "A GDB server is holding this probe, so nothing was run against the "
+            "hardware. This is the identity captured when that server was "
+            "acquired, which may be some time ago: a board that has since "
+            "crashed, browned out or been unplugged looks identical here.",
+            **state,
+        )
+
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **state)
+
+    return verified("programmer connect", **state)
 
 
 @mcp.tool()
@@ -235,10 +259,14 @@ def run_firmware(
     """Load an ELF into target RAM, start it, and verify that it started.
 
     Verification is console output from THAT board's own serial port, captured
-    from before the target is resumed so start-up banners are not missed. If the
-    target produces nothing, this reports ok=false even though every underlying
-    command succeeded, because a silent target is the symptom this project
-    exists to catch.
+    from before the target is resumed so start-up banners are not missed.
+
+    Two weaker outcomes are reported honestly rather than as success. If the GDB
+    batch does not reach its end markers the load did not complete, and any
+    console output is the previous image still running. If the load completes but
+    nothing arrives on the console, that is reported as unverified rather than as
+    a run, because a target that is silent and a target that does not print look
+    identical from here.
 
     Does not sign anything: an image placed directly in RAM by a debugger
     bypasses the boot ROM.
@@ -246,11 +274,11 @@ def run_firmware(
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
     serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
     if error:
-        return {"ok": False, "error": error}
+        return failed(error)
 
     if serial in _held:
         probe, info, probe_info = _held[serial]
@@ -258,26 +286,21 @@ def run_firmware(
         probe = Probe(toolchain, serial=serial)
         info = probe.identify()
         if not info.connected:
-            return {
-                "ok": False,
-                "error": "No target",
-                "probe_serial": serial,
-                "errors": info.errors,
-                "hint": explain_connect_failure(info),
-            }
+            return failed(
+                "No target",
+                probe_serial=serial,
+                errors=info.errors,
+                hint=explain_connect_failure(info),
+            )
         # A degraded programmer connect is NOT a reason to refuse a run. The GDB
         # server uses its own path and reaches AP1 when the programmer cannot.
-        degraded_note = probe.degraded_reason
 
     quirks = info.quirks
     if quirks.vector_table_addr is None:
-        return {
-            "ok": False,
-            "error": (
-                f"No RAM-execution layout is recorded for {quirks.name}. "
-                "Add it to quirks.py once verified on hardware, rather than guessing."
-            ),
-        }
+        return failed(
+            f"No RAM-execution layout is recorded for {quirks.name}. "
+            "Add it to quirks.py once verified on hardware, rather than guessing."
+        )
 
     elf = Path(elf_path).expanduser()
     # This board's own console, not whichever ttyACM* happens to be first.
@@ -304,44 +327,62 @@ def run_firmware(
             )
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError) as exc:
-        return {"ok": False, "probe_serial": serial, "error": str(exc)}
+        return failed(str(exc), probe_serial=serial)
 
-    started = bool(text.strip())
-    result: dict[str, Any] = {
-        "ok": started if port else True,
+    detail: dict[str, Any] = {
         "probe_serial": serial,
         "console_port": port,
-        "stack_pointer": _hex(sp),
-        "program_counter": _hex(pc),
+        "image_initial_sp": _hex(sp),
+        "image_entry_point": _hex(pc),
         "load_size_bytes": size,
         "console": text,
-        "verified_by": "console output" if port else "nothing",
+        "image_note": (
+            "image_initial_sp and image_entry_point are read out of the ELF's own "
+            "vector table and written into the core. They are what the image asked "
+            "for, not a reading of where the core is. core_registers() is the "
+            "observation."
+        ),
     }
 
     if quirks.debug_closes_on_run:
-        result["next_run_note"] = (
+        detail["next_run_note"] = (
             f"On {quirks.name}, firmware closes the debug access port as it starts, "
             "and no reset reopens it. The GDB server is therefore being HELD so "
             "further run_firmware calls on this board keep working without a power "
             "cycle. read_memory, core_registers and flash_firmware cannot reach the "
-            "probe until release_probe() is called, and releasing it means a power "
-            "cycle before firmware can run again."
+            "probe until release_probe() is called."
+        )
+
+    # The markers are the only evidence that the GDB batch reached its end. GDB
+    # in -batch mode aborts the whole script on the first failed command, so a
+    # missing marker means the load did not happen, whatever the console says.
+    # This matters most when it looks best: the previous image is still resident
+    # and still printing, so the console is busy while nothing was loaded.
+    if sp is None or pc is None:
+        return failed(
+            "The GDB batch did not reach its end markers, so the load did not "
+            "complete. Any console output here is the PREVIOUS image still "
+            "running, not the one just requested.",
+            **detail,
         )
 
     if not port:
-        result["warning"] = (
-            "No serial console for this probe, so this reports that the commands "
-            "succeeded, NOT that the firmware is running."
-        )
-    elif not started:
-        result["error"] = (
-            "The load and start commands succeeded but the target produced no "
-            "console output. The firmware is probably not running, or it does not "
-            "print. core_registers() shows where the program counter actually is, "
-            "after release_probe()."
+        return unverified(
+            "No serial console is mapped to this probe, so nothing observed "
+            "whether the image started. The load itself completed.",
+            **detail,
         )
 
-    return result
+    if not text.strip():
+        return unverified(
+            "The image loaded and was started, but the target printed nothing in "
+            "the capture window. It may not be running, or it may not print. "
+            "core_registers() shows where the program counter actually is, after "
+            "release_probe().",
+            **detail,
+        )
+
+    return verified("console output from this board's own port", **detail)
 
 
 @mcp.tool()
@@ -360,13 +401,21 @@ def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
     for s in affected:
         _held.pop(s, None)
 
-    result: dict[str, Any] = {"ok": True, "released": released, "probes": affected}
+    detail: dict[str, Any] = {"released": released, "probes": affected}
     if released and any(q.debug_closes_on_run for q in quirks):
-        result["warning"] = (
+        detail["warning"] = (
             "The debug access port cannot be re-acquired now that firmware has "
             "run. Power cycle the affected board(s) before the next run_firmware."
         )
-    return result
+
+    if not released:
+        return unverified(
+            "No GDB server was held for that probe, so nothing was released. "
+            "Either it was already free, or a different serial is holding it.",
+            **detail,
+        )
+
+    return verified("gdb server shut down and the probe freed", **detail)
 
 
 @mcp.tool()
@@ -380,47 +429,51 @@ def flash_firmware(
     to the project rather than to a programmer.
     """
     if server_is_held():
-        return {"ok": False, "error": _HELD_MESSAGE, "held_serials": held_serials()}
+        return failed(_HELD_MESSAGE, held_serials=held_serials())
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
     serial, _, error = _resolve_probe(toolchain, probe_serial)
     if error:
-        return {"ok": False, "error": error}
+        return failed(error)
 
     probe = Probe(toolchain, serial=serial)
     info = probe.identify()
     if not info.connected:
-        return {"ok": False, "error": "No target", "hint": explain_connect_failure(info)}
+        return failed("No target", hint=explain_connect_failure(info))
 
     quirks = info.quirks
     target_address = address if address is not None else quirks.flash_base
     if target_address is None:
-        return {
-            "ok": False,
-            "error": f"No flash base recorded for {quirks.name}; pass address explicitly.",
-        }
+        return failed(
+            f"No flash base recorded for {quirks.name}; pass address explicitly."
+        )
 
     try:
         output = probe.program_flash(
             str(Path(image_path).expanduser()), target_address, quirks.external_loader
         )
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
-    return {
-        "ok": True,
-        "probe_serial": serial,
-        "address": _hex(target_address),
-        "signing_required": quirks.requires_signing,
-        "detail": output.strip().splitlines()[-3:],
-        "next_step": (
+    # The evidence names its own weakness deliberately. This is the one tool
+    # whose only check is the vendor's own banner, which is exactly the thing
+    # the README's opening example shows cannot be trusted on its own.
+    return verified(
+        "the programmer reported the download completed. The image was NOT read "
+        "back and compared, so this confirms the write was accepted, not that "
+        "flash holds what you sent",
+        probe_serial=serial,
+        address=_hex(target_address),
+        signing_required=quirks.requires_signing,
+        detail=output.strip().splitlines()[-3:],
+        next_step=(
             "This does not start the image. Set the board's boot configuration to "
             "boot from flash and reset it."
         ),
-    }
+    )
 
 
 @mcp.tool()
@@ -429,23 +482,26 @@ def read_memory(
 ) -> dict[str, Any]:
     """Read target memory as 32-bit words. Does not halt the core."""
     if server_is_held():
-        return {"ok": False, "error": _HELD_MESSAGE, "held_serials": held_serials()}
+        return failed(_HELD_MESSAGE, held_serials=held_serials())
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
-            return {"ok": False, "error": error}
+            return failed(error)
         probe = Probe(toolchain, serial=serial)
         probe.identify()
         words = probe.read_memory(address, length_bytes)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
-    return {
-        "ok": True,
+    detail: dict[str, Any] = {
         "probe_serial": serial,
         "words": {f"0x{a:08X}": f"0x{v:08X}" for a, v in sorted(words.items())},
     }
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **detail)
+
+    return verified("words read back from the target", **detail)
 
 
 @mcp.tool()
@@ -457,25 +513,28 @@ def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
     is never used inside the routine checks.
     """
     if server_is_held():
-        return {"ok": False, "error": _HELD_MESSAGE, "held_serials": held_serials()}
+        return failed(_HELD_MESSAGE, held_serials=held_serials())
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
-            return {"ok": False, "error": error}
+            return failed(error)
         probe = Probe(toolchain, serial=serial)
         probe.identify()
         regs = probe.core_registers()
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
-    return {
-        "ok": True,
+    detail: dict[str, Any] = {
         "probe_serial": serial,
         "halted": True,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
         "note": "The core is now halted. Resume it by running firmware again.",
     }
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **detail)
+
+    return verified("registers read back from the halted core", **detail)
 
 
 @mcp.tool()
@@ -500,14 +559,16 @@ def capture_console(
     if port is None:
         port = console_mod.find_console_port()
     if port is None:
-        return {"ok": False, "error": "No serial console found."}
+        return failed("No serial console found.")
 
     try:
         text = console_mod.capture(port, seconds, _CONSOLE_BAUD)
     except console_mod.ConsoleError as exc:
-        return {"ok": False, "error": str(exc)}
+        return failed(str(exc))
 
-    return {"ok": True, "port": port, "seconds": seconds, "output": text}
+    return verified(
+        "serial console read", port=port, seconds=seconds, output=text
+    )
 
 
 def _hex(value: int | None) -> str | None:

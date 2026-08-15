@@ -56,20 +56,6 @@ def _port_is_listening(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
-@dataclass
-class RunResult:
-    ok: bool
-    stack_pointer: int | None
-    program_counter: int | None
-    load_size: int | None
-    console_output: str
-    detail: str
-
-    @property
-    def verified_by(self) -> str:
-        return "console output" if self.console_output.strip() else "none"
-
-
 class GdbServer:
     """A GDB server process.
 
@@ -299,18 +285,8 @@ def load_and_run(
     return _grab("STLINK_MCP_SP="), _grab("STLINK_MCP_PC="), load_size, output
 
 
-def entry_point(toolchain: Toolchain, elf: Path) -> int | None:
-    """The ELF's entry point, read from the file rather than assumed.
-
-    Hardcoding this is a real trap: it is the reset handler's address and it
-    moves whenever the image changes size, and starting at a stale address fails
-    silently rather than loudly.
-    """
-    result = run_command([str(toolchain.readelf), "-h", str(elf)], timeout=60)
-    for line in result.stdout.splitlines():
-        if "Entry point address" in line:
-            try:
-                return int(line.split(":", 1)[1].strip(), 16)
-            except ValueError:
-                return None
-    raise ToolchainError(f"Could not read an entry point from {elf}")
+# entry_point() lived here: it read the ELF header with readelf to find the
+# entry address. Nothing called it, because the GDB script takes both SP and PC
+# straight out of the image's vector table instead, which needs no extra tool.
+# It was removed rather than kept "in case", since its only lasting effect was
+# that Toolchain.check() refused to start without arm-none-eabi-readelf.

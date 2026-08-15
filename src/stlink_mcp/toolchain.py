@@ -45,10 +45,6 @@ class Toolchain:
         return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-gdb"
 
     @property
-    def readelf(self) -> Path:
-        return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-readelf"
-
-    @property
     def programmer_bin_dir(self) -> Path:
         """The GDB server needs this passed with -cp."""
         return self.root / "STM32CubeProgrammer" / "bin"
@@ -60,7 +56,7 @@ class Toolchain:
         """Fail loudly and specifically if anything required is missing."""
         missing = [
             str(p)
-            for p in (self.programmer, self.gdb_server, self.gdb, self.readelf)
+            for p in (self.programmer, self.gdb_server, self.gdb)
             if not p.exists()
         ]
         if missing:
