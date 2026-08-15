@@ -87,6 +87,42 @@ class FamilyQuirks:
 
 #: Families verified on real hardware. Everything else falls back to DEFAULT.
 FAMILIES: dict[str, FamilyQuirks] = {
+    "STM32H7": FamilyQuirks(
+        name="STM32H7",
+        access_port=0,
+        ram_load_base=0x24000000,
+        vector_table_addr=0x24000000,
+        flash_base=0x08000000,
+        requires_signing=False,
+        debug_closes_on_run=False,
+        notes=(
+            "The ordinary shape, and it is in this table mainly to prove the "
+            "table describes a family rather than describing the STM32N6. It "
+            "inverts the N6 on every axis: internal flash instead of none, core "
+            "debug on AP0 instead of AP1, no signing, no external loader, and a "
+            "debug port that stays open while firmware runs. "
+            "Note the vector table sits AT the RAM load base here, while on the "
+            "N6 it is 0x400 into it because the signing header is padded to that "
+            "alignment. The two fields are genuinely independent, which is only "
+            "visible once a second family exists. "
+            "Verified on NUCLEO-H743ZI (device 0x450, Cortex-M7, Rev V, "
+            "ST-LINK/V3E firmware V3J7M2) on 2026-08-15. Identification and "
+            "memory reads succeed on AP0 with a hotplug connect, repeatedly and "
+            "with firmware running. 0x08000000 holds a plain Cortex-M vector "
+            "table (initial SP 0x20020000, the top of the 128 KB DTCM, and a "
+            "reset handler at 0x0807FA99). RAM execution was verified by running "
+            "a purpose-built image from AXI SRAM that increments a counter and "
+            "touches no peripheral: read over the debugger, the counter advanced "
+            "between two samples while the PC sat in its delay loop. That is "
+            "direct observation of the core rather than console output, which is "
+            "the right evidence here since a bare RAM image has no console until "
+            "someone configures one. "
+            "AXI SRAM was chosen over DTCM at 0x20000000 and SRAM1-4 from "
+            "0x30000000 because it is the largest contiguous region (512 KB) and "
+            "is reachable by every bus master. DTCM is faster and would also "
+            "work for a small image; it is not recorded because it was not tried."
+        ),
+    ),
     "STM32N6": FamilyQuirks(
         name="STM32N6",
         access_port=1,
@@ -105,13 +141,17 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "the port is right. The debug port is only open in DEV boot mode "
             "(BOOT1 high); in the standalone boot configuration a connect fails "
             "with 'Unable to get core ID', which is expected and not a fault. "
-            "Once firmware has run, AP1 cannot be re-acquired. Re-measured "
-            "2026-08-15 with nothing holding the probe, because an earlier run of "
-            "this test was invalid (a controller still held it): a hotplug connect "
-            "fails, a RESETTING connect fails, and a freshly started GDB server "
-            "fails with 'Failed to connect to device', while the same tooling "
-            "reaches a NUCLEO-H743ZI on the same hub. Whether removing power "
-            "restores it is the one part not yet re-measured. An already "
+            "Once firmware has run, AP1 cannot be re-acquired. TREAT THIS AS "
+            "UNSETTLED. It has now been tested twice and both tests were invalid "
+            "in the same way: a long-lived controller process was holding the "
+            "probe on each occasion, so the connect failures show only that a "
+            "held probe refuses a second connection, which is not in question. "
+            "The second attempt, on 2026-08-15, was made specifically to correct "
+            "the first and repeated its exact error, because the holding process "
+            "was found with a pgrep pattern longer than the 15 characters Linux "
+            "allows in comm, which silently matches nothing. A valid test needs "
+            "every gdbserver for that probe confirmed gone by port, not by "
+            "process name: `ss -ltnp` on the GDB port range. An already "
             "established GDB server connection keeps working across repeated "
             "load-and-run cycles, but ONLY with an explicit reset before each "
             "load: --halt resets once at server start, and without that reset "
@@ -138,6 +178,7 @@ DEFAULT = FamilyQuirks(
 
 #: Device IDs as reported by STM32_Programmer_CLI, mapped to a family key.
 DEVICE_ID_TO_FAMILY: dict[int, str] = {
+    0x450: "STM32H7",
     0x486: "STM32N6",
 }
 

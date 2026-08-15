@@ -113,7 +113,18 @@ def explain_connect_failure(info: TargetInfo) -> str:
         "The target's boot configuration may close the debug port. On parts "
         "that boot from external memory, the debug port is typically only open "
         "in the development boot mode selected by a BOOT pin or jumper.",
-        "The probe may be held by another process, such as an IDE or a GDB server.",
+        "The probe may be held by ANOTHER PROCESS: an IDE, or a GDB server left "
+        "by a different session or an earlier run. This server only knows about "
+        "sessions it started itself, so it cannot see those and will report the "
+        "target as unreachable instead. Check by PORT, not by process name: "
+        "`ss -ltnp | grep 6123` and widen the range as needed; each server's "
+        "command line carries `-i <probe serial>`. Do not use "
+        "`pgrep ST-LINK_gdbserver`, which matches nothing at all, because Linux "
+        "truncates process names to fifteen characters. That exact mistake has "
+        "now invalidated two attempts to measure this behaviour.",
+        "The target may be unpowered, held in reset, or the probe unplugged "
+        "since it was last enumerated. list_probes reports access_ports for each "
+        "probe, and 0 there means the probe answered but reached no target.",
     ]
     return "Could not reach the core. Most likely causes:\n  - " + "\n  - ".join(hints)
 

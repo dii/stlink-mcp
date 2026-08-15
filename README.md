@@ -103,10 +103,16 @@ uv sync
 
 `run_firmware` starts a GDB server and **holds it** rather than tearing it down.
 That is not laziness. On the STM32N6, once firmware has run the debug access port
-cannot be re-acquired. Measured 2026-08-15, with nothing else holding the probe:
-a hotplug connect fails, a resetting connect fails, and a freshly started GDB
-server fails with "Failed to connect to device", while the same tooling reaches a
-different board on the same hub without trouble.
+appears not to be re-acquirable, which is why the server is kept alive.
+
+How strongly that is established: not very, and the honest answer is that it has
+been tested twice and both tests were invalid the same way, because another
+process was holding the probe each time. A held probe refuses a second
+connection whatever the state of its debug port, so those runs measured the
+wrong thing. Anyone repeating it should confirm the probe is free by port
+(`ss -ltnp` over the GDB port range) rather than by process name, since Linux
+truncates process names to fifteen characters and the obvious `pgrep` for
+`ST-LINK_gdbserver` silently matches nothing.
 
 An already established connection keeps working across repeated load-and-run
 cycles, **provided the target is reset before every load**. That precondition is
