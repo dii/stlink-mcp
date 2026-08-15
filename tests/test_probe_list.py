@@ -114,3 +114,28 @@ class TestConsoleMapping:
         probes = parse_probe_list(TWO_BOARDS)
         assert probes[0].console_port == "/dev/ttyACM1"
         assert probes[1].console_port == "/dev/ttyACM0"
+
+
+class TestGdbPortAllocation:
+    """Ports must be distinct per probe and stable within a process.
+
+    An earlier version derived the port from hash(serial) % 100. Python
+    randomises string hashing per process, so ports moved between runs, and
+    nothing stopped two serials colliding. It surfaced on the fourth board.
+    """
+
+    def test_each_probe_gets_a_distinct_port(self) -> None:
+        from stlink_mcp import server
+
+        server._gdb_ports.clear()
+        serials = [f"00{i:06X}3335510735383531" for i in range(8)]
+        ports = [server._gdb_port_for(s) for s in serials]
+        assert len(set(ports)) == len(serials)
+
+    def test_a_probe_keeps_its_port(self) -> None:
+        from stlink_mcp import server
+
+        server._gdb_ports.clear()
+        first = server._gdb_port_for("AAAA")
+        server._gdb_port_for("BBBB")
+        assert server._gdb_port_for("AAAA") == first

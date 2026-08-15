@@ -103,14 +103,30 @@ def _resolve_probe(
     return None, None, f"No probe with serial {probe_serial}. Attached: {listing}"
 
 
-def _gdb_port_for(serial: str | None, toolchain: Toolchain) -> int:
-    """A stable, distinct GDB port per probe, so boards do not collide."""
-    if serial is None:
-        return _GDB_PORT_BASE
-    attached = [p.serial for p in _list_probes(toolchain)] if not server_is_held() else []
-    if serial in attached:
-        return _GDB_PORT_BASE + attached.index(serial)
-    return _GDB_PORT_BASE + (hash(serial) % 100)
+# Assigned on first use and never reassigned, so a probe keeps its port for the
+# life of the process.
+_gdb_ports: dict[str | None, int] = {}
+
+
+def _gdb_port_for(serial: str | None) -> int:
+    """A distinct GDB port per probe.
+
+    Deliberately a registry rather than a function of the serial. An earlier
+    version derived the port from hash(serial) % 100, which is wrong twice over:
+    Python randomises string hashing per process, so ports moved between runs,
+    and nothing prevented two serials colliding on one port. With four boards
+    attached that collision showed up on the fourth, as a refusal to start a
+    second server on a port already in use.
+    """
+    if serial in _gdb_ports:
+        return _gdb_ports[serial]
+
+    taken = set(_gdb_ports.values())
+    port = _GDB_PORT_BASE
+    while port in taken:
+        port += 1
+    _gdb_ports[serial] = port
+    return port
 
 
 @mcp.tool()
@@ -262,7 +278,7 @@ def run_firmware(
     elf = Path(elf_path).expanduser()
     # This board's own console, not whichever ttyACM* happens to be first.
     port = probe_info.console_port if probe_info else console_mod.find_console_port()
-    gdb_port = _gdb_port_for(serial, toolchain)
+    gdb_port = _gdb_port_for(serial)
 
     try:
         acquire_server(toolchain, probe.access_port, gdb_port, serial=serial)
