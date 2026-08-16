@@ -284,6 +284,11 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
             "flash_base": _hex(quirks.flash_base),
             "external_loader": quirks.external_loader,
             "notes": quirks.notes,
+            # Which of these numbers somebody has actually seen work on a board.
+            # Reported beside the values rather than folded into them, because
+            # an agent deciding whether to trust an address needs both, and a
+            # value with no provenance reads as a measured one.
+            "provenance": quirks.provenance_summary(),
         },
         "console_port": probe_info.console_port if probe_info else None,
         "gdb_server_held": server_is_held(serial),
@@ -362,7 +367,8 @@ def run_firmware(
     if quirks.vector_table_addr is None:
         return failed(
             f"No RAM-execution layout is recorded for {quirks.name}. "
-            "Add it to quirks.py once verified on hardware, rather than guessing."
+            "Add it to quirks.py, or supply it for this device, and say where "
+            "the value came from rather than guessing."
         )
 
     elf = Path(elf_path).expanduser()
@@ -543,6 +549,31 @@ def flash_firmware(
     if target_address is None:
         return failed(
             f"No flash base recorded for {quirks.name}; pass address explicitly."
+        )
+
+    # The write path does not act on a value nobody has measured.
+    #
+    # Elsewhere this server will act on an unmeasured address and let the
+    # observation decide, because a RAM load that used the wrong base is undone
+    # by a reset and there IS an observation: the target either produces console
+    # output or it does not. Neither is true here. This tool writes persistently
+    # and has no readback, so a wrong base would be reported by the only check
+    # available, the programmer's own banner, which is the specific thing this
+    # project exists to distrust.
+    #
+    # An explicit `address` is a different matter and is allowed: the caller has
+    # said where to write, so it is their claim rather than the table's guess.
+    if address is None and not quirks.is_measured("flash_base"):
+        return failed(
+            f"The flash base for {quirks.name} is "
+            f"{quirks.provenance_of('flash_base')}, not measured on hardware, and "
+            "this tool writes permanently with no readback to catch a wrong "
+            "address.",
+            hint=(
+                "Either pass `address` explicitly, which records the choice as "
+                "yours, or confirm the base by running an image from RAM first, "
+                "which is reversible and self-verifying."
+            ),
         )
 
     try:

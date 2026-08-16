@@ -333,3 +333,70 @@ class TestReleaseProbe:
         assert_contract(r)
         assert r["ok"] is False
         assert r["released"] is False
+
+
+class TestTheWritePathWillNotActOnAnUnmeasuredAddress:
+    """`flash_firmware` is the one tool whose mistake is not undone by a reset.
+
+    Everywhere else this server may act on an address nobody has measured and
+    let the observation settle it, because a RAM load that used the wrong base
+    is reversible and there IS an observation: the target either produces
+    console output or it does not. Neither holds here. This tool writes
+    persistently, has no readback, and the only check available is the vendor's
+    own completion banner, which is the specific claim this project exists to
+    distrust.
+
+    So the refusal is a property of the write path rather than a property of the
+    table being empty, and it has to survive device coverage arriving. These
+    tests use a device whose flash base is present and merely unmeasured, which
+    is exactly what a seeded entry looks like.
+    """
+
+    UNMEASURED_DEVICE = 0x413  # STM32F4, not in FAMILIES: a plausible seeded part
+
+    @pytest.fixture
+    def seeded_bench(self, bench, monkeypatch):
+        from stlink_mcp import quirks as quirks_mod
+
+        seeded = quirks_mod.FamilyQuirks(
+            name="STM32F4",
+            access_port=0,
+            ram_load_base=0x20000000,
+            vector_table_addr=0x20000000,
+            flash_base=0x08000000,
+            notes="seeded from the vendor device database, nothing measured",
+            default_provenance=quirks_mod.VENDOR_DB,
+            provenance={"access_port": quirks_mod.ASSUMED},
+        )
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: seeded)
+        monkeypatch.setattr(_FakeProbe, "device_id", self.UNMEASURED_DEVICE)
+        return bench
+
+    def test_it_refuses_a_flash_base_nobody_measured(self, seeded_bench, tmp_path) -> None:
+        image = tmp_path / "image.bin"
+        image.write_bytes(b"\x00" * 16)
+        out = server.flash_firmware(image_path=str(image))
+        assert out["ok"] is False
+        assert out["status"] == result.FAILED
+        assert "vendor-db" in out["error"]
+
+    def test_the_refusal_says_what_to_do_instead(self, seeded_bench, tmp_path) -> None:
+        """A refusal an agent cannot act on becomes a retry loop."""
+        image = tmp_path / "image.bin"
+        image.write_bytes(b"\x00" * 16)
+        out = server.flash_firmware(image_path=str(image))
+        assert "address" in out.get("hint", "")
+
+    def test_an_explicit_address_is_the_callers_claim_and_is_allowed(
+        self, seeded_bench, tmp_path
+    ) -> None:
+        """The refusal is about the TABLE guessing, not about the operation.
+
+        A caller who names the address has made the claim themselves, and
+        blocking that would leave no way to flash a part this project has not
+        characterised, which is worse and is not what N2 asks for.
+        """
+        image = tmp_path / "image.bin"
+        image.write_bytes(b"\x00" * 16)
+        out = server.flash_firmware(image_path=str(image), address=0x08000000)
+        assert out["status"] != result.FAILED or "vendor-db" not in out.get("error", "")

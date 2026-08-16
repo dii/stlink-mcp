@@ -36,8 +36,8 @@ fixed first rather than inherited. (RT4)
 | N2 missing facts refuse rather than guess | Done for RAM execution and external flash |
 | N3 hidden state is reported | Done: reset, cache, degraded access port, held probe |
 | N4 nothing perturbs silently | Done: `target_was_reset`, `core_registers` documented as halting |
-| N5 runs on hardware that is not ours | Half. Quirks are data, but describing a board means editing the installed package |
-| N6 facts record how they were established | **Not started.** Blocks phases 2 and 3 |
+| N5 runs on hardware that is not ours | Half. Quirks are data and can now be labelled, but describing a board still means editing the installed package |
+| N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
 | N7 flash, reset, interrogate all first class | **Reset missing.** It only happens as a side effect of something else |
 | N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `probe.py:164`, `-d` in `runner.py:145`. No JTAG |
 | N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals |
@@ -55,16 +55,29 @@ a tool, to take the reset kind (hardware pulse, software, connect-under-reset), 
 what it actually achieved, since on some parts a reset does not reopen a closed access port
 and saying so is the whole point.
 
-**Provenance (N6).** Every part-specific field records where it came from: `measured`,
-`vendor-db`, or `user-stated`. Nothing else in this file can be built honestly without it,
-because the moment a value arrives from anywhere but a board, presenting it like a measured
-one breaks the project's central claim inside its own data. `board_state` reports provenance
-beside the values, so an agent knows which numbers a person has actually seen work.
+**Provenance (N6). DONE.** Every part-specific field records where it came from. The plan
+named three sources and building it produced a fourth: `assumed`, for a value nobody measured
+and no source states, which is what `DEFAULT`'s access port 0 actually is. The first version
+of the code labelled those `measured`, which is the lie N6 exists to stop arriving through the
+mechanism built to stop it, and it is now the first test in the provenance suite.
 
-The real design question of this phase: **what to do with a value that is not measured.**
-Refusing wastes the coverage. Acting silently breaks N1. The intended answer is to act,
-verify by observation, and return `verified` only on the observation, with `unverified` and a
-named reason when no observation is available.
+`board_state` reports provenance beside the values, so an agent knows which numbers a person
+has actually seen work. `requires_signing` and `debug_closes_on_run` became tri-state on the
+way, because a bool defaulting to False cannot tell "we checked and it does not" from "nobody
+has said", and the provenance model would then report an origin for a claim the entry never
+made.
+
+The real design question of this phase was **what to do with a value that is not measured**,
+and it is answered per path rather than globally. Refusing everywhere wastes the coverage;
+acting everywhere breaks N1. So: act and let the observation decide where the operation is
+reversible and an observation exists, which is the RAM path, and refuse where it is neither,
+which is the write path. `flash_firmware` now refuses a base that is not `measured` unless the
+caller names the address themselves, which makes it their claim rather than the table's guess.
+(RT7)
+
+The contribution rule is machine-checked rather than requested: any entry in the hand-written
+`FAMILIES` dict carrying a non-`measured` value fails the build, and the three prose statements
+that forbade what Phase 2 does have been reworded. (RT5)
 
 **User-stated board details (N5).** A user must be able to say what their board is without
 editing the installed package: a config file or a tool parameter carrying the same fields the

@@ -112,9 +112,20 @@ So: run the probe, read the header, open the archive. Do not reason from the cha
 ## Quirks belong in the table, not the code
 
 `src/stlink_mcp/quirks.py` holds everything family specific. Adding a family is one entry
-there plus a device-ID mapping. Fill in only values verified on real hardware; the tests in
-`tests/test_quirks.py` enforce internal consistency (a RAM load address without a vector
-table address, for instance, is rejected).
+there plus a device-ID mapping. The tests in `tests/test_quirks.py` enforce internal
+consistency (a RAM load address without a vector table address, for instance, is rejected).
+
+**Entries in `FAMILIES` are hand-written and must be fully measured on hardware.** That is no
+longer only a request: `TestTheContributionRuleIsCheckedNotJustStated` fails the build if any
+entry there carries a value that is not `measured`. If you have a value you have not run on a
+board, it does not belong in that dict.
+
+Unmeasured values are allowed in the table, but they arrive from elsewhere and they arrive
+labelled. Every field has a provenance, one of `measured`, `vendor-db`, `user-stated` or
+`assumed`, and `DEFAULT` is the worked example: its access port 0 is `assumed`, because it is
+a fact about the STM32 range and not about any part. What the label changes is behaviour, not
+presentation. `flash_firmware` refuses a base it did not get from a measurement or from the
+caller, because that write persists and there is no readback to catch a wrong address.
 
 Every entry carries `notes`, and that field is the point rather than decoration: it is what
 stops the next person rediscovering the quirk the hard way.

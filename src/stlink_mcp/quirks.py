@@ -5,14 +5,48 @@ this project exists is that these details are non-obvious, easy to lose, and
 produce confidently wrong behaviour when wrong. A new family should be one entry
 here, not a patch to the tool logic.
 
-Adding a family: only fill in what you have actually verified on hardware. A
-wrong value here is worse than a missing one, because a missing one fails loudly
-and a wrong one is exactly the failure mode this project is trying to remove.
+Adding a family by hand: fill in what you have verified on hardware, and leave
+the rest out. A wrong value here is worse than a missing one, because a missing
+one fails loudly and a wrong one is exactly the failure mode this project is
+trying to remove.
+
+A value that did NOT come off a board is allowed, but only if it says so. Every
+field carries a provenance, one of `measured`, `vendor-db`, `user-stated` or
+`assumed`, and an entry written here defaults to `measured` because that is what
+a hand-written entry is. A seeded or user-supplied entry sets its own default,
+and the tools treat the difference as real: see `provenance_of` below and N6 in
+AGENTS.md.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
+
+#: Where a value came from. Not a quality ranking: `measured` means somebody ran
+#: it on a board, and the other three mean nobody has.
+MEASURED = "measured"
+VENDOR_DB = "vendor-db"
+USER_STATED = "user-stated"
+ASSUMED = "assumed"
+"""Nobody measured it and no source states it: it is this project's default.
+
+The roadmap named three provenances and the fourth appeared as soon as the model
+was applied to real data. `DEFAULT` carries access port 0 and no signing, and
+both are assumptions about the STM32 range rather than facts about any part. The
+first version of this code labelled them `measured`, which is precisely the lie
+N6 exists to stop, produced by the mechanism built to stop it.
+
+It matters most for access port. A seeded entry's port is `assumed`, never
+measured, and that is the signal the scan needs: an assumed port must not be
+trusted the way a measured one is.
+"""
+PROVENANCES = frozenset({MEASURED, VENDOR_DB, USER_STATED, ASSUMED})
+
+
+class ProvenanceError(ValueError):
+    """An entry labelled its own values with something that is not a provenance,
+    or labelled a field that does not exist."""
 
 
 @dataclass(frozen=True)
@@ -51,14 +85,21 @@ class FamilyQuirks:
     Resolved against STM32CubeProgrammer's ExternalLoader directory.
     """
 
-    requires_signing: bool = False
-    """Whether the boot ROM refuses an unsigned image.
+    requires_signing: bool | None = None
+    """Whether the boot ROM refuses an unsigned image. None means nobody knows.
 
     Note this applies to the flash path only. An image loaded straight into RAM
     by a debugger bypasses the boot ROM and needs no signature.
+
+    Tri-state rather than a bool defaulting to False, because "we checked and it
+    does not need signing" and "nobody has said" are different facts and the
+    provenance model cannot tell them apart otherwise: a bool that defaults to
+    False is reported with a provenance for a claim the entry never made. The
+    vendor device database says nothing about signing, so every seeded entry
+    leaves this None.
     """
 
-    debug_closes_on_run: bool = False
+    debug_closes_on_run: bool | None = None
     """Whether firmware typically leaves the debug access port unreachable.
 
     READ THIS BEFORE TRUSTING THE FLAG. It sits in a table of family quirks and
@@ -110,6 +151,75 @@ class FamilyQuirks:
     """
 
     notes: str = ""
+
+    provenance: Mapping[str, str] = field(default_factory=dict)
+    """Per-field override of where a value came from, keyed by field name.
+
+    Only fields that differ from `default_provenance` need an entry, which keeps
+    a hand-written table readable: a fully measured entry names nothing here.
+    """
+
+    default_provenance: str = MEASURED
+    """Provenance for every field not named in `provenance`.
+
+    It defaults to `measured` because that is what a hand-authored entry in this
+    file is, and the contribution rule above says so. A seeder or a user-supplied
+    entry must set it, and then any individual field it did measure can be
+    promoted through `provenance`.
+    """
+
+    def __post_init__(self) -> None:
+        """Reject a mislabelled entry at construction rather than at use.
+
+        The typo check is the one that earns its place. A provenance key naming
+        a field that does not exist looks harmless and is not: the real field
+        then silently falls back to `default_provenance`, so a value nobody
+        measured gets reported as measured. That is the exact harm N6 exists to
+        prevent, arriving through the mechanism meant to prevent it.
+        """
+        known = {f.name for f in fields(self)}
+        for key, value in self.provenance.items():
+            if key not in known:
+                raise ProvenanceError(
+                    f"{self.name}: provenance names {key!r}, which is not a field "
+                    f"of FamilyQuirks. Known fields: {', '.join(sorted(known))}."
+                )
+            if value not in PROVENANCES:
+                raise ProvenanceError(
+                    f"{self.name}: provenance for {key!r} is {value!r}, which is "
+                    f"not one of {', '.join(sorted(PROVENANCES))}."
+                )
+        if self.default_provenance not in PROVENANCES:
+            raise ProvenanceError(
+                f"{self.name}: default_provenance is {self.default_provenance!r}, "
+                f"which is not one of {', '.join(sorted(PROVENANCES))}."
+            )
+
+    def provenance_of(self, field_name: str) -> str:
+        return self.provenance.get(field_name, self.default_provenance)
+
+    def is_measured(self, field_name: str) -> bool:
+        """Whether somebody has actually run this value on a board.
+
+        The question the tools ask, rather than which of the three labels it
+        carries, because `vendor-db` and `user-stated` differ in where the guess
+        came from and not in whether it is one.
+        """
+        return self.provenance_of(field_name) == MEASURED
+
+    def provenance_summary(self) -> dict[str, str]:
+        """Provenance of every field that holds a value, for reporting.
+
+        Fields that are None are omitted: there is no provenance for an absent
+        fact, and listing them would suggest the table knows something it does
+        not.
+        """
+        return {
+            f.name: self.provenance_of(f.name)
+            for f in fields(self)
+            if f.name not in ("name", "notes", "provenance", "default_provenance")
+            and getattr(self, f.name) is not None
+        }
 
 
 #: Families verified on real hardware. Everything else falls back to DEFAULT.
@@ -225,6 +335,8 @@ FAMILIES: dict[str, FamilyQuirks] = {
 DEFAULT = FamilyQuirks(
     name="generic",
     access_port=0,
+    requires_signing=False,
+    default_provenance=ASSUMED,
     notes=(
         "Fallback for families not yet characterised here. Access port 0 and no "
         "signing is right for most STM32 parts with internal flash. RAM execution "
