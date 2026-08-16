@@ -69,6 +69,28 @@ class Toolchain:
             )
 
 
+def _version_key(path: Path) -> tuple[tuple[int, ...], str]:
+    """Order install directories by version number, for a newest-first sort.
+
+    This is not a tidiness change. The previous version sorted the directory
+    names as STRINGS, which puts `stm32cubeclt_1.9.0` ahead of
+    `stm32cubeclt_1.22.0`, because the comparison reaches '9' against '2' and
+    stops. So `find_toolchain` returned the OLDEST install while its own
+    docstring promised the newest, and nothing failed: the user simply ran a
+    stale programmer against their board.
+
+    The reason it is worth a named function and a test rather than a one-line
+    fix is what happens next. Once the vendor device databases are read at
+    runtime, picking the wrong install means seeding target addresses out of a
+    stale database, with no signal to the agent that a newer one was skipped.
+
+    Directories with no digits in the name sort last rather than crashing, and
+    the name is a tiebreak so the order is stable rather than filesystem
+    dependent.
+    """
+    return (tuple(int(n) for n in re.findall(r"\d+", path.name)), path.name)
+
+
 def _candidate_roots() -> list[Path]:
     env = os.environ.get("STLINK_MCP_CLT_ROOT")
     if env:
@@ -77,7 +99,7 @@ def _candidate_roots() -> list[Path]:
     roots: list[Path] = []
     for base in (Path("/opt/st"), Path.home() / "st", Path("/usr/local/st")):
         if base.is_dir():
-            roots.extend(sorted(base.glob("stm32cubeclt*"), reverse=True))
+            roots.extend(sorted(base.glob("stm32cubeclt*"), key=_version_key, reverse=True))
     # macOS default
     mac = Path("/Applications/STMicroelectronics/STM32CubeCLT")
     if mac.is_dir():
