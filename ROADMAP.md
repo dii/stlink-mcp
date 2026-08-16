@@ -36,7 +36,7 @@ fixed first rather than inherited. (RT4)
 | N2 missing facts refuse rather than guess | Done for RAM execution and external flash |
 | N3 hidden state is reported | Done: reset, cache, degraded access port, held probe |
 | N4 nothing perturbs silently | Done: `target_was_reset`, `core_registers` documented as halting |
-| N5 runs on hardware that is not ours | Half. Quirks are data and can now be labelled, but describing a board still means editing the installed package |
+| N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
 | N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector, and reports the halt it took to check |
 | N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `probe.py:164`, `-d` in `runner.py:145`. No JTAG |
@@ -82,11 +82,20 @@ The contribution rule is machine-checked rather than requested: any entry in the
 `FAMILIES` dict carrying a non-`measured` value fails the build, and the three prose statements
 that forbade what Phase 2 does have been reworded. (RT5)
 
-**User-stated board details (N5).** A user must be able to say what their board is without
-editing the installed package: a config file or a tool parameter carrying the same fields the
-quirks table holds, keyed by device ID, since `for_device_id` is the only entry point the code
-has and the by-name lookup was deliberately removed. This is the third provenance and it is
-what makes "provide details about the board attached" real rather than a code contribution.
+**User-stated board details (N5). DONE.** A TOML file, one table per device ID, at
+`~/.config/stlink-mcp/boards.toml` or wherever `STLINK_MCP_BOARDS` points. Loaded before the
+server accepts anything, and a file it cannot use stops the server rather than starting
+without the boards the user asked for. TOML rather than JSON for hex integer literals: a load
+address written in decimal is a transcription error waiting to happen.
+
+A user entry wins over the built-in table for that device ID, because the built-in entry
+describes a device ID and the user is describing the board in front of them.
+
+**The file cannot label its own values.** There is no way to declare a value `measured`, and
+that refusal is load-bearing rather than pedantic: `measured` is what lets `flash_firmware`
+write without an explicit address, this server cannot tell a measured value from a typed one,
+so a config file that could assert it would let a typo unlock an irreversible operation. The
+escape hatch is passing `address`, which records the claim as the caller's.
 
 Two consequences of that channel, both found by the red-team:
 

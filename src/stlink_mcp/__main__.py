@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import signal
+import sys
 
+from .quirks import BoardConfigError
 from .runner import release_all_servers
-from .server import mcp
+from .server import load_board_config, mcp
 
 
 def _release_and_exit(signum: int, _frame: object) -> None:
@@ -46,6 +48,23 @@ def _install_signal_handlers() -> None:
 
 def main() -> None:
     _install_signal_handlers()
+
+    # Board config is loaded here, before the server accepts anything, and a bad
+    # file stops the process. That is deliberate. A user who wrote a board file
+    # is telling this server what is on their desk; starting anyway with those
+    # boards missing would answer every later question about a different machine
+    # than the one they described, and the client would see a working server.
+    #
+    # stderr rather than stdout: stdout is the MCP transport.
+    try:
+        count, path = load_board_config()
+    except BoardConfigError as exc:
+        print(f"stlink-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    if count:
+        print(f"stlink-mcp: loaded {count} user-described board(s) from {path}",
+              file=sys.stderr)
+
     mcp.run()
 
 

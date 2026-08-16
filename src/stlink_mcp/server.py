@@ -31,6 +31,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import console as console_mod
+from . import quirks as quirks_mod
 from .result import failed, unverified, verified
 from .probe import (
     Probe,
@@ -648,6 +649,41 @@ def read_memory(
         return unverified(probe.degraded_reason, **detail)
 
     return verified("words read back from the target", **detail)
+
+
+#: Where a user describes boards this project has not characterised.
+_BOARDS_ENV = "STLINK_MCP_BOARDS"
+_BOARDS_DEFAULT = Path.home() / ".config" / "stlink-mcp" / "boards.toml"
+
+
+def board_config_path() -> Path | None:
+    """The board file to load, or None if the user has not written one.
+
+    An explicit `STLINK_MCP_BOARDS` is honoured even when it does not exist, so
+    that a typo in the variable is an error rather than a silent fallback to the
+    default. Asking for a specific file and quietly getting a different set of
+    boards is the shape of failure this project exists to remove.
+    """
+    env = os.environ.get(_BOARDS_ENV)
+    if env:
+        return Path(env).expanduser()
+    return _BOARDS_DEFAULT if _BOARDS_DEFAULT.exists() else None
+
+
+def load_board_config() -> tuple[int, Path | None]:
+    """Install user-described boards. Raises BoardConfigError if the file is bad.
+
+    Called at start-up rather than lazily, and it is allowed to stop the server.
+    A user who wrote a board file is telling this server what the hardware on
+    their desk is; running anyway, with those boards absent, would answer every
+    later question about a different machine than the one they described.
+    """
+    path = board_config_path()
+    if path is None:
+        return 0, None
+    boards = quirks_mod.load_user_boards(path)
+    quirks_mod.set_user_boards(boards)
+    return len(boards), path
 
 
 @mcp.tool()

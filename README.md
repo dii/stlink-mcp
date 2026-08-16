@@ -171,10 +171,50 @@ its own GDB server on its own port.
 
 | variable | meaning |
 | --- | --- |
+| `STLINK_MCP_BOARDS` | TOML file describing boards this project has not characterised. Defaults to `~/.config/stlink-mcp/boards.toml` if it exists |
 | `STLINK_MCP_CLT_ROOT` | STM32CubeCLT install directory |
 | `STLINK_MCP_CONSOLE` | Serial device, if the guess is wrong |
 | `STLINK_MCP_CONSOLE_BAUD` | Console baud rate, default 115200 |
 | `STLINK_MCP_GDB_PORT` | GDB server port, default 61234 |
+
+## Describing your own board
+
+You do not have to wait for a family to be characterised here, and you do not
+have to edit an installed package. Write a TOML file, one table per device ID as
+the programmer prints it:
+
+```toml
+["0x413"]
+name = "STM32F4 on a NUCLEO-F429ZI"
+access_port = 0
+ram_load_base = 0x20000000
+vector_table_addr = 0x20000000
+flash_base = 0x08000000
+notes = "addresses from the reference manual, not yet run on the board"
+```
+
+Put it at `~/.config/stlink-mcp/boards.toml`, or point `STLINK_MCP_BOARDS` at it.
+It is loaded before the server accepts anything, and a file it cannot use stops
+the server rather than starting without your boards.
+
+TOML because it has hex integer literals, so an address is written the way every
+datasheet and debugger writes it. A load address in decimal is a transcription
+error waiting to happen.
+
+Your entry wins over the built-in table for that device ID. That is deliberate:
+the built-in entry describes a device ID, which is coarser than a part and much
+coarser than a board, and you know more about the thing plugged into your machine
+than this project does.
+
+**Everything in that file is `user-stated`, and it cannot say otherwise.** There
+is no way to mark a value `measured`, and the omission is the point. This server
+cannot tell a value you measured from a value you typed, and `measured` is what
+lets `flash_firmware` write without being told an address. If a config file could
+assert it, a typo would unlock an irreversible operation. If you have measured
+your board, pass `address` when you flash, and the claim is recorded as yours.
+
+`board_state` reports the provenance of every value beside the value itself, so
+an agent can see which numbers a person has actually seen work.
 
 ## Adding a family
 

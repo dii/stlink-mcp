@@ -20,8 +20,10 @@ AGENTS.md.
 
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
+from pathlib import Path
 
 #: Where a value came from. Not a quality ranking: `measured` means somebody ran
 #: it on a board, and the other three mean nobody has.
@@ -222,6 +224,41 @@ class FamilyQuirks:
         }
 
 
+def check_consistency(family: FamilyQuirks) -> list[str]:
+    """Every way an entry can be internally impossible, in one place.
+
+    These used to exist only as pytest parametrisations over `FAMILIES`, which
+    was fine while the table was a compile-time literal and every entry went
+    through review. It stops being fine the moment an entry can arrive at
+    runtime from a user's config file, because then the checks the project
+    advertises apply to exactly the entries that were never in doubt and none of
+    the ones that are.
+
+    Returns the problems rather than raising, so the tests can assert emptiness
+    and the loader can report all of them at once instead of one per attempt.
+    """
+    problems: list[str] = []
+
+    if not family.name.strip():
+        problems.append("no name")
+
+    if family.ram_load_base is not None and family.vector_table_addr is None:
+        problems.append(
+            "ram_load_base without vector_table_addr: SP and PC are read from "
+            "the vector table, so a RAM image cannot be started without it"
+        )
+
+    if family.external_loader is not None and family.flash_base is None:
+        problems.append(
+            "external_loader without flash_base: there is nowhere to program to"
+        )
+
+    if not 0 <= family.access_port <= 255:
+        problems.append(f"access_port {family.access_port} is out of range")
+
+    return problems
+
+
 #: Families verified on real hardware. Everything else falls back to DEFAULT.
 FAMILIES: dict[str, FamilyQuirks] = {
     "STM32H7": FamilyQuirks(
@@ -353,11 +390,164 @@ DEVICE_ID_TO_FAMILY: dict[int, str] = {
 }
 
 
-def for_device_id(device_id: int | None) -> FamilyQuirks:
-    """Quirks for a device ID, or the generic fallback if it is unknown."""
+#: Boards the user described, keyed by device ID. Empty unless a config file was
+#: loaded. Consulted BEFORE the built-in table, because a user describing their
+#: own board is making a claim about the hardware in front of them and this
+#: project has no standing to overrule it.
+#:
+#: N9 DEBT, recorded rather than hidden: this is module-level, so it assumes one
+#: implicit caller. The roadmap forbids assuming that in a way that would have to
+#: be unpicked, and the unpicking here is small and known - `for_device_id` takes
+#: the mapping as an argument below, so a per-caller version replaces one global
+#: read with one field lookup. Nothing else reaches into this dict.
+_USER_BOARDS: dict[int, FamilyQuirks] = {}
+
+
+def set_user_boards(boards: Mapping[int, FamilyQuirks]) -> None:
+    """Install user-described boards. Replaces any previous set."""
+    _USER_BOARDS.clear()
+    _USER_BOARDS.update(boards)
+
+
+def user_boards() -> dict[int, FamilyQuirks]:
+    return dict(_USER_BOARDS)
+
+
+def for_device_id(
+    device_id: int | None, overrides: Mapping[int, FamilyQuirks] | None = None
+) -> FamilyQuirks:
+    """Quirks for a device ID, or the generic fallback if it is unknown.
+
+    A user-described board wins over the built-in table. That is deliberate: the
+    built-in entry describes a device ID, which is coarser than a part and much
+    coarser than a board, and the person with the thing plugged in knows more
+    about it than this file does. The difference is not silent, because the
+    entry carries `user-stated` provenance and `board_state` reports it.
+    """
     if device_id is None:
         return DEFAULT
+    source = _USER_BOARDS if overrides is None else overrides
+    if device_id in source:
+        return source[device_id]
     return FAMILIES.get(DEVICE_ID_TO_FAMILY.get(device_id, ""), DEFAULT)
+
+
+class BoardConfigError(ValueError):
+    """A user's board file could not be used, and says exactly why."""
+
+
+#: Fields a user may set. Deliberately not every field of FamilyQuirks:
+#: `provenance` and `default_provenance` are absent, because a config file may
+#: not label its own values.
+_USER_SETTABLE = frozenset({
+    "name", "access_port", "ram_load_base", "vector_table_addr", "flash_base",
+    "external_loader", "requires_signing", "debug_closes_on_run", "notes",
+})
+
+
+def load_user_boards(path: Path) -> dict[int, FamilyQuirks]:
+    """Read a TOML file describing boards this project has not characterised.
+
+    Shape, one table per device ID as the programmer prints it:
+
+        ["0x413"]
+        name = "STM32F4 on my NUCLEO-F429ZI"
+        access_port = 0
+        ram_load_base = 0x20000000
+        vector_table_addr = 0x20000000
+        flash_base = 0x08000000
+        notes = "addresses from the reference manual, not yet run"
+
+    TOML rather than JSON for one reason that matters here: it has hex integer
+    literals, so an address is written the way every datasheet, every debugger
+    and every other line of this project writes it. In JSON it would be a
+    decimal or a quoted string, and a decimal load address is a transcription
+    error waiting to happen.
+
+    EVERYTHING LOADED IS `user-stated`, AND THE FILE CANNOT SAY OTHERWISE. There
+    is no way to declare a value `measured` here, and the omission is the point:
+    this server cannot tell a value someone measured from a value someone typed,
+    and `measured` is the label that unlocks the write path in
+    `flash_firmware`. If a config file could assert it, a typo would unlock an
+    irreversible operation. Someone who has genuinely measured their board can
+    still flash it by passing the address explicitly, which records the claim as
+    theirs.
+    """
+    try:
+        raw = tomllib.loads(path.read_text())
+    except OSError as exc:
+        raise BoardConfigError(f"Cannot read {path}: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise BoardConfigError(f"{path} is not valid TOML: {exc}") from exc
+
+    boards: dict[int, FamilyQuirks] = {}
+    for key, table in raw.items():
+        if not isinstance(table, dict):
+            raise BoardConfigError(
+                f"{path}: top-level '{key}' must be a table naming a device ID, "
+                'like ["0x413"]'
+            )
+        if not (isinstance(key, str) and key.lower().startswith("0x")):
+            raise BoardConfigError(
+                f"{path}: '{key}' is not a device ID. Use the form the "
+                'programmer prints, quoted, like ["0x413"].'
+            )
+        try:
+            device_id = int(key, 16)
+        except ValueError as exc:
+            raise BoardConfigError(f"{path}: '{key}' is not a hex device ID") from exc
+
+        # The provenance keys are checked BEFORE the generic unknown-field
+        # check, even though that one would also reject them. Both refuse, but
+        # only this message explains why, and this is the refusal most likely to
+        # look arbitrary to someone who genuinely did measure their board.
+        for reserved in ("provenance", "default_provenance"):
+            if reserved in table:
+                raise BoardConfigError(
+                    f"{path}: [{key!r}] sets {reserved}. A board file cannot "
+                    "label its own values; everything in it is user-stated. "
+                    "That is not a comment on your measurements: this server "
+                    "cannot tell a measured value from a typed one, and "
+                    "'measured' is what lets flash_firmware write without an "
+                    "explicit address. Pass `address` when you flash, and the "
+                    "claim is recorded as yours."
+                )
+
+        # An unknown key is rejected rather than ignored. Ignoring it is the
+        # same failure as the provenance typo: the setting the user believes
+        # they made is silently not in effect, and the tool behaves as though
+        # they never wrote it.
+        unknown = set(table) - _USER_SETTABLE
+        if unknown:
+            raise BoardConfigError(
+                f"{path}: [{key!r}] sets {', '.join(sorted(unknown))}, which "
+                f"{'is not a field' if len(unknown) == 1 else 'are not fields'} "
+                f"you can set. Allowed: {', '.join(sorted(_USER_SETTABLE))}."
+            )
+
+        if "access_port" not in table:
+            raise BoardConfigError(
+                f"{path}: [{key!r}] has no access_port. There is no safe default: "
+                "most STM32 parts use 0 and the STM32N6 uses 1, and guessing "
+                "wrong reports a healthy board as broken."
+            )
+
+        family = FamilyQuirks(
+            **{k: v for k, v in table.items() if k != "name"},
+            name=table.get("name") or f"user board {key}",
+            default_provenance=USER_STATED,
+        )
+
+        problems = check_consistency(family)
+        if problems:
+            raise BoardConfigError(
+                f"{path}: [{key!r}] is not usable as written:\n  - "
+                + "\n  - ".join(problems)
+            )
+
+        boards[device_id] = family
+
+    return boards
 
 
 # There was a for_name() lookup here. Nothing called it: a target is identified
