@@ -135,7 +135,7 @@ class TestNoToolSetsOkByHand:
 class _FakeProbe:
     """A board that always answers, so the tools' own logic is what is tested."""
 
-    device_id = 0x486  # STM32N6: the one family with a RAM-execution layout
+    device_id = 0x486  # STM32N6, the family the fake board's AP1 answers below
 
     def __init__(self, *args, **kwargs) -> None:
         self.connect_mode = "HOTPLUG"

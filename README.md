@@ -51,10 +51,11 @@ earlier version of this tool did it: `ok: true` alongside `verified_by:
 ## Status
 
 Alpha, and honest about it. The tool surface works and is used daily against an
-STM32N6. Only one family is characterised so far. Everything else falls back to
-generic behaviour, which covers identification and memory reads but not
-RAM execution or external flash programming, because those addresses are
-family specific and this project would rather have a gap than a guess.
+STM32N6. Two families are characterised on hardware, STM32N6 and STM32H7.
+Everything else falls back to generic behaviour, which covers identification and
+memory reads but not RAM execution or external flash programming, because those
+addresses are family specific and this project would rather have a gap than a
+guess.
 
 ## Requirements
 
@@ -102,10 +103,10 @@ uv sync
 ### Why the GDB server is kept alive
 
 `run_firmware` starts a GDB server and **holds it** rather than tearing it down.
-That is not laziness. On the STM32N6, once firmware has run the debug access port
-cannot be re-acquired once a typical image has run, and only removing power gets
-it back. Holding the server is therefore the difference between one power cycle
-per session and one per run.
+That is not laziness. On the STM32N6, once a typical image has run the debug
+access port cannot be re-acquired, and only removing power gets it back. Holding
+the server is therefore the difference between one power cycle per session and
+one per run.
 
 **That is a property of the image, not of the part**, which is worth stating
 plainly because this project got it wrong for two days and wrote the wrong
@@ -189,9 +190,9 @@ of external flash, and its debug is on access port 1 rather than 0.
   and the console device patterns both cover it, but it has not been run there.
   Windows is not supported: the executable names and device paths are wrong for
   it throughout.
-* Exactly one device family, STM32N6, is verified on hardware. Everything else
-  falls back to a generic entry that can identify a target but will refuse to
-  run firmware on it, because it has no verified RAM layout to load into.
+* Two device families are verified on hardware, STM32N6 and STM32H7. Everything
+  else falls back to a generic entry that can identify a target but will refuse
+  to run firmware on it, because it has no verified RAM layout to load into.
 * It is not affiliated with STMicroelectronics.
 
 ## Licence

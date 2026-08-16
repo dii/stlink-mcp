@@ -397,10 +397,17 @@ def _looks_like_a_probe_serial(value: str) -> bool:
     """Whether this is a serial rather than the CLI failing to read one.
 
     Real probes report a long alphanumeric identifier, 24 hex digits on every
-    ST-LINK seen here across V2-1, V3 and V3E. When a probe is present but
-    unreadable, which happens on `DEV_USB_COMM_ERR`, the CLI still prints a
-    numbered entry for it and fills the fields with a placeholder dash, or with
-    uninitialised memory.
+    ST-LINK seen here. That is V3 generation only: an earlier version of this
+    docstring claimed V2-1 as well, and no V2-1 probe has ever been attached to
+    the machine this was written on, so the claim was inherited from belief
+    rather than measured. The test below is therefore deliberately looser than
+    "24 hex digits" - a length floor plus an alphanumeric check - because the
+    older generations are the untested case and a rule tuned to V3 is the wrong
+    thing to enforce on them.
+
+    When a probe is present but unreadable, which happens on
+    `DEV_USB_COMM_ERR`, the CLI still prints a numbered entry for it and fills
+    the fields with a placeholder dash, or with uninitialised memory.
 
     Captured 2026-08-16 from two probes in that state, in consecutive runs:
 
