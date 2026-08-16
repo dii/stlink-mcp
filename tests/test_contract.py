@@ -37,6 +37,7 @@ TOOL_CALLS: dict[str, dict] = {
     "read_memory": {"address": 0x20000000},
     "core_registers": {},
     "capture_console": {"seconds": 0.01},
+    "reset_target": {},
 }
 
 
@@ -119,6 +120,34 @@ class TestTheConstructors:
         assert r["probe_serial"] == "AAA1"
 
 
+class TestEveryToolIsActuallyCovered:
+    """The list above is hand-written, and a hand-written list of what to check
+    is the oldest way to have an unchecked thing.
+
+    Adding `reset_target` proved it: the whole suite stayed green while the new
+    tool was covered by none of it, because every parametrised test iterates
+    TOOL_CALLS rather than the server. Green meant "the eight tools I remembered
+    are fine", which reads identically to "all tools are fine". That is the same
+    shape as a check that cannot produce a positive, and this project has now
+    hit that shape four times.
+    """
+
+    def test_no_registered_tool_escapes_the_contract_suite(self) -> None:
+        registered = set(server.mcp._tool_manager._tools)
+        missing = registered - set(TOOL_CALLS)
+        assert not missing, (
+            f"tools registered with the server but absent from TOOL_CALLS, so "
+            f"nothing in this file tests them: {sorted(missing)}"
+        )
+
+    def test_the_list_does_not_name_tools_that_do_not_exist(self) -> None:
+        """The other direction: a renamed tool leaving a stale entry behind
+        would keep passing while testing nothing."""
+        registered = set(server.mcp._tool_manager._tools)
+        stale = set(TOOL_CALLS) - registered
+        assert not stale, f"TOOL_CALLS names tools the server does not register: {sorted(stale)}"
+
+
 class TestNoToolSetsOkByHand:
     def test_the_tool_surface_contains_no_literal_ok(self) -> None:
         """A grep, deliberately.
@@ -157,6 +186,17 @@ class _FakeProbe:
 
     def program_flash(self, image: str, address: int, loader: object) -> str:
         return "File download complete\n"
+
+    # Reset behaviour is class-level so a test can set the halted PC to each of
+    # the three shapes real hardware produces: landed on the vector, landed
+    # somewhere else, or no answer at all because the reset closed the port.
+    reset_pc: int | None = 0x0807FA98
+
+    def reset_and_halt(self, access_port: int) -> tuple[int | None, str]:
+        return self.reset_pc, "Core halted\n"
+
+    def release_core(self, access_port: int) -> str:
+        return "Core run\n"
 
 
 @pytest.fixture
@@ -400,3 +440,102 @@ class TestTheWritePathWillNotActOnAnUnmeasuredAddress:
         image.write_bytes(b"\x00" * 16)
         out = server.flash_firmware(image_path=str(image), address=0x08000000)
         assert out["status"] != result.FAILED or "vendor-db" not in out.get("error", "")
+
+
+class TestResetIsNotClaimedUnlessItWasSeen:
+    """N7 says reset is a first-class operation; N1 says it is not reported as
+    working unless something observed it.
+
+    The three shapes here are the three real hardware produces, and all three
+    were measured on 2026-08-16 rather than imagined:
+
+      landed on the vector   NUCLEO-H743ZI, reset handler 0x0807FA98, reached
+                             exactly by a HWRSTPULSE connect
+      landed elsewhere       the same board via `-rst -halt`, which resets fine
+                             and then loses the race, ending at 0x0807FC2C
+      no answer at all       a debug port that does not respond after the
+                             pulse, which on the STM32N6 means it was almost
+                             certainly closed already
+
+    The third one was nearly recorded as "the reset closes the port", from one
+    pulsed board and one untouched board that differed. It does not: a
+    NUCLEO-N657X0-Q confirmed open, then pulsed, halted in its boot ROM at
+    0x18003A1A with the port still open, because a reset-and-halt catches the
+    core before any image runs. The tool therefore claims nothing about cause
+    in that branch, and this note is here so nobody re-derives the wrong one.
+    """
+
+    @pytest.fixture
+    def h7_bench(self, bench, monkeypatch):
+        """A part that boots from internal flash, so its post-reset PC is
+        predictable and the check can actually run."""
+        from stlink_mcp import quirks as quirks_mod
+
+        h7 = quirks_mod.FamilyQuirks(
+            name="STM32H7", access_port=0, ram_load_base=0x24000000,
+            vector_table_addr=0x24000000, flash_base=0x08000000,
+            requires_signing=False, debug_closes_on_run=False, notes="x",
+        )
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: h7)
+        # Word 1 of the vector table: the reset handler, Thumb bit set.
+        monkeypatch.setattr(
+            _FakeProbe, "read_memory",
+            lambda self, addr, n: {addr: 0x20020000, addr + 4: 0x0807FA99},
+        )
+        return bench
+
+    def test_landing_on_the_reset_vector_is_a_verified_reset(
+        self, h7_bench, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
+        out = call("reset_target")
+        assert out["ok"] is True
+        assert "0x0807FA98" in out["verified_by"]
+
+    def test_the_thumb_bit_does_not_break_the_comparison(self, h7_bench, monkeypatch) -> None:
+        """The vector table stores 0x0807FA99 and the PC reads back 0x0807FA98.
+
+        Comparing them unmasked is false for every correct reset, which is worse
+        than no check: it reports a reset that did happen as one that did not,
+        and sends someone to debug working hardware.
+        """
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
+        assert call("reset_target")["ok"] is True
+
+    def test_landing_anywhere_else_is_not_a_reset(self, h7_bench, monkeypatch) -> None:
+        """The `-rst -halt` shape: the part really did reset, and the PC still
+        cannot be used to say so."""
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FC2C)
+        out = call("reset_target")
+        assert out["ok"] is False
+        assert "0x0807FC2C" in out["unverified_because"]
+
+    def test_a_reset_that_closed_the_port_is_unverified_not_successful(
+        self, h7_bench, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(_FakeProbe, "reset_pc", None)
+        out = call("reset_target")
+        assert out["ok"] is False
+        assert out["status"] == result.UNVERIFIED
+        assert "did not answer" in out["unverified_because"]
+
+    def test_an_unpredictable_part_says_so_rather_than_guessing(self, bench, monkeypatch) -> None:
+        """The fake board is an STM32N6: no internal flash, so it comes up in a
+        boot ROM at an address the table does not record. Nothing to compare
+        against is a reason to report unverified, not a reason to invent one."""
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x34180400)
+        out = call("reset_target")
+        assert out["ok"] is False
+        assert "not predictable" in out["unverified_because"]
+
+    def test_the_core_is_released_and_the_result_says_so(self, h7_bench, monkeypatch) -> None:
+        """N4: the halt was not asked for, so it is reported."""
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
+        out = call("reset_target")
+        assert out["core_halted"] is False
+        assert "running again" in out["note"]
+
+    def test_leave_halted_is_honoured_and_reported(self, h7_bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
+        out = call("reset_target", leave_halted=True)
+        assert out["core_halted"] is True

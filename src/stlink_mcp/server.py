@@ -39,6 +39,8 @@ from .probe import (
     explain_connect_failure,
     list_probes as _list_probes,
     list_probes_with_unreadable,
+    reset_landed_at_vector,
+    reset_vector_address,
 )
 from .runner import (
     RunError,
@@ -646,6 +648,151 @@ def read_memory(
         return unverified(probe.degraded_reason, **detail)
 
     return verified("words read back from the target", **detail)
+
+
+@mcp.tool()
+def reset_target(
+    probe_serial: str | None = None, leave_halted: bool = False
+) -> dict[str, Any]:
+    """Reset the target, and check that it actually restarted.
+
+    Reset is one of the three things this server promises and it used to happen
+    only as a side effect of something else, which meant nobody could ask for it
+    and nobody was told whether it worked.
+
+    How it verifies, and why it is done this way. The reset is performed by the
+    CONNECT, using HWRSTPULSE, rather than by issuing `-rst` afterwards.
+    Measured on a NUCLEO-H743ZI whose reset handler is at 0x0807FA98: a hotplug
+    connect followed by `-rst -halt` leaves the PC at 0x0807FC2C, and the
+    reverse order leaves it at 0x0807FC3A. Both reset the part correctly and
+    then lose the race to halt it, so the core is already hundreds of bytes into
+    start-up and its PC cannot be compared against anything. A resetting connect
+    lands on the vector exactly, every time, which is what makes the check
+    possible at all.
+
+    The core is halted to read the PC and then released, unless you ask for it
+    to stay halted. That brief halt is reported rather than hidden, because it
+    is a state change the caller did not ask for.
+    """
+    try:
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return failed(error)
+        if server_is_held(serial):
+            return failed(
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+            )
+
+        probe = Probe(toolchain, serial=serial)
+        # allow_reset=False deliberately: identification must not reset the
+        # target before this tool has decided to, or the thing being verified
+        # has already happened once, unobserved.
+        info = probe.identify(allow_reset=False)
+        if not info.connected:
+            return failed(
+                "Cannot reach the target to reset it.",
+                probe_serial=serial,
+                hint=explain_connect_failure(info),
+            )
+
+        quirks = info.quirks
+        access_port = quirks.access_port
+
+        # Read the expected reset handler BEFORE resetting. Afterwards is too
+        # late on any part where the reset closes the debug port.
+        expected: int | None = None
+        vector_addr = reset_vector_address(quirks)
+        if vector_addr is not None:
+            try:
+                words = probe.read_memory(vector_addr, 8)
+                expected = words.get(vector_addr + 4)
+            except Exception:  # noqa: BLE001
+                expected = None
+
+        pc, output = probe.reset_and_halt(access_port)
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc))
+
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        "family": quirks.name,
+        "reset_kind": "hardware pulse on nRST (HWRSTPULSE connect)",
+        "program_counter": _hex(pc),
+        "expected_reset_handler": _hex(None if expected is None else expected & ~1),
+        "core_halted": pc is not None and leave_halted,
+    }
+
+    if pc is None:
+        # The pulse went out and the debug port did not answer afterwards.
+        #
+        # DO NOT read this as "the reset closed the port". That was the first
+        # conclusion drawn here on 2026-08-16 and it was wrong, from exactly the
+        # mistake this project keeps writing about: one board was pulsed, a
+        # different board answered, and the difference was attributed to the
+        # pulse. The proper test is a board confirmed open immediately before.
+        # Run that way, a NUCLEO-N657X0-Q pulsed, halted in its boot ROM at
+        # 0x18003A1A, and its port was STILL OPEN afterwards, because a
+        # reset-and-halt catches the core before any image has run and so before
+        # anything gates the clock that keeps the port alive. The board that
+        # failed had been closed before it was touched.
+        #
+        # So the honest reading is the narrow one: nothing was observed. The
+        # likeliest cause is a port that was already closed, which a reset does
+        # not reopen on this family.
+        reason = (
+            "the reset pulse was issued, but the debug port did not answer "
+            "afterwards, so nothing observed the target restart"
+        )
+        if quirks.debug_closes_on_run:
+            detail["note"] = (
+                f"On {quirks.name} the debug access port is most likely to have "
+                "been closed ALREADY, by an image that ran before this call, and "
+                "a reset does not reopen it on this family. Only removing power "
+                "does. This is not evidence that the reset failed, and it is not "
+                "evidence that it worked."
+            )
+        return unverified(reason, detail_output=output.strip().splitlines()[-3:],
+                          **detail)
+
+    if expected is None:
+        return unverified(
+            "the core halted after a reset pulse, but this part's post-reset PC "
+            "is not predictable from the quirks table, so nothing confirms it "
+            "restarted at its reset vector",
+            hint=(
+                "This is normal for a part that boots a signed image out of "
+                "external memory: the core comes up inside the boot ROM, at an "
+                "address this table does not record."
+            ),
+            **detail,
+        )
+
+    if not reset_landed_at_vector(pc, expected):
+        return unverified(
+            f"the core halted at {_hex(pc)}, which is not this part's reset "
+            f"handler {_hex(expected & ~1)}, so the reset did not leave the "
+            "target where a reset should",
+            **detail,
+        )
+
+    if not leave_halted:
+        try:
+            probe.release_core(access_port)
+            detail["core_halted"] = False
+            detail["note"] = (
+                "The core was halted only long enough to read the program "
+                "counter, and is running again."
+            )
+        except Exception as exc:  # noqa: BLE001
+            detail["core_halted"] = True
+            detail["note"] = f"The core is still HALTED: releasing it failed ({exc})."
+
+    return verified(
+        f"the core halted at {_hex(pc)}, which is the reset handler named by "
+        f"word 1 of the vector table at {_hex(vector_addr)}",
+        **detail,
+    )
 
 
 @mcp.tool()

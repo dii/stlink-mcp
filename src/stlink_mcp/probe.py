@@ -98,6 +98,39 @@ def parse_core_registers(output: str) -> dict[str, int]:
     return {name: int(value, 16) for name, value in _CORE_REG.findall(output)}
 
 
+#: Internal flash, on every STM32 that has any. 94 of the 104 device databases
+#: STM32CubeProgrammer ships put it here and none of them puts it anywhere else.
+INTERNAL_FLASH_BASE = 0x08000000
+
+
+def reset_vector_address(quirks: FamilyQuirks) -> int | None:
+    """Where to read the reset vector, to predict the PC after a reset.
+
+    Only a part that boots out of its own internal flash has a post-reset PC
+    this table can predict. On a part whose boot ROM loads a signed image from
+    external memory, the STM32N6 being the one here, the core comes up inside
+    that ROM at an address nothing records, and whatever was running in RAM is
+    gone. None is the honest answer, and it makes the caller report a reset it
+    could not check rather than compare the PC against a number that does not
+    describe it.
+    """
+    return INTERNAL_FLASH_BASE if quirks.flash_base == INTERNAL_FLASH_BASE else None
+
+
+def reset_landed_at_vector(pc: int | None, reset_handler: int | None) -> bool:
+    """Whether a halted core is sitting on the reset handler.
+
+    The vector table stores the handler address with bit 0 set, which marks
+    Thumb state, and the PC reads back with that bit clear. Comparing the two
+    without masking is false for every correct reset, which is worse than having
+    no check at all: it would report a reset that did happen as one that did
+    not, and send someone to debug working hardware.
+    """
+    if pc is None or reset_handler is None:
+        return False
+    return pc == (reset_handler & ~1)
+
+
 def explain_connect_failure(info: TargetInfo) -> str:
     """Turn an unhelpful CLI error into the two things it usually means.
 
@@ -292,6 +325,37 @@ class Probe:
                 + result.stdout.strip()
             )
         return regs
+
+    def reset_and_halt(self, access_port: int) -> tuple[int | None, str]:
+        """Reset the target and halt it, returning the program counter.
+
+        THE RESET HAS TO BE THE CONNECT, not a command issued after one.
+        Measured on a NUCLEO-H743ZI 2026-08-16, whose reset handler is at
+        0x0807FA98:
+
+            -c mode=HOTPLUG -rst -halt -coreReg   PC = 0x0807FC2C
+            -c mode=HOTPLUG -halt -rst -coreReg   PC = 0x0807FC3A
+            -c mode=HWRSTPULSE -halt -coreReg     PC = 0x0807FA98
+            -c mode=UR -coreReg                   PC = 0x0807FA98
+
+        The first two reset the part perfectly well and then lose the race to
+        halt it, so the core has already run several hundred bytes into
+        start-up. They are useless for VERIFYING a reset, because the PC they
+        report is not predictable and so cannot be compared against anything.
+        Only a resetting connect mode lands on the reset vector exactly.
+
+        UR is not used here even though it also works: it fails outright on the
+        STM32N6, on a healthy board, so HWRSTPULSE is the one that generalises.
+        """
+        argv = self._connect_args(access_port, "HWRSTPULSE") + ["-halt", "-coreReg"]
+        result = run_command(argv, timeout=90)
+        regs = parse_core_registers(result.stdout)
+        return regs.get("PC"), result.stdout
+
+    def release_core(self, access_port: int) -> str:
+        """Let a halted core run again."""
+        argv = self._connect_args(access_port, "HOTPLUG") + ["-run"]
+        return run_command(argv, timeout=90).stdout
 
     def program_flash(
         self, image: str, address: int, external_loader: str | None = None

@@ -103,6 +103,7 @@ uv sync
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port |
 | `core_registers` | Reads the core registers. Halts the core | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset |
 | `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, and refuses if it cannot resolve one |
+| `reset_target` | Resets the target and checks it restarted | Halts at the reset vector and compares the PC against word 1 of the vector table. The reset is the *connect*, because `-rst` then `-halt` loses the race and lands hundreds of bytes into start-up |
 | `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |
 | `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing. Works while other probes are held |
 

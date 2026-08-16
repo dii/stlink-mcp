@@ -38,7 +38,7 @@ fixed first rather than inherited. (RT4)
 | N4 nothing perturbs silently | Done: `target_was_reset`, `core_registers` documented as halting |
 | N5 runs on hardware that is not ours | Half. Quirks are data and can now be labelled, but describing a board still means editing the installed package |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
-| N7 flash, reset, interrogate all first class | **Reset missing.** It only happens as a side effect of something else |
+| N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector, and reports the halt it took to check |
 | N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `probe.py:164`, `-d` in `runner.py:145`. No JTAG |
 | N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals |
 
@@ -49,11 +49,14 @@ Standing check, currently passing: the MCP SDK is 2.0.0, which is the latest pub
 
 Three needs land together because they are one change to the same data path.
 
-**A reset tool (N7).** Reset is one of the three things the intent promises and there is no
-way to ask for it. It happens today only inside `identify` and the GDB batch. It needs to be
-a tool, to take the reset kind (hardware pulse, software, connect-under-reset), and to report
-what it actually achieved, since on some parts a reset does not reopen a closed access port
-and saying so is the whole point.
+**A reset tool (N7). DONE.** The verification turned on something that had to be measured
+rather than assumed: **the reset has to BE the connect.** On a NUCLEO-H743ZI whose reset
+handler is at 0x0807FA98, a hotplug connect then `-rst -halt` leaves the PC at 0x0807FC2C and
+the reverse order leaves it at 0x0807FC3A. Both reset the part correctly and then lose the
+race to halt it. Only a resetting connect mode lands on the vector exactly, which is what
+makes the check possible. Verified on two H7 boards with different reset handlers, and on the
+STM32N6, where the core halts in its boot ROM at an address the table cannot predict and the
+tool says so rather than inventing a comparison.
 
 **Provenance (N6). DONE.** Every part-specific field records where it came from. The plan
 named three sources and building it produced a fourth: `assumed`, for a value nobody measured
