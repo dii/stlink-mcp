@@ -11,8 +11,33 @@ not ours.
 
 ## Intent
 
-**stlink-mcp exists so that what an AI coding agent believes about an STM32 target is what
-is actually true of that target.**
+### What it is
+
+An MCP server, on the current MCP 2.x SDK, that a user runs **locally on the machine their
+STM32 board is plugged into** and attaches to a local agent session. Once attached, the agent
+can detect the attached board or be told what it is, and can then **flash it, reset it and
+interrogate it** over whatever debug and communication interfaces that board provides: SWD,
+JTAG, the serial console, and later SWO or RTT.
+
+Getting it running and attached is part of the product, not a footnote. A user should be able
+to install it, point an agent client at it, and have a working board conversation without
+reading the source.
+
+### Deployment model, and one constraint that outlives it
+
+One user, one machine, boards on the desk in front of them. **There is no team access model:
+no authentication, no approvals, no multi-tenancy.** That is a deliberate scope decision, not
+an oversight, and it is what keeps the tool small.
+
+It may become a feature later, so **the architecture must not prohibit it.** Nothing may
+assume a single implicit caller in a way that would have to be unpicked to add identity,
+sessions or per-caller policy. Concretely: state keyed to a caller rather than to a module
+global, and every operation traceable to who asked for it even while the answer is always
+"the local user".
+
+### The quality bar, and the reason the project exists at all
+
+**What an AI coding agent believes about the target must be what is actually true of it.**
 
 The vendor command line tools report success for operations they did not perform.
 `STM32_Programmer_CLI -s` prints "Start operation achieved successfully" for a start that
@@ -42,14 +67,28 @@ different things, the agent's need to not be misled wins.
 - **N4. Nothing perturbs the target silently.** Any operation that halts, resets or restarts
   the target either refuses or reports that it did so.
 - **N5. It runs on hardware that is not ours.** Part-specific facts live in data rather than
-  code, and an unknown part still identifies itself rather than failing completely.
-- **N6. Every part-specific fact records how it was established.** Measured on hardware, and
-  taken from a vendor source but not yet confirmed, are different states and are never
-  presented as the same one.
+  code. The board is either detected, or **described by the user without editing the
+  installed package**, and an unknown part still identifies itself rather than failing
+  completely.
+- **N6. Every part-specific fact records how it was established.** Measured on hardware,
+  taken from a vendor database, and stated by the user are three different states and are
+  never presented as the same one.
+- **N7. Flash, reset and interrogate are all first-class operations.** Reset in particular is
+  something the user asks for and gets told the truth about, not only a side effect of
+  something else.
+- **N8. The interface is a parameter, not an assumption.** SWD, JTAG and the serial console
+  are choices the user or the board makes. Nothing hardcodes one of them.
 
-N1 to N4 are what the code earns today. N5 is half done. **N6 does not exist yet**, and it
-is the one that makes broad device coverage possible without any of it claiming to be
-measured. See `ROADMAP.md`.
+And one architectural constraint, which is checked by reading the design rather than a
+result:
+
+- **N9. Nothing assumes a single implicit caller.** Identity and per-caller policy are out of
+  scope today and must remain addable without a redesign.
+
+N1 to N4 are what the code earns today. N5 is half done: quirks are data, but the only way to
+describe a board is to edit the package. **N6, N7, N8 and N9 do not exist yet** - there is no
+provenance, no reset tool, `port=SWD` is hardcoded in `probe.py` and `-d` in `runner.py`, and
+per-probe state sits in module globals. See `ROADMAP.md`.
 
 ### Non-goals
 
