@@ -193,6 +193,11 @@ of external flash, and its debug is on access port 1 rather than 0.
 * Two device families are verified on hardware, STM32N6 and STM32H7. Everything
   else falls back to a generic entry that can identify a target but will refuse
   to run firmware on it, because it has no verified RAM layout to load into.
+* Every probe this has run against is ST-LINK V3 generation. The probe list
+  parser should handle an older ST-LINK/V2 or V2-1 - nothing in it assumes a
+  V3 - but that is reasoning, not a measurement, and this project tries not to
+  confuse the two. If you hit a parsing problem on a V2, the captured `-l`
+  output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
 
 ## Licence
