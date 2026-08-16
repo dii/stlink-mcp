@@ -179,6 +179,15 @@ The STM32N6 entry is a good illustration of why the table is needed at all: that
 family has no internal flash, its boot ROM authenticates the image it loads out
 of external flash, and its debug is on access port 1 rather than 0.
 
+The table is keyed on the device ID the probe reports, and that is deliberately
+coarser than a part number. ST's own database calls 0x450 `STM32H7xx`, so an
+STM32H743 and an STM32H753 arrive as the same device and share one entry. Fill
+in values that hold for everything behind the ID, and keep anything that varies
+by board or by image out of it. That distinction is not academic here: an
+earlier version of this table carried a flag describing what a vendor startup
+file did, in a field named for what the silicon does, and it took two days and a
+bisection to get back out.
+
 ## Limitations
 
 * It does not build your firmware. That is your build system's job.

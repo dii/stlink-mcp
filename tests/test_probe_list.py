@@ -254,3 +254,57 @@ class TestEmptyFieldsDoNotCaptureTheNextLine:
         assert by_serial["0054003D3137511139383538"].console_port == "/dev/ttyACM4"
         assert by_serial["003C002C3335510535383531"].console_port == "/dev/ttyACM1"
         assert by_serial["0034004F3335510735383531"].console_port == "/dev/ttyACM2"
+
+
+class TestANonNucleoBoardWithAnOlderProbe:
+    """Captured 2026-08-16 with an STM32H753I-EVAL2 attached beside the usual
+    four N657X0-Q and the H743ZI, making six probes.
+
+    It is here because it is the only board in the sample that is not a Nucleo,
+    and every field it reports differs in shape from the boards the parser was
+    written against. The board name has no `NUCLEO-` prefix and is not the name
+    on the box: the probe stores `STM32H753I-EV`, so a caller matching on board
+    name for anything load-bearing is matching on the ST-LINK's idea of the
+    board rather than the board. Its firmware, `V3J3M2`, is the oldest of the
+    six and three major versions behind the newest attached, which is the
+    closest thing available here to testing an older probe.
+
+    The parser handles all of it, and the test exists to keep that true rather
+    than to record a fix. Worth stating plainly, because the two previous times
+    a new board was attached it exposed a live parser bug within a minute, and
+    this one did not.
+    """
+
+    FIXTURE = _fixture("probe_list_six_incl_h753_eval.txt")
+
+    def test_all_six_probes_are_found(self) -> None:
+        assert len(parse_probe_list(self.FIXTURE)) == 6
+        assert count_unreadable_entries(self.FIXTURE) == 0
+
+    def test_a_board_name_without_the_nucleo_prefix_survives(self) -> None:
+        by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
+        eval2 = by_serial["001A002D3137511133333639"]
+        assert eval2.board == "STM32H753I-EV"
+        assert eval2.firmware == "V3J3M2"
+        assert eval2.access_ports == 3
+
+    def test_the_odd_board_out_still_gets_its_own_console(self) -> None:
+        """Six probes and thirty-eight serial ports on the machine. Positional
+        pairing would be wrong here for almost every board."""
+        by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
+        assert by_serial["001A002D3137511133333639"].console_port == "/dev/ttyACM5"
+        assert by_serial["0038004C3335510735383531"].console_port == "/dev/ttyACM0"
+        assert by_serial["003E00463234510337333934"].console_port == "/dev/ttyACM4"
+
+    def test_every_probe_here_is_v3_generation(self) -> None:
+        """Guards a claim the README makes about its own coverage.
+
+        The parser is expected to handle an older ST-LINK/V2 or V2-1, and that
+        expectation has never been measured, because no V2 probe has been
+        attached to the machine this was developed on. The H753I-EVAL2 was
+        expected to be the one that settled it and is a V3E as well. If a V2
+        capture is ever added as a fixture, this assertion is what should fail
+        and send someone to the README limitation to delete it.
+        """
+        firmwares = [p.firmware for p in parse_probe_list(self.FIXTURE)]
+        assert all(fw and fw.startswith("V3") for fw in firmwares)
