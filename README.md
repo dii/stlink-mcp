@@ -57,6 +57,11 @@ memory reads but not RAM execution or external flash programming, because those
 addresses are family specific and this project would rather have a gap than a
 guess.
 
+What is planned, and why in that order, is in [ROADMAP.md](ROADMAP.md). The short version is
+that device coverage is the binding constraint and the fix is already on your disk:
+STM32CubeProgrammer ships a device database for 104 device IDs, and 103 of them carry the
+RAM region this tool currently refuses to guess at.
+
 ## Requirements
 
 * [STM32CubeCLT](https://www.st.com/en/development-tools/stm32cubeclt.html).

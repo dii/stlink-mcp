@@ -9,21 +9,52 @@ driving the STM32CubeCLT command line tools. Runs locally, on the machine the bo
 plugged into. Intended to be published, so it must make sense to someone whose board is
 not ours.
 
-## The one rule that matters
+## Intent
 
-**A tool reports success only after checking that the thing it was asked to do actually
-happened.** This is the whole reason the project exists. The vendor tools do not do it:
+**stlink-mcp exists so that what an AI coding agent believes about an STM32 target is what
+is actually true of that target.**
+
+The vendor command line tools report success for operations they did not perform.
 `STM32_Programmer_CLI -s` prints "Start operation achieved successfully" for a start that
 left the program counter untouched, and a GDB load against an already-running target
 completes cleanly while changing nothing.
 
-Consequences for any change here:
+A human developer usually catches that, because they hold information the tool never gave
+them: the LED on the board, the console text that looks like the previous build, the board
+in their hand. **An agent has none of that.** The text a tool returns is its entire model of
+the hardware. So a tool that overstates does not merely fail an operation. It makes the
+agent confidently wrong, and the agent then writes that wrongness into code, commit messages
+and documentation, where it costs far more than the failed operation did.
 
-- Never return `ok: True` on the strength of an exit code. Verify the effect.
-- Where a claim cannot be verified, say so in the result (`verified_by`, `warning`). An
-  unverifiable claim reported as verified is the specific harm this project exists to stop.
-- Prefer a loud gap to a quiet guess. An unknown device family must refuse the operation,
-  not assume an address.
+The primary user is therefore an agent, with a human supervising. Where the two want
+different things, the agent's need to not be misled wins.
+
+### The needs, each checkable by reading one result
+
+- **N1. Every result carries its verdict and its evidence.** `verified` names what was
+  observed, `unverified` names what was not checked and is not success, `failed` names the
+  cause. Never return `ok: True` on the strength of an exit code.
+- **N2. A missing fact is reported, never inferred.** An uncharacterised part refuses the
+  operation rather than assuming an address. Prefer a loud gap to a quiet guess.
+- **N3. Anything the agent cannot observe for itself is stated in the result:** whether the
+  target was reset, whether the answer came from a cache, whether the access port in use is
+  not the family's, whether another process holds the probe.
+- **N4. Nothing perturbs the target silently.** Any operation that halts, resets or restarts
+  the target either refuses or reports that it did so.
+- **N5. It runs on hardware that is not ours.** Part-specific facts live in data rather than
+  code, and an unknown part still identifies itself rather than failing completely.
+- **N6. Every part-specific fact records how it was established.** Measured on hardware, and
+  taken from a vendor source but not yet confirmed, are different states and are never
+  presented as the same one.
+
+N1 to N4 are what the code earns today. N5 is half done. **N6 does not exist yet**, and it
+is the one that makes broad device coverage possible without any of it claiming to be
+measured. See `ROADMAP.md`.
+
+### Non-goals
+
+It does not build firmware, does not sign images, is not a human-facing debugger interface,
+does not abstract over non-ST probes, and does not replace STM32CubeProgrammer. It drives it.
 
 ## Claims about tool behaviour are tested, not assumed
 

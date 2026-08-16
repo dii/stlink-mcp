@@ -68,6 +68,7 @@ include = [
     "GEMINI.md",
     "LICENSE",
     "README.md",
+    "ROADMAP.md",
     "pyproject.toml",
     "uv.lock",
 ]
