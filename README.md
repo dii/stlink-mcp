@@ -58,9 +58,10 @@ addresses are family specific and this project would rather have a gap than a
 guess.
 
 What is planned, and why in that order, is in [ROADMAP.md](ROADMAP.md). The short version is
-that device coverage is the binding constraint and the fix is already on your disk:
-STM32CubeProgrammer ships a device database for 104 device IDs, and 103 of them carry the
-RAM region this tool currently refuses to guess at.
+that device coverage is the binding constraint and most of the fix is already on your disk:
+STM32CubeProgrammer ships device databases covering 103 device IDs, and every one of them
+carries the RAM region this tool currently refuses to guess at. Run
+`python3 tools/survey_device_db.py` against your own install to see it.
 
 ## Requirements
 

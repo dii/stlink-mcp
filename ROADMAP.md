@@ -12,8 +12,21 @@ Three decisions set the shape, all taken 2026-08-16:
 - **The primary user is an agent, with a human supervising.** Where the two want different
   things, the agent's need to not be misled wins. That is why fault decoding outranks a
   nicer console, and why Windows sits below evidence quality.
-- **Breadth before depth.** Only 2 of 104 device IDs are characterised, so the tool refuses
+- **Breadth before depth.** Only 2 of 103 device IDs are characterised, so the tool refuses
   to run firmware on most STM32 parts. Widening that is worth more than deepening two.
+
+This plan was red-teamed before anything was built from it, per ADR-0018, and revised against
+the result. Findings RT1 to RT5 are folded in below; the report is
+`red-team-roadmap-2026-08-16.md`, which is kept locally and not published.
+
+## Phase 0 - one existing bug that every phase sits on
+
+`find_toolchain` promises "newest first when several are installed" and delivers the oldest.
+`toolchain.py:80` sorts install directories with a plain string sort, so
+`stm32cubeclt_1.9.0` orders ahead of `stm32cubeclt_1.22.0`. Today that means a user with two
+installs silently runs the older programmer. From Phase 2 onward it means the seeded addresses
+come out of a stale vendor database with no signal that a newer one was skipped, so it is
+fixed first rather than inherited. (RT4)
 
 ## Where it stands
 
@@ -55,17 +68,38 @@ named reason when no observation is available.
 
 **User-stated board details (N5).** A user must be able to say what their board is without
 editing the installed package: a config file or a tool parameter carrying the same fields the
-quirks table holds. This is the third provenance and it is what makes "provide details about
-the board attached" real rather than a code contribution.
+quirks table holds, keyed by device ID, since `for_device_id` is the only entry point the code
+has and the by-name lookup was deliberately removed. This is the third provenance and it is
+what makes "provide details about the board attached" real rather than a code contribution.
+
+Two consequences of that channel, both found by the red-team:
+
+- **The consistency invariants have to move.** They exist today only as pytest
+  parametrisations over the compile-time `FAMILIES` dict, so a runtime-supplied entry gets
+  none of them. A user entry needs the same checks at the point it is loaded, not only in the
+  test suite. (RT6)
+- **Three places forbid what Phase 2 does and must be reworded in the same change.**
+  `AGENTS.md` under "Quirks belong in the table", the `quirks.py` module docstring, and the
+  user-facing string at `server.py:365` all say to fill in only values verified on hardware,
+  with no provenance escape hatch. Leaving them is the same defect this repo has already
+  shipped twice: each statement locally true, the whole self-contradicting, and the
+  user-facing one is what a reader meets first. (RT5)
+
+**And say plainly what the policy does NOT cover.** Act-then-observe is written for the RAM
+path, where an observation exists and a wrong guess is undone by a reset. It is not a licence
+for the write path. `flash_firmware` keeps its current behaviour until Phase 5 gives it a
+readback, and the seeding below does not change what it will write to. (RT7)
 
 ## Phase 2 - seed from the vendor database
 
-**Measured 2026-08-16, before this plan was written.** STM32CubeProgrammer 2.23.0 ships 104
-device databases at `STM32CubeProgrammer/Data_Base/STM32_Prog_DB_0x*.xml`, one per device ID,
-covering 32 series from C0 through to N6, MP and V8:
+**Measured, then re-measured after the red-team found the first survey wrong.** Every figure
+here comes from `tools/survey_device_db.py`, which is checked in so the numbers can be re-run
+against any install rather than believed. STM32CubeProgrammer 2.23.0 ships **104 database
+files holding 103 distinct device IDs**, covering 32 series from C0 through to N6, MP and V8:
 
-- **103 of 104** carry a named SRAM region with both address and size.
-- **94 of 104** carry a flash base at `0x0800xxxx`.
+- **104 of 104** carry a named SRAM region with both address and size.
+- **94 of 104** carry a flash base at `0x0800xxxx`, and that address is **unambiguous in
+  every one of them**.
 - The values agree with what this project measured by hand. 0x450 gives `0x24000000` size
   `0x80000`, exactly the H7 entry's `ram_load_base`.
 
@@ -73,19 +107,58 @@ So the two fields that currently force a part to refuse a run are already on the
 disk, for effectively the whole range. They arrive with provenance `vendor-db` and are
 treated accordingly.
 
-What the database does **not** give, and what therefore still comes from measurement or from
-the existing scan:
+**Why there is a script.** The first version of this section said "103 of 104", and that
+number measured the survey's own regex rather than the data: `0x45A` writes its address as
+`"0x20004000U"`, with a trailing `U` that a strict hex match rejects, and two other files
+write a size with no `0x` prefix at all. A parser for this data has to tolerate ST's own
+inconsistency, and a figure quoted from a shell one-liner nobody can re-run is exactly the
+kind of claim this project exists to distrust. (RT3)
 
-- **Access port.** Not in the database. Nearly every part uses 0 and the N6 uses 1, and
-  `Probe.identify` already scans both, so a seeded entry can leave this to the scan.
+**One device ID appears in two files.** `0x485` is declared by both `STM32_Prog_DB_0x485.xml`
+and `STM32_Prog_DB_0x485_swv.xml`. They agree on the fields we would seed, so it is harmless
+today, but a glob into a device-ID-keyed dict resolves the collision by file order, which is
+not a decision anyone made. (RT3)
+
+**SRAM is not always one region, and the rule for choosing is stateable.** 14 of the 103
+device IDs offer more than one SRAM base address:
+
+- **10 are TrustZone secure and non-secure views of the same memory**, differing by exactly
+  `0x10000000` (`0x2xxxxxxx` against `0x3xxxxxxx`). These resolve mechanically: take the
+  non-secure view.
+- **4 are genuinely separate banks, and a real choice**: `0x42B`, `0x42C`, `0x472` (three
+  banks) and `0x49A`. **Seeding must refuse these rather than pick one.** That is N2 applied
+  to our own data, and it costs 4 device IDs out of 103.
+
+The combined `(address, size)` count is 16 rather than 14, but the extra two differ only in
+size, which is a die or package variant and does not affect a base address. Quoting 16 would
+repeat the 103 mistake in a new place. (RT2)
+
+**Access port cannot be left to the existing scan, and the scan needs fixing first.** The
+first version of this plan said a seeded entry could leave access port alone, because
+`Probe.identify` scans ports 0 and 1. It does not, in precisely the case that matters. It
+returns as soon as AP0 answers, and `_settle_access_port` then compares against
+`info.quirks.access_port`, which for a seeded entry carrying no measured port is `0`. `0 == 0`
+returns immediately and **AP1 is never tried**. A seeded family needing a non-zero port would
+report AP0 with no `degraded_reason`, and the first symptom would be "Failed to halt target",
+which `AGENTS.md` records as having already cost this project time once.
+
+So Phase 2 either fixes the scan to try every port when the family's own port is unmeasured,
+or leaves access port absent so the part refuses. It does not inherit a claim that is false.
+(RT1)
+
+What the database does **not** give, and what therefore still comes from measurement:
+
+- **Access port.** Not present in any of the 104 files, by both text and structural search.
 - **Signing, external loaders, and image behaviour** such as `debug_closes_on_run`. These
   belong to a boot design or a vendor startup file, not to a device ID.
 
 **The known trap, and the first thing to test.** For the N6 the database gives SRAM at
 `0x34180400`, which is this project's `vector_table_addr` and not its `ram_load_base` of
-`0x34180000`. The difference is 0x400, the signing header. Most parts have no header and the
-two coincide, but the mapping must be worked out and tested rather than assumed, and the part
-we know best is the one that proves a naive reading wrong.
+`0x34180000`. The difference is 0x400, the signing header. Measured across every SRAM base in
+the set, **exactly one carries a 0x400 offset and it is the N6**, with 106 of 119 bases
+perfectly round, so treating the database address as the load base is right in the common
+case. That is a reason to expect the mapping to be simple, not a reason to skip testing it,
+and the part we know best is the one that proves a naive reading wrong.
 
 Open choice: parse the databases at runtime from the user's own install, which stays current
 and vendors nothing, or generate a checked-in table, which survives an install that lacks the
