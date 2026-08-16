@@ -98,8 +98,21 @@ def parse_core_registers(output: str) -> dict[str, int]:
     return {name: int(value, 16) for name, value in _CORE_REG.findall(output)}
 
 
-#: Internal flash, on every STM32 that has any. 94 of the 104 device databases
-#: STM32CubeProgrammer ships put it here and none of them puts it anywhere else.
+#: Where internal flash sits on most, but NOT all, STM32 parts.
+#:
+#: An earlier version of this comment said 94 of the 104 device databases put it
+#: here "and none of them puts it anywhere else". That was false, and it was the
+#: third count published in one day that measured its author's filter rather
+#: than the data. Measured properly, with `tools/survey_device_db.py`'s parser:
+#:
+#:   94 of 104 databases carry an Embedded Flash base at 0x0800xxxx
+#:   10 do not. Of those, FIVE have internal flash at 0x10040000 - the
+#:      STM32WB05/07/09 and STM32WL3/WL3R - and five have no internal flash at
+#:      all: the STM32N6 and the four STM32MP entries.
+#:
+#: Individual databases also declare the same flash at a 0x0C00xxxx TrustZone
+#: secure alias and, on some H7/F7 entries, at a 0x0020xxxx bank mapping. So
+#: this constant is one common case, not a universal fact.
 INTERNAL_FLASH_BASE = 0x08000000
 
 
@@ -113,6 +126,15 @@ def reset_vector_address(quirks: FamilyQuirks) -> int | None:
     gone. None is the honest answer, and it makes the caller report a reset it
     could not check rather than compare the PC against a number that does not
     describe it.
+
+    KNOWN NARROW, and narrow in a way that costs coverage rather than
+    correctness. The test is equality with INTERNAL_FLASH_BASE, so a
+    STM32WB05/07/09 or STM32WL3 with a correctly measured flash_base of
+    0x10040000 executes from its own internal flash exactly like an H7, has an
+    equally predictable post-reset PC, and is refused anyway. That is a missed
+    verification, never a wrong one: the caller gets `unverified` with a stated
+    reason. Widening it needs one of those parts on a bench, which is the same
+    bar every other entry in this project had to clear.
     """
     return INTERNAL_FLASH_BASE if quirks.flash_base == INTERNAL_FLASH_BASE else None
 
@@ -182,6 +204,13 @@ class Probe:
         """True when identification needed a resetting connect, which restarts
         whatever was running. Reported rather than hidden, because for anything
         inspecting a live program that is a destructive act."""
+        self.access_port_provenance: str | None = None
+        """Where the access port in use came from, once identify() has run."""
+        self.other_ports_that_answered: list[int] = []
+        self.unmeasured_port_warning: str | None = None
+        """Set when the port in use was never measured for this part. Distinct
+        from degraded_reason, which means the family's recorded port could not
+        be reached at all: this one means there is no recorded port to reach."""
         self.degraded_reason: str | None = None
         """Set when the access port in use is not the one the family wants.
 
@@ -257,7 +286,30 @@ class Probe:
         and giving up is recorded as a degradation rather than hidden.
         """
         wanted = info.quirks.access_port
+        self.access_port_provenance = info.quirks.provenance_of("access_port")
+
         if wanted == answered_on:
+            # Agreeing with a number nobody measured is not agreement.
+            #
+            # For an uncharacterised part the family's port comes from DEFAULT,
+            # which is 0 and is `assumed`. The port that answered is also 0,
+            # because the scan tries 0 first and stops when it works. So
+            # `wanted == answered_on` is satisfied by two independent guesses
+            # matching, and the function used to return here reporting nothing.
+            #
+            # That is the STM32N6 trap for any part this project has not
+            # characterised: AP0 answers device ID, name, CPU and revision
+            # perfectly well while being unable to halt the core, so the first
+            # symptom is "Failed to halt target" much later, which reads as
+            # broken hardware.
+            #
+            # The core cannot be halted here to settle it, because halting is
+            # perturbing and this method runs during plain identification. What
+            # CAN be done without touching the running program is ask whether
+            # any other port answers at all, and say plainly that the number in
+            # use was never measured.
+            if not info.quirks.is_measured("access_port"):
+                self._note_unmeasured_port(answered_on, mode)
             return answered_on
 
         attempts = [mode]
@@ -278,6 +330,39 @@ class Probe:
             "to halt it."
         )
         return answered_on
+
+    def _note_unmeasured_port(self, answered_on: int, mode: str) -> None:
+        """Record that the access port in use is a guess, and what else answered.
+
+        One extra hotplug connect per alternative port, and only for a part
+        whose port was never measured, so a characterised family pays nothing.
+        The connect does not reset or halt, so a running program is undisturbed.
+
+        Another port answering is not proof that it is the right one, and this
+        deliberately does not switch to it. It is the single most useful fact
+        available for the failure it warns about, because on the one part known
+        to need a non-zero port BOTH answer identity and only one can halt.
+        """
+        for port in (0, 1):
+            if port == answered_on:
+                continue
+            result = run_command(self._connect_args(port, mode), timeout=90)
+            if parse_target_info(result.stdout).connected:
+                self.other_ports_that_answered.append(port)
+
+        others = ", ".join(f"AP{p}" for p in self.other_ports_that_answered)
+        self.unmeasured_port_warning = (
+            f"Using access port {answered_on}, which nobody measured for this "
+            f"part: it is the {self.access_port_provenance} default. Identity is "
+            "readable on a port that cannot halt the core, so this connect "
+            "succeeding does not mean the port is right."
+            + (
+                f" {others} also answered, and on the one family known to need a "
+                "non-zero port that is exactly what the wrong port looks like."
+                if self.other_ports_that_answered
+                else " No other access port answered."
+            )
+        )
 
     def gdb_access_port(self, info: TargetInfo) -> int:
         """Which access port the GDB server should be told to use.
@@ -353,9 +438,31 @@ class Probe:
         return regs.get("PC"), result.stdout
 
     def release_core(self, access_port: int) -> str:
-        """Let a halted core run again."""
+        """Let a halted core run again, and check that it did.
+
+        This is a SECOND connect, separate from the one that halted the core, so
+        everything that can go wrong between two invocations applies: another
+        process taking the probe, the board losing power, a USB glitch.
+
+        The check is not decoration. `run_command` does not raise on a nonzero
+        exit or on an error banner, only on a timeout or a missing binary, so an
+        unchecked version returns cleanly while the core is still halted, and
+        the caller then reports a running target that is stopped. Every other
+        method here checks its own effect - `program_flash` requires "File
+        download complete", `core_registers` requires a PC - and this one was the
+        exception until a red-team pass pointed at it.
+
+        "Core run" is what the CLI prints on success, observed on a NUCLEO-H743ZI
+        on 2026-08-16 immediately after a HWRSTPULSE connect and `-halt`.
+        """
         argv = self._connect_args(access_port, "HOTPLUG") + ["-run"]
-        return run_command(argv, timeout=90).stdout
+        result = run_command(argv, timeout=90)
+        if "Core run" not in result.stdout:
+            raise ProbeError(
+                "Asked the core to resume and the programmer did not confirm it. "
+                "The target is most likely still HALTED.\n" + result.stdout.strip()
+            )
+        return result.stdout
 
     def program_flash(
         self, image: str, address: int, external_loader: str | None = None

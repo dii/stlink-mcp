@@ -409,8 +409,11 @@ def set_user_boards(boards: Mapping[int, FamilyQuirks]) -> None:
     _USER_BOARDS.update(boards)
 
 
-def user_boards() -> dict[int, FamilyQuirks]:
-    return dict(_USER_BOARDS)
+# There was a user_boards() getter here, added alongside set_user_boards as its
+# obvious pair and called by nothing. It went for the same reason for_name() did:
+# an exported lookup implies a supported way in, and every real consumer reaches
+# the mapping through for_device_id. If something ever needs to report what was
+# loaded, it should be added then, with the caller that needs it.
 
 
 def for_device_id(
@@ -443,6 +446,47 @@ _USER_SETTABLE = frozenset({
     "name", "access_port", "ram_load_base", "vector_table_addr", "flash_base",
     "external_loader", "requires_signing", "debug_closes_on_run", "notes",
 })
+
+#: What each settable field must be. FamilyQuirks itself does no type checking -
+#: it is a frozen dataclass, and annotations are not enforcement - so this is the
+#: only thing between a TOML file and a value of the wrong type reaching code
+#: that assumes otherwise. Without it, `access_port = "0"` (quoted, an easy slip
+#: in a format with no schema) constructs happily and then raises TypeError deep
+#: inside check_consistency's range test, which nothing catches, so the whole
+#: server dies with a traceback and exit 1 instead of the one-line message and
+#: exit 2 it was built to give. Every correctly described board in the same file
+#: dies with it.
+_ADDRESS_FIELDS = frozenset({"ram_load_base", "vector_table_addr", "flash_base"})
+_FIELD_TYPES: dict[str, str] = {
+    "name": "string",
+    "access_port": "integer",
+    "ram_load_base": "integer",
+    "vector_table_addr": "integer",
+    "flash_base": "integer",
+    "external_loader": "string",
+    "requires_signing": "boolean",
+    "debug_closes_on_run": "boolean",
+    "notes": "string",
+}
+
+
+def _type_problem(field: str, value: object) -> str | None:
+    """Why this value cannot be that field, or None if it can."""
+    want = _FIELD_TYPES[field]
+    got = type(value).__name__
+    if want == "boolean":
+        return None if isinstance(value, bool) else f"must be a boolean, got {got}"
+    if want == "integer":
+        # bool is a subclass of int in Python, so `access_port = true` would
+        # otherwise pass an isinstance check and then be used as the number 1.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return f"must be an integer, got {got}"
+        if value < 0:
+            return f"must not be negative, got {value}"
+        if field in _ADDRESS_FIELDS and value == 0:
+            return "is zero, which is not a plausible address on any STM32"
+        return None
+    return None if isinstance(value, str) else f"must be a string, got {got}"
 
 
 def load_user_boards(path: Path) -> dict[int, FamilyQuirks]:
@@ -523,6 +567,21 @@ def load_user_boards(path: Path) -> dict[int, FamilyQuirks]:
                 f"{path}: [{key!r}] sets {', '.join(sorted(unknown))}, which "
                 f"{'is not a field' if len(unknown) == 1 else 'are not fields'} "
                 f"you can set. Allowed: {', '.join(sorted(_USER_SETTABLE))}."
+            )
+
+        type_problems = [
+            f"{field} {problem}"
+            for field, problem in (
+                (f, _type_problem(f, v)) for f, v in table.items()
+            )
+            if problem
+        ]
+        if type_problems:
+            raise BoardConfigError(
+                f"{path}: [{key!r}] has values of the wrong type:\n  - "
+                + "\n  - ".join(type_problems)
+                + "\nAddresses are TOML integers, written like 0x20000000 with no "
+                "quotes."
             )
 
         if "access_port" not in table:

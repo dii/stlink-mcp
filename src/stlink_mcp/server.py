@@ -247,6 +247,22 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
     programmer CLI cannot reach a held probe. It then answers from what was
     captured when the server was acquired and says so, rather than presenting a
     remembered identity as a fresh reading of the hardware.
+
+    READ `family.provenance` BEFORE TRUSTING `family`. Every address in that
+    section carries a label saying where it came from, because most of them are
+    not facts about your board:
+
+      measured     somebody ran it on this part and watched it work
+      vendor-db    read out of STMicroelectronics' device database
+      user-stated  typed into a board config file by whoever runs this server
+      assumed      nobody measured it and no source states it; it is this
+                   project's default for the STM32 range
+
+    Only `measured` means the value has been seen to work. `flash_firmware`
+    refuses to write to a base that is not measured unless you pass the address
+    yourself. `access_port_warning`, when present, says the port in use is a
+    guess, which matters because identity reads correctly on a port that cannot
+    halt the core.
     """
     try:
         toolchain = _toolchain()
@@ -281,11 +297,22 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
         "target_was_reset": probe.target_was_reset,
         "family": {
             "name": quirks.name,
-            "requires_signing_for_flash": quirks.requires_signing,
+            # These keys are the FamilyQuirks field names on purpose. They used
+            # to be prettier - "vector_table", "requires_signing_for_flash" -
+            # and provenance_summary() keys by field name, so the two halves of
+            # the same fact could not be joined by anything reading the payload.
+            # A provenance map whose keys do not match the values it describes is
+            # worse than no provenance map.
+            "requires_signing": quirks.requires_signing,
             "ram_load_base": _hex(quirks.ram_load_base),
-            "vector_table": _hex(quirks.vector_table_addr),
+            "vector_table_addr": _hex(quirks.vector_table_addr),
             "flash_base": _hex(quirks.flash_base),
             "external_loader": quirks.external_loader,
+            # Reported because provenance_summary() reports where this value came
+            # from, and a provenance with no value beside it tells an agent
+            # nothing. It also decides whether a later run_firmware will cost a
+            # power cycle, which is worth knowing beforehand rather than after.
+            "debug_closes_on_run": quirks.debug_closes_on_run,
             "notes": quirks.notes,
             # Which of these numbers somebody has actually seen work on a board.
             # Reported beside the values rather than folded into them, because
@@ -296,6 +323,13 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
         "console_port": probe_info.console_port if probe_info else None,
         "gdb_server_held": server_is_held(serial),
     }
+
+    if not cached and probe.access_port_provenance is not None:
+        state["access_port_provenance"] = probe.access_port_provenance
+    if not cached and probe.unmeasured_port_warning:
+        state["access_port_warning"] = probe.unmeasured_port_warning
+        if probe.other_ports_that_answered:
+            state["other_access_ports_that_answered"] = probe.other_ports_that_answered
 
     if not info.connected:
         return failed(
@@ -653,7 +687,23 @@ def read_memory(
 
 #: Where a user describes boards this project has not characterised.
 _BOARDS_ENV = "STLINK_MCP_BOARDS"
-_BOARDS_DEFAULT = Path.home() / ".config" / "stlink-mcp" / "boards.toml"
+
+
+def _default_boards_path() -> Path | None:
+    """The default board file, or None if there is no home directory to look in.
+
+    Deliberately a function. As a module-level constant this called Path.home()
+    at IMPORT time, so in an environment where it raises - HOME unset and the UID
+    absent from passwd, which some minimal container launches produce - the
+    failure happened during `from .server import ...`, before main() installed
+    the handler built to turn start-up problems into a one-line message and exit
+    2. A raw traceback instead, from the one part of start-up that exists to
+    prevent raw tracebacks.
+    """
+    try:
+        return Path.home() / ".config" / "stlink-mcp" / "boards.toml"
+    except RuntimeError:
+        return None
 
 
 def board_config_path() -> Path | None:
@@ -667,7 +717,8 @@ def board_config_path() -> Path | None:
     env = os.environ.get(_BOARDS_ENV)
     if env:
         return Path(env).expanduser()
-    return _BOARDS_DEFAULT if _BOARDS_DEFAULT.exists() else None
+    default = _default_boards_path()
+    return default if default is not None and default.exists() else None
 
 
 def load_board_config() -> tuple[int, Path | None]:
@@ -750,14 +801,38 @@ def reset_target(
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc))
 
+    # Release the core BEFORE deciding the verdict, and record what happened.
+    #
+    # The first version did this inside the verified branch only, and computed
+    # `core_halted` once as `pc is not None and leave_halted`, which is False by
+    # default. Every unverified return therefore left the core physically halted
+    # while reporting `core_halted: false` - including the STM32N6 path, which
+    # was exercised on real hardware and read without anyone noticing. Whether
+    # the reset could be VERIFIED and whether the core is RUNNING are
+    # independent facts, and tying them together made the tool lie about the one
+    # thing it is uniquely able to observe.
+    core_halted = pc is not None
+    release_error: str | None = None
+    if core_halted and not leave_halted:
+        try:
+            probe.release_core(access_port)
+            core_halted = False
+        except Exception as exc:  # noqa: BLE001
+            release_error = str(exc)
+
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "family": quirks.name,
         "reset_kind": "hardware pulse on nRST (HWRSTPULSE connect)",
         "program_counter": _hex(pc),
         "expected_reset_handler": _hex(None if expected is None else expected & ~1),
-        "core_halted": pc is not None and leave_halted,
+        "core_halted": core_halted,
     }
+    if not core_halted and pc is not None:
+        detail["note"] = (
+            "The core was halted only long enough to read the program counter, "
+            "and is running again."
+        )
 
     if pc is None:
         # The pulse went out and the debug port did not answer afterwards.
@@ -781,15 +856,31 @@ def reset_target(
             "afterwards, so nothing observed the target restart"
         )
         if quirks.debug_closes_on_run:
-            detail["note"] = (
+            hint = (
                 f"On {quirks.name} the debug access port is most likely to have "
                 "been closed ALREADY, by an image that ran before this call, and "
                 "a reset does not reopen it on this family. Only removing power "
                 "does. This is not evidence that the reset failed, and it is not "
                 "evidence that it worked."
             )
-        return unverified(reason, detail_output=output.strip().splitlines()[-3:],
-                          **detail)
+        else:
+            # Reachable for every part this project has not characterised, since
+            # debug_closes_on_run defaults to None. The first version put the
+            # note only behind the truthy branch, which left the majority case
+            # with a bare statement and no theory to act on.
+            hint = (
+                "Things to separate, in the order that costs least: is the probe "
+                "held by another process (check by PORT with `ss -ltnp`, never by "
+                "process name); is the target powered and out of reset; is the "
+                "access port right for this part, which board_state reports along "
+                "with where that number came from. A debug port that answered "
+                "before the pulse and not after is worth a power cycle before it "
+                "is worth suspecting the board."
+            )
+        return unverified(
+            reason, hint=hint,
+            detail_output=output.strip().splitlines()[-3:], **detail,
+        )
 
     if expected is None:
         return unverified(
@@ -809,20 +900,38 @@ def reset_target(
             f"the core halted at {_hex(pc)}, which is not this part's reset "
             f"handler {_hex(expected & ~1)}, so the reset did not leave the "
             "target where a reset should",
+            hint=(
+                "Three things produce this, and they are distinguishable. The "
+                "part may not be the family that was identified, so check "
+                "board_state's device id. The image may relocate its vector "
+                "table, in which case the handler in flash is not where it is "
+                "executing from. Or the halt genuinely lost the race, which is "
+                "what a plain `-rst` followed by `-halt` does and is why this "
+                "tool resets by connecting instead."
+            ),
             **detail,
         )
 
-    if not leave_halted:
-        try:
-            probe.release_core(access_port)
-            detail["core_halted"] = False
-            detail["note"] = (
-                "The core was halted only long enough to read the program "
-                "counter, and is running again."
-            )
-        except Exception as exc:  # noqa: BLE001
-            detail["core_halted"] = True
-            detail["note"] = f"The core is still HALTED: releasing it failed ({exc})."
+    # The reset itself is confirmed from here down. A release that was asked for
+    # and did not happen is still a failure of what the caller requested: they
+    # asked for a target that is reset and running, and this one is reset and
+    # stopped. Reporting that inside a `verified` envelope with a note is the
+    # shape result.py exists to stop, so the evidence for the reset is carried
+    # in the payload and the verdict follows the state the board is actually in.
+    if release_error is not None:
+        return failed(
+            "The reset was confirmed, but the core could not be released and the "
+            f"target is still HALTED: {release_error}",
+            reset_verified_by=(
+                f"the core halted at {_hex(pc)}, which is the reset handler named "
+                f"by word 1 of the vector table at {_hex(vector_addr)}"
+            ),
+            hint=(
+                "Nothing here needs a power cycle. Retry reset_target, or call it "
+                "with leave_halted=true if a halted core is what you wanted."
+            ),
+            **detail,
+        )
 
     return verified(
         f"the core halted at {_hex(pc)}, which is the reset handler named by "

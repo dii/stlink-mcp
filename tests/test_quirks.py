@@ -39,30 +39,48 @@ class TestUnknownFamiliesDegradeSafely:
 
 
 class TestEveryCharacterisedFamilyIsSelfConsistent:
-    """Applied to every entry, so a future family cannot be added half-done."""
+    """Applied to every entry, so a future family cannot be added half-done.
+
+    These call `quirks.check_consistency` rather than restating its rules,
+    because the loader calls it too and the two must not drift. An earlier
+    version duplicated the invariants here as hand-written assertions, which
+    meant a new rule added to `check_consistency` protected a user's board file
+    and silently did not protect this table - the checks applying to exactly the
+    entries that were never in doubt. The duplicates had already diverged: the
+    empty-name check existed in one and not the other.
+    """
 
     @pytest.mark.parametrize("family", quirks.FAMILIES.values(), ids=lambda f: f.name)
-    def test_ram_execution_requires_a_vector_table(self, family: quirks.FamilyQuirks) -> None:
-        if family.ram_load_base is not None:
-            assert family.vector_table_addr is not None, (
-                "A RAM load address without a vector table address cannot be run: "
-                "SP and PC are read from the vector table."
-            )
-
-    @pytest.mark.parametrize("family", quirks.FAMILIES.values(), ids=lambda f: f.name)
-    def test_external_loader_implies_a_flash_base(self, family: quirks.FamilyQuirks) -> None:
-        if family.external_loader is not None:
-            assert family.flash_base is not None
+    def test_the_entry_passes_the_same_check_a_user_entry_must(
+        self, family: quirks.FamilyQuirks
+    ) -> None:
+        assert quirks.check_consistency(family) == []
 
     @pytest.mark.parametrize("family", quirks.FAMILIES.values(), ids=lambda f: f.name)
     def test_every_family_explains_itself(self, family: quirks.FamilyQuirks) -> None:
         """The notes are the point of the table, not decoration: they are what
-        stops the next person rediscovering the quirk the hard way."""
+        stops the next person rediscovering the quirk the hard way.
+
+        Not in check_consistency, deliberately: it is a contribution-quality rule
+        for this file, and requiring prose from a user's private config would be
+        officious.
+        """
         assert family.notes.strip(), f"{family.name} has no notes"
 
-    @pytest.mark.parametrize("family", quirks.FAMILIES.values(), ids=lambda f: f.name)
-    def test_access_port_is_plausible(self, family: quirks.FamilyQuirks) -> None:
-        assert 0 <= family.access_port <= 255
+    def test_the_shared_check_actually_catches_each_shape(self) -> None:
+        """Calling a shared function is only an improvement if the function
+        bites. Fed the shapes it exists to reject, one at a time."""
+        cases = [
+            (dict(name="x", access_port=0, ram_load_base=0x2000_0000), "vector_table_addr"),
+            (dict(name="x", access_port=0, external_loader="a.stldr"), "flash_base"),
+            (dict(name="", access_port=0), "no name"),
+            (dict(name="x", access_port=999), "out of range"),
+        ]
+        for kwargs, expected in cases:
+            problems = quirks.check_consistency(quirks.FamilyQuirks(**kwargs))
+            assert any(expected in p for p in problems), (
+                f"{kwargs} should have been rejected for {expected!r}, got {problems}"
+            )
 
 
 class TestSTM32N6:

@@ -166,6 +166,11 @@ class _FakeProbe:
 
     device_id = 0x486  # STM32N6, the family the fake board's AP1 answers below
 
+    # Class-level so a test can patch them; __init__ must not overwrite them.
+    access_port_provenance: str | None = "measured"
+    other_ports_that_answered: tuple[int, ...] = ()
+    unmeasured_port_warning: str | None = None
+
     def __init__(self, *args, **kwargs) -> None:
         self.connect_mode = "HOTPLUG"
         self.target_was_reset = False
@@ -539,3 +544,209 @@ class TestResetIsNotClaimedUnlessItWasSeen:
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
         out = call("reset_target", leave_halted=True)
         assert out["core_halted"] is True
+
+
+class TestResetTargetTellsTheTruthAboutTheCore:
+    """Regression tests for the two defects a red-team found in the first
+    version of `reset_target`, both of which had run on real hardware.
+
+    The first: `core_halted` was computed once, before the verdict branches, as
+    `pc is not None and leave_halted` - False by default - and the two
+    unverified returns executed before the core was ever released. So every
+    unverified outcome left the core physically halted and reported that it was
+    not, and one payload managed to say "the core halted at 0x..." in prose and
+    `core_halted: false` in a field beside it.
+
+    The second: a release that failed was reported inside a `verified` envelope
+    with the failure demoted to a note.
+    """
+
+    @pytest.fixture
+    def h7_bench(self, bench, monkeypatch):
+        from stlink_mcp import quirks as quirks_mod
+
+        h7 = quirks_mod.FamilyQuirks(
+            name="STM32H7", access_port=0, ram_load_base=0x24000000,
+            vector_table_addr=0x24000000, flash_base=0x08000000,
+            requires_signing=False, debug_closes_on_run=False, notes="x",
+        )
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: h7)
+        monkeypatch.setattr(
+            _FakeProbe, "read_memory",
+            lambda self, addr, n: {addr: 0x20020000, addr + 4: 0x0807FA99},
+        )
+        return bench
+
+    def test_an_unverifiable_reset_still_releases_the_core(self, bench, monkeypatch) -> None:
+        """The STM32N6 path, exactly as it ran on hardware: the core halts in the
+        boot ROM and the reset cannot be verified. The old code returned before
+        releasing it, and reported core_halted false while it was stopped."""
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x34180400)
+        out = call("reset_target")
+        assert out["ok"] is False
+        assert out["core_halted"] is False, (
+            "the core should have been RELEASED even though the reset could not "
+            "be verified: the two are independent facts"
+        )
+
+    def test_a_release_failure_is_not_a_verified_reset(self, h7_bench, monkeypatch) -> None:
+        def boom(self, access_port):
+            raise RuntimeError("the programmer did not confirm the core resumed")
+
+        monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
+        monkeypatch.setattr(_FakeProbe, "release_core", boom)
+        out = call("reset_target")
+        assert out["ok"] is False
+        assert out["status"] == result.FAILED
+        assert out["core_halted"] is True, "the core really is halted, and must say so"
+        # The reset itself WAS observed, and that evidence is not thrown away.
+        assert "0x0807FA98" in out["reset_verified_by"]
+
+    def test_a_core_that_is_halted_is_released_on_every_path(
+        self, h7_bench, monkeypatch
+    ) -> None:
+        """Whether the reset could be verified has nothing to do with whether
+        the caller asked for a running target."""
+        released: list[int] = []
+        monkeypatch.setattr(
+            _FakeProbe, "release_core",
+            lambda self, ap: released.append(ap) or "Core run\n",
+        )
+        for pc in (0x0807FA98, 0x0807FC2C):   # verified, then landed-elsewhere
+            released.clear()
+            monkeypatch.setattr(_FakeProbe, "reset_pc", pc)
+            out = call("reset_target")
+            assert released, f"core left halted for pc={pc:#x}"
+            assert out["core_halted"] is False
+
+    def test_nothing_is_released_when_nothing_was_halted(self, h7_bench, monkeypatch) -> None:
+        released: list[int] = []
+        monkeypatch.setattr(_FakeProbe, "reset_pc", None)
+        monkeypatch.setattr(
+            _FakeProbe, "release_core",
+            lambda self, ap: released.append(ap) or "Core run\n",
+        )
+        out = call("reset_target")
+        assert not released
+        assert out["core_halted"] is False
+        assert out["ok"] is False
+
+    def test_every_unverified_branch_offers_a_next_step(self, h7_bench, monkeypatch) -> None:
+        """An agent whose only source of information is the result cannot act on
+        a bare statement of fact."""
+        for pc in (None, 0x0807FC2C):
+            monkeypatch.setattr(_FakeProbe, "reset_pc", pc)
+            out = call("reset_target")
+            assert out.get("hint"), f"no hint on the branch for pc={pc}"
+
+
+class TestReleaseCoreChecksItsOwnEffect:
+    def test_it_raises_when_the_programmer_does_not_confirm(self, monkeypatch) -> None:
+        """run_command does not raise on a nonzero exit or an error banner, so
+        an unchecked release returns cleanly while the core is still stopped."""
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+
+        monkeypatch.setattr(
+            pm, "run_command",
+            lambda argv, timeout=90: CommandResult(argv, 0, "Error: cannot connect\n"),
+        )
+        p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAA")
+        with pytest.raises(pm.ProbeError, match="still HALTED"):
+            p.release_core(0)
+
+    def test_it_accepts_the_confirmation_the_cli_actually_prints(self, monkeypatch) -> None:
+        """Measured on a NUCLEO-H743ZI: the CLI prints "Core run"."""
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+
+        monkeypatch.setattr(
+            pm, "run_command",
+            lambda argv, timeout=90: CommandResult(argv, 0, "Core run\n"),
+        )
+        p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAA")
+        assert "Core run" in p.release_core(0)
+
+
+class TestAnUnmeasuredAccessPortIsAnnounced:
+    """RT1: the ASSUMED provenance existed and changed nothing.
+
+    Its docstring said an assumed port "must not be trusted the way a measured
+    one is" and called that the signal the scan needs. Nothing read access-port
+    provenance anywhere: the only two call sites of is_measured/provenance_of in
+    the whole server were for flash_base. A reader checking whether the
+    provenance model protected the access port found text saying it did.
+
+    The trap it must warn about, from this project's own history: on the STM32N6
+    AP0 reports device ID, name, CPU and revision perfectly well while being
+    unable to halt the core, so a wrong port surfaces much later as "Failed to
+    halt target", which reads as broken hardware.
+    """
+
+    def _probe_with(self, monkeypatch, answers: dict[int, bool]):
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+
+        def fake_run(argv, timeout=90):
+            port = next(int(a.split("=")[1]) for a in argv if a.startswith("ap="))
+            body = "Device ID   : 0x999\n" if answers.get(port) else "Error: Unable to get core ID\n"
+            return CommandResult(argv, 0, body)
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        return pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAA")
+
+    def test_an_unknown_device_says_its_port_was_never_measured(self, monkeypatch) -> None:
+        probe = self._probe_with(monkeypatch, {0: True, 1: False})
+        probe.identify()
+        assert probe.access_port_provenance == "assumed"
+        assert "nobody measured" in probe.unmeasured_port_warning
+        assert probe.other_ports_that_answered == []
+
+    def test_it_names_the_other_port_when_one_also_answers(self, monkeypatch) -> None:
+        """The N6 shape: both ports answer identity and only one can halt. That
+        is the single most useful fact available without perturbing the target,
+        and it is the case the warning exists for."""
+        probe = self._probe_with(monkeypatch, {0: True, 1: True})
+        probe.identify()
+        assert probe.other_ports_that_answered == [1]
+        assert "AP1 also answered" in probe.unmeasured_port_warning
+
+    def test_a_measured_family_pays_nothing_and_warns_nothing(self, monkeypatch) -> None:
+        """The extra connect happens only for a part whose port was never
+        measured, so a characterised family is unaffected."""
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+
+        calls: list[int] = []
+
+        def fake_run(argv, timeout=90):
+            port = next(int(a.split("=")[1]) for a in argv if a.startswith("ap="))
+            calls.append(port)
+            return CommandResult(argv, 0, "Device ID   : 0x450\n")
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAA")
+        probe.identify()
+        assert probe.access_port_provenance == "measured"
+        assert probe.unmeasured_port_warning is None
+        assert calls == [0], "a measured family must not pay for the extra probe"
+
+    def test_board_state_surfaces_the_warning(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "access_port_provenance", "assumed")
+        monkeypatch.setattr(_FakeProbe, "unmeasured_port_warning", "the port is a guess")
+        monkeypatch.setattr(_FakeProbe, "other_ports_that_answered", [1])
+        out = call("board_state")
+        assert out["access_port_provenance"] == "assumed"
+        assert out["access_port_warning"] == "the port is a guess"
+        assert out["other_access_ports_that_answered"] == [1]
+
+    def test_board_state_reports_the_value_beside_its_provenance(self, bench) -> None:
+        """RT7: provenance_summary named debug_closes_on_run and the payload
+        carried no key holding it, so an agent was told where a fact came from
+        without being told the fact."""
+        out = call("board_state")
+        family = out["family"]
+        for name in family["provenance"]:
+            assert name in family or name == "access_port", (
+                f"{name} has a provenance in the payload but no value beside it"
+            )
