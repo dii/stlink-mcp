@@ -103,19 +103,35 @@ uv sync
 
 `run_firmware` starts a GDB server and **holds it** rather than tearing it down.
 That is not laziness. On the STM32N6, once firmware has run the debug access port
-cannot be re-acquired, and only removing power restores it.
+cannot be re-acquired once a typical image has run, and only removing power gets
+it back. Holding the server is therefore the difference between one power cycle
+per session and one per run.
 
-Measured 2026-08-16 with four boards that had all run firmware, one power cycled
-and three not. The cycled board accepted a hotplug connect, a resetting connect,
-and a freshly started GDB server. The uncycled ones refused all three. So the
-server is held because tearing it down costs a power cycle, not out of caution.
+**That is a property of the image, not of the part**, which is worth stating
+plainly because this project got it wrong for two days and wrote the wrong
+version into its own docs. The cause is one line at the end of ST's
+`system_stm32n6xx_fsbl.c`:
 
-It took three attempts to establish, and the first two were wrong in the same
-way: another process was holding the probe, which makes any connect fail
-regardless. If you repeat this, confirm the probe is free **by port**, with
-`ss -ltnp` over the GDB port range, rather than by process name. Linux truncates
-process names to fifteen characters, so the obvious `pgrep ST-LINK_gdbserver`
-matches nothing at all and reads exactly like a clean control.
+```c
+RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
+```
+
+`SystemInit` turns the SYSCFG clock on early so it can write `INITSVTORCR`, then
+turns it off again on the way out. On the N6 that clock is what keeps debug
+access port 1 alive. Remove that single write and the port survives: four
+consecutive load-and-run cycles with no power cycle, against the stock image
+closing it on the very next run of the same board.
+
+Found by bisecting `SystemInit`, which also eliminated the boot ROM handoff (a
+bare image with no startup chain leaves the port open), the startup assembly,
+TrustZone and the SAU, `INITSVTORCR`, the PWR supply block, and every peripheral
+reset in there.
+
+Two methodology notes, both earned the hard way. Confirm a probe is free **by
+port** with `ss -ltnp`, never by process name: Linux truncates process names to
+fifteen characters, so `pgrep ST-LINK_gdbserver` matches nothing at all and reads
+exactly like a clean control. And connect-under-reset (`mode=UR`) is not a way
+out here; it fails on a healthy board too.
 
 An already established connection keeps working across repeated load-and-run
 cycles, **provided the target is reset before every load**. That precondition is

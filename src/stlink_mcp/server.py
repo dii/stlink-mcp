@@ -83,11 +83,12 @@ def _cached_for(serial: str | None):
 
 _HELD_MESSAGE = (
     "A GDB server is holding THIS probe, so the programmer cannot connect to "
-    "it. Enumeration and other probes are unaffected. That is deliberate: on "
-    "some parts the debug access port cannot be re-acquired once firmware has "
-    "run, so the server is kept alive to allow repeated runs. Call "
-    "release_probe() to free it, but note that on those parts the board then "
-    "needs a power cycle before firmware can be run again."
+    "it. Enumeration and other probes are unaffected. The server is kept alive "
+    "because on some parts a typical image leaves the debug access port "
+    "unreachable once it has run. Call release_probe() to free it. If your "
+    "image is one of those, the board then needs a power cycle before firmware "
+    "can run again, and board_state reports the family note describing what in "
+    "the image causes it, which is usually one line and usually removable."
 )
 
 
@@ -419,11 +420,13 @@ def run_firmware(
 
     if quirks.debug_closes_on_run:
         detail["next_run_note"] = (
-            f"On {quirks.name}, firmware closes the debug access port as it starts, "
-            "and no reset reopens it. The GDB server is therefore being HELD so "
-            "further run_firmware calls on this board keep working without a power "
-            "cycle. read_memory, core_registers and flash_firmware cannot reach the "
-            "probe until release_probe() is called."
+            f"On {quirks.name}, a typical image leaves the debug access port "
+            "unreachable once it has run, and no reset reopens it. The GDB server "
+            "is therefore being HELD so further run_firmware calls on this board "
+            "keep working without a power cycle. read_memory, core_registers and "
+            "flash_firmware cannot reach the probe until release_probe() is called. "
+            "This is a property of the image, not of the silicon: see the family "
+            "notes in board_state for what causes it and how to remove it."
         )
 
     # The markers are the only evidence that the GDB batch reached its end. GDB

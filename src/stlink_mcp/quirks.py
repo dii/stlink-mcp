@@ -59,7 +59,33 @@ class FamilyQuirks:
     """
 
     debug_closes_on_run: bool = False
-    """Whether the debug access port cannot be RE-acquired once firmware has run.
+    """Whether firmware typically leaves the debug access port unreachable.
+
+    READ THIS BEFORE TRUSTING THE FLAG. It sits in a table of family quirks and
+    it is not one. It describes what the IMAGE does, not what the silicon does,
+    and it is here only because on the STM32N6 the overwhelmingly common image
+    links a vendor template that causes it. A user whose image does not is
+    inconvenienced by a warning that does not apply to them, which is the lesser
+    of the two errors available and still an error.
+
+    On the STM32N6 the cause is a single line at the end of ST's
+    `system_stm32n6xx_fsbl.c` SystemInit:
+
+        RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
+
+    SystemInit enables the SYSCFG clock early so it can write INITSVTORCR, then
+    switches it off again on the way out. That clock is what keeps debug access
+    port 1 alive, so gating it takes the debug port with it. Keep it enabled and
+    the port survives: measured over four consecutive load-and-run cycles with
+    no power cycle, against the stock image closing it on the very next run of
+    the same board.
+
+    So the honest reading of this flag is "images for this family usually close
+    the debug port, and here is what to change". It is NOT "this part cannot be
+    re-acquired". Everything else was eliminated by bisection: the boot ROM
+    handoff, the startup assembly, TrustZone/SAU, SCB_NS->CPACR, INITSVTORCR,
+    the PWR supply and VDDIOxCCCR compensation block, SCB->VTOR, the RNG, XSPI
+    and TIM2 resets, the GPIOG clock disable, VREFBUF, and SCB->CPACR.
 
     The precise behaviour matters, and a first reading of it was too pessimistic.
     A *new* connection fails once firmware has started, and no reset clears it;
@@ -141,22 +167,24 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "the port is right. The debug port is only open in DEV boot mode "
             "(BOOT1 high); in the standalone boot configuration a connect fails "
             "with 'Unable to get core ID', which is expected and not a fault. "
-            "Once firmware has run, AP1 cannot be re-acquired, and only removing "
-            "power restores it. SETTLED 2026-08-16, on the third attempt; the "
-            "first two were invalid because a controller process was holding the "
-            "probe each time, which by itself makes any connect fail. This run "
-            "confirmed every probe free by PORT first (no gdbserver listening, "
-            "and the whole 61234-61259 range free by bind test) rather than by "
-            "process name, which is what went wrong before. "
-            "With four N657X0-Q boards that had all run firmware, one power "
-            "cycled and three not: the cycled board accepted a hotplug connect "
-            "on AP1, a resetting HWRSTPULSE connect, and a freshly started GDB "
-            "server. All three uncycled boards refused all three. The clean pair "
-            "is one against one, since two of the three uncycled boards had "
-            "dropped into DEV_USB_COMM_ERR and their failures are therefore "
-            "confounded; the third was USB-healthy, enumerating with full "
-            "identity and three access ports, and still refused every method. "
-            "So a reset does not clear it and neither does a new server. An "
+            "ST'S OWN SystemInit CLOSES AP1, and it is one line. At the end of "
+            "system_stm32n6xx_fsbl.c: `RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;`. "
+            "SystemInit turns the SYSCFG clock on early to write INITSVTORCR and "
+            "turns it off again on the way out; that clock keeps AP1 alive, so "
+            "gating it takes the debug port too. Remove that one write and the "
+            "port survives indefinitely. Measured 2026-08-16 by bisection over "
+            "SystemInit, ending in a back-to-back A/B on ONE board: four "
+            "consecutive load-and-run cycles with the patched image all left AP1 "
+            "open, then a single run of the stock image closed it. Eliminated "
+            "along the way, each by its own build: the ROM handoff (a bare image "
+            "with no startup chain leaves AP1 open), the startup assembly, "
+            "TrustZone/SAU, SCB_NS->CPACR, INITSVTORCR, the PWR supply-valid and "
+            "VDDIOxCCCR compensation block, SCB->VTOR, the RNG/XSPI/TIM2 resets, "
+            "the GPIOG clock disable, VREFBUF and SCB->CPACR. "
+            "Once a stock image HAS run, nothing short of removing power gets AP1 "
+            "back: hotplug, NORMAL, HWRSTPULSE and a freshly started GDB server "
+            "all fail, and UR is not usable on this part at all since it fails on "
+            "a healthy board too. An "
             "already "
             "established GDB server connection keeps working across repeated "
             "load-and-run cycles, but ONLY with an explicit reset before each "
