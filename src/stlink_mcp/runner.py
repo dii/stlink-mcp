@@ -231,13 +231,20 @@ class GdbServer:
 # The server is kept alive across runs, deliberately, and this is the single most
 # useful thing measured about the STM32N6.
 #
-# Once firmware has run, the debug access port cannot be RE-acquired: a fresh
-# connect fails with "Cannot connect to access port 1", and neither a software
-# nor a hardware reset clears it. Only removing power does. But an already
-# established server connection keeps working indefinitely: two consecutive
-# load-and-run cycles through one server both restart cleanly, where tearing the
+# Once a TYPICAL image has run, the debug access port cannot be RE-acquired: a
+# fresh connect fails with "Cannot connect to access port 1", and neither a
+# software nor a hardware reset clears it. Only removing power does. But an
+# already established server connection keeps working indefinitely: consecutive
+# load-and-run cycles through one server all restart cleanly, where tearing the
 # server down in between needs a power cycle. So holding the server turns a power
 # cycle per run into a power cycle per session.
+#
+# "Typical image" is doing real work in that sentence. This is not a property of
+# the silicon: on the STM32N6 it is caused by ST's SystemInit gating the SYSCFG
+# clock on its way out, and an image that leaves that clock on keeps the port.
+# See quirks.py for the line. Holding the server is still worth doing, because
+# it is faster and because most images out there do gate it, but it is a
+# workaround for someone else's boilerplate rather than a hardware constraint.
 #
 # The cost is real and is surfaced rather than hidden: the server holds the probe,
 # so the STM32_Programmer_CLI-based tools cannot run while it is held, and
@@ -334,8 +341,9 @@ def held_serials() -> list[str | None]:
 def release_server(serial: str | None = None) -> bool:
     """Shut down one probe's server, or all of them when given no serial.
 
-    On parts where the access port cannot be re-acquired this is a one-way door
-    until the board is power cycled, so it is never done implicitly.
+    Where a typical image closes the access port this is a one-way door until
+    the board is power cycled, so it is never done implicitly. See quirks.py:
+    that is caused by the image, not by the part, and is removable.
     """
     if serial is None:
         return release_all_servers()

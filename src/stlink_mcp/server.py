@@ -481,8 +481,9 @@ def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
 
     With no serial, releases all of them. Needed before read_memory,
     core_registers or flash_firmware can be used after a run. On parts where the
-    access port cannot be re-acquired once firmware has run, this is a one-way
-    door until the board is power cycled, so it is never done implicitly.
+    access port is left unreachable by a typical image, this is a one-way door
+    until the board is power cycled, so it is never done implicitly. That is a
+    property of the image and removable in it; see the family notes.
     """
     affected = [probe_serial] if probe_serial is not None else list(_held)
     quirks = [_held[s][1].quirks for s in affected if s in _held]
@@ -495,7 +496,9 @@ def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
     if released and any(q.debug_closes_on_run for q in quirks):
         detail["warning"] = (
             "The debug access port cannot be re-acquired now that firmware has "
-            "run. Power cycle the affected board(s) before the next run_firmware."
+            "run. Power cycle the affected board(s) before the next run_firmware. "
+            "This is caused by the image, not the silicon: board_state carries the "
+            "family note saying what to change so it stops happening."
         )
 
     if not released:

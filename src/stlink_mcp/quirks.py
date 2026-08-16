@@ -87,14 +87,15 @@ class FamilyQuirks:
     the PWR supply and VDDIOxCCCR compensation block, SCB->VTOR, the RNG, XSPI
     and TIM2 resets, the GPIOG clock disable, VREFBUF, and SCB->CPACR.
 
-    The precise behaviour matters, and a first reading of it was too pessimistic.
-    A *new* connection fails once firmware has started, and no reset clears it;
-    only removing power does. But an *already established* GDB server connection
-    keeps working indefinitely, including repeated load-and-run cycles.
+    While an image DOES gate that clock, the behaviour is exactly as bad as it
+    looks: a new connection fails, no reset clears it, and only removing power
+    gets the port back. That is why the server is held rather than torn down
+    between runs, which is what runner.acquire_server does, and why releasing it
+    is a one-way door until the board is power cycled.
 
-    So this flag does not mean "one run per power cycle". It means the server must
-    be kept alive rather than torn down between runs, which is what
-    runner.acquire_server does.
+    So the flag drives the right behaviour for an unpatched image. It is the
+    explanation that changed, not the workaround: this is a cost imposed by the
+    image and removable in the image, not a limit of the part.
 
     Holding the server is necessary and NOT sufficient. Every load must also be
     preceded by an explicit reset, because the server's own `--halt` resets the

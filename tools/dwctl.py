@@ -3,11 +3,13 @@
 
 Why this exists, and why it is the shape the MCP server already has:
 
-On the STM32N6 the debug access port cannot be re-acquired once firmware has
-run. An *already established* session keeps working across repeated cycles, so
-the cost of that quirk is paid once per session rather than once per iteration,
-provided something stays alive holding the session. A one-shot script does not:
-its atexit handler releases the session and the next invocation is locked out.
+On the STM32N6 the debug access port cannot be re-acquired once a typical image
+has run (ST's SystemInit gates the SYSCFG clock, which is what keeps AP1 alive;
+an image that leaves it on does not have this problem). An *already established*
+session keeps working across repeated cycles, so the cost of that quirk is paid
+once per session rather than once per iteration, provided something stays alive
+holding the session. A one-shot script does not: its atexit handler releases the
+session and the next invocation is locked out.
 
 Holding the session is necessary and not sufficient. Every load must also be
 preceded by an explicit reset, or each image after the first inherits the
