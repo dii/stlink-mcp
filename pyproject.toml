@@ -4,18 +4,34 @@ version = "0.1.0"
 description = "An MCP server for programming and inspecting STM32 targets over ST-LINK, where every tool verifies its own effect before reporting success."
 readme = "README.md"
 license = { text = "MIT" }
+authors = [{ name = "Dawid Oosthuizen", email = "dawid.oosthuizen@gmail.com" }]
 requires-python = ">=3.11"
 keywords = ["mcp", "stm32", "st-link", "embedded", "debugging", "firmware"]
+# Linux only, deliberately. macOS is plausible and untried, so it is not
+# claimed here; Windows is wrong throughout, not merely untested. The Python
+# classifiers name the declared floor and the version the suite is actually
+# run on, and nothing above it.
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Debuggers",
     "Topic :: Software Development :: Embedded Systems",
 ]
+
 dependencies = [
     "mcp>=2.0.0",
     "pyserial>=3.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/dii/stlink-mcp"
+Repository = "https://github.com/dii/stlink-mcp"
+Issues = "https://github.com/dii/stlink-mcp/issues"
 
 [project.scripts]
 stlink-mcp = "stlink_mcp.__main__:main"
@@ -26,6 +42,35 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stlink_mcp"]
+
+# The sdist contents are listed explicitly, and that is not tidiness.
+#
+# Hatchling builds an sdist from the FILESYSTEM, honouring this repo's
+# .gitignore but NOT the user's global git ignore file. So a file can be
+# correctly invisible to git, absent from the GitHub repo, and still be
+# published to PyPI. That is not hypothetical: a local red-team report carrying
+# an absolute path from the author's machine was in the built sdist while being
+# properly excluded from every commit, and `git status` said nothing, because
+# from git's point of view nothing was wrong.
+#
+# An exclude rule would have fixed that one file. An explicit include list is
+# what stops the next locally-ignored working file - notes, captures, worklogs -
+# from being published the same silent way. Two mechanisms that look like they
+# agree about what "ignored" means, and do not, is the exact failure this
+# project exists to argue about, so it is not going to ship one.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/stlink_mcp",
+    "tests",
+    "tools",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "LICENSE",
+    "README.md",
+    "pyproject.toml",
+    "uv.lock",
+]
 
 [dependency-groups]
 dev = ["pytest>=8"]
