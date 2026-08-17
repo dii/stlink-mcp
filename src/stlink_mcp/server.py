@@ -738,9 +738,7 @@ def load_board_config() -> tuple[int, Path | None]:
 
 
 @mcp.tool()
-def reset_target(
-    probe_serial: str | None = None, leave_halted: bool = False
-) -> dict[str, Any]:
+def reset_target(probe_serial: str | None = None) -> dict[str, Any]:
     """Reset the target, and check that it actually restarted.
 
     Reset is one of the three things this server promises and it used to happen
@@ -757,9 +755,26 @@ def reset_target(
     lands on the vector exactly, every time, which is what makes the check
     possible at all.
 
-    The core is halted to read the PC and then released, unless you ask for it
-    to stay halted. That brief halt is reported rather than hidden, because it
-    is a state change the caller did not ask for.
+    The core is halted to read the PC and then released. That brief halt is
+    reported rather than hidden, because it is a state change the caller did not
+    ask for.
+
+    THERE IS NO `leave_halted` OPTION, and there was one for a day. It could not
+    be delivered: a halt issued by STM32_Programmer_CLI does not survive the
+    invocation that made it. Measured 2026-08-17 by sampling the PC across
+    separate reads after a reset-and-halt - on a NUCLEO-H743ZI it went 0x0807FA98
+    then 0x0807FE96, 0x08060AFC, 0x08080482, and the STM32H753I-EV did the same.
+    The option reported `core_halted: true` while the core was demonstrably
+    running, which is the exact defect this project exists to remove, shipped by
+    the tool built to remove it.
+
+    For the same reason this result does not claim whether the core is halted
+    NOW. Nothing here can observe that: a static program counter is what a halted
+    core looks like and also what a tight loop looks like, and on an
+    STM32N6 sitting in its boot ROM the PC read identically three times while
+    that proved nothing either way. What is reported is what was done and what
+    the programmer confirmed. To hold a target stopped, use the GDB server path
+    that `run_firmware` keeps alive, which genuinely holds one.
     """
     try:
         toolchain = _toolchain()
@@ -801,22 +816,24 @@ def reset_target(
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc))
 
-    # Release the core BEFORE deciding the verdict, and record what happened.
+    # Release the core BEFORE deciding the verdict, on every path where
+    # something was halted. Whether the reset could be VERIFIED and whether the
+    # core was released are independent, and the first version tied them
+    # together: the release lived inside the verified branch, so an unverified
+    # outcome skipped it.
     #
-    # The first version did this inside the verified branch only, and computed
-    # `core_halted` once as `pc is not None and leave_halted`, which is False by
-    # default. Every unverified return therefore left the core physically halted
-    # while reporting `core_halted: false` - including the STM32N6 path, which
-    # was exercised on real hardware and read without anyone noticing. Whether
-    # the reset could be VERIFIED and whether the core is RUNNING are
-    # independent facts, and tying them together made the tool lie about the one
-    # thing it is uniquely able to observe.
-    core_halted = pc is not None
+    # The release is kept even though a programmer halt does not outlive its own
+    # invocation, so on the two H7 boards here the core resumes regardless. It
+    # stays because that was measured on two parts and not on the others, and a
+    # confirmed resume costs one connect while an assumed one costs the
+    # guarantee.
+    halted_to_read_pc = pc is not None
+    released = False
     release_error: str | None = None
-    if core_halted and not leave_halted:
+    if halted_to_read_pc:
         try:
             probe.release_core(access_port)
-            core_halted = False
+            released = True
         except Exception as exc:  # noqa: BLE001
             release_error = str(exc)
 
@@ -826,12 +843,17 @@ def reset_target(
         "reset_kind": "hardware pulse on nRST (HWRSTPULSE connect)",
         "program_counter": _hex(pc),
         "expected_reset_handler": _hex(None if expected is None else expected & ~1),
-        "core_halted": core_halted,
+        # What was DONE, not what the core is doing now. The difference is the
+        # whole point: these two are observations, and "core_halted" was a guess
+        # wearing a field name.
+        "halted_to_read_pc": halted_to_read_pc,
+        "core_released": released,
     }
-    if not core_halted and pc is not None:
+    if released:
         detail["note"] = (
             "The core was halted only long enough to read the program counter, "
-            "and is running again."
+            "and the programmer confirmed it resumed. Note that a halt made this "
+            "way does not outlive the command that made it in any case."
         )
 
     if pc is None:
@@ -920,15 +942,17 @@ def reset_target(
     # in the payload and the verdict follows the state the board is actually in.
     if release_error is not None:
         return failed(
-            "The reset was confirmed, but the core could not be released and the "
-            f"target is still HALTED: {release_error}",
+            "The reset was confirmed, but the programmer would not confirm the "
+            f"core resumed: {release_error}",
             reset_verified_by=(
                 f"the core halted at {_hex(pc)}, which is the reset handler named "
                 f"by word 1 of the vector table at {_hex(vector_addr)}"
             ),
             hint=(
-                "Nothing here needs a power cycle. Retry reset_target, or call it "
-                "with leave_halted=true if a halted core is what you wanted."
+                "Nothing here needs a power cycle. The core may well be running "
+                "anyway, since a halt made through the programmer does not "
+                "outlive the command that made it, but that was not confirmed "
+                "and so is not claimed. Retry reset_target."
             ),
             **detail,
         )

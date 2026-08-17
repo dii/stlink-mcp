@@ -537,13 +537,23 @@ class TestResetIsNotClaimedUnlessItWasSeen:
         """N4: the halt was not asked for, so it is reported."""
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
         out = call("reset_target")
-        assert out["core_halted"] is False
-        assert "running again" in out["note"]
+        assert out["core_released"] is True
+        assert "resumed" in out["note"]
 
-    def test_leave_halted_is_honoured_and_reported(self, h7_bench, monkeypatch) -> None:
+    def test_it_does_not_claim_whether_the_core_is_halted_now(
+        self, h7_bench, monkeypatch
+    ) -> None:
+        """There was a `leave_halted` option and a `core_halted` field for a day.
+        Both were removed after hardware showed the claim was false: a halt made
+        through the programmer does not outlive the invocation that made it, so
+        `core_halted: true` was reported while the core was running. And nothing
+        here can observe the answer either way, since a static program counter is
+        what a halted core and a tight loop both look like."""
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
-        out = call("reset_target", leave_halted=True)
-        assert out["core_halted"] is True
+        out = call("reset_target")
+        assert "core_halted" not in out
+        assert out["halted_to_read_pc"] is True
+        assert out["core_released"] is True
 
 
 class TestResetTargetTellsTheTruthAboutTheCore:
@@ -584,7 +594,7 @@ class TestResetTargetTellsTheTruthAboutTheCore:
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x34180400)
         out = call("reset_target")
         assert out["ok"] is False
-        assert out["core_halted"] is False, (
+        assert out["core_released"] is True, (
             "the core should have been RELEASED even though the reset could not "
             "be verified: the two are independent facts"
         )
@@ -598,7 +608,7 @@ class TestResetTargetTellsTheTruthAboutTheCore:
         out = call("reset_target")
         assert out["ok"] is False
         assert out["status"] == result.FAILED
-        assert out["core_halted"] is True, "the core really is halted, and must say so"
+        assert out["core_released"] is False
         # The reset itself WAS observed, and that evidence is not thrown away.
         assert "0x0807FA98" in out["reset_verified_by"]
 
@@ -617,7 +627,7 @@ class TestResetTargetTellsTheTruthAboutTheCore:
             monkeypatch.setattr(_FakeProbe, "reset_pc", pc)
             out = call("reset_target")
             assert released, f"core left halted for pc={pc:#x}"
-            assert out["core_halted"] is False
+            assert out["core_released"] is True
 
     def test_nothing_is_released_when_nothing_was_halted(self, h7_bench, monkeypatch) -> None:
         released: list[int] = []
@@ -628,7 +638,8 @@ class TestResetTargetTellsTheTruthAboutTheCore:
         )
         out = call("reset_target")
         assert not released
-        assert out["core_halted"] is False
+        assert out["halted_to_read_pc"] is False
+        assert out["core_released"] is False
         assert out["ok"] is False
 
     def test_every_unverified_branch_offers_a_next_step(self, h7_bench, monkeypatch) -> None:
