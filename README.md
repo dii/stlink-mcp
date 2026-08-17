@@ -50,18 +50,17 @@ earlier version of this tool did it: `ok: true` alongside `verified_by:
 
 ## Status
 
-Alpha, and honest about it. The tool surface works and is used daily against an
-STM32N6. Two families are characterised on hardware, STM32N6 and STM32H7.
-Everything else falls back to generic behaviour, which covers identification and
-memory reads but not RAM execution or external flash programming, because those
-addresses are family specific and this project would rather have a gap than a
-guess.
+Alpha, and honest about it. Two families are **measured on hardware**, STM32N6 and
+STM32H7. A further **99 device IDs are seeded from STMicroelectronics' own device
+databases** on your disk, which covers most of the modern STM32 range, and every
+value from that source says so rather than pretending to be a measurement.
 
-What is planned, and why in that order, is in [ROADMAP.md](ROADMAP.md). The short version is
-that device coverage is the binding constraint and most of the fix is already on your disk:
-STM32CubeProgrammer ships device databases covering 103 device IDs, and every one of them
-carries the RAM region this tool currently refuses to guess at. Run
-`python3 tools/survey_device_db.py` against your own install to see it.
+Four device IDs are deliberately left unsupported (`0x42B`, `0x42C`, `0x472`,
+`0x49A`): their databases name several separate SRAM banks, and choosing between
+them would be a guess. Anything else unrecognised still falls back to
+identification and memory reads only.
+
+The order things happen in, and why, is in [ROADMAP.md](ROADMAP.md).
 
 ## Requirements
 
@@ -172,10 +171,40 @@ its own GDB server on its own port.
 | variable | meaning |
 | --- | --- |
 | `STLINK_MCP_BOARDS` | TOML file describing boards this project has not characterised. Defaults to `~/.config/stlink-mcp/boards.toml` if it exists |
+| `STLINK_MCP_NO_VENDOR_SEED` | Set to anything to run on measured and user-stated data only, with no seeding from ST's device databases |
 | `STLINK_MCP_CLT_ROOT` | STM32CubeCLT install directory |
 | `STLINK_MCP_CONSOLE` | Serial device, if the guess is wrong |
 | `STLINK_MCP_CONSOLE_BAUD` | Console baud rate, default 115200 |
 | `STLINK_MCP_GDB_PORT` | GDB server port, default 61234 |
+
+## Where addresses come from
+
+Every address this tool uses carries a provenance, and `board_state` reports it
+beside the value:
+
+| provenance | meaning |
+| --- | --- |
+| `measured` | somebody ran it on this part and watched it work |
+| `vendor-db` | read out of STMicroelectronics' device database |
+| `user-stated` | typed into a board file by whoever runs this server |
+| `assumed` | nobody measured it and no source states it; a default for the range |
+
+Only `measured` means the value has been seen to work, and the difference changes
+behaviour rather than just wording. `flash_firmware` refuses to write to a base
+that is not measured unless you name the address yourself, because that write
+persists and there is no readback to catch a wrong one. A RAM run will go ahead
+on a `vendor-db` address, because a wrong one is undone by a reset and the console
+either speaks or it does not.
+
+A measured entry always beats a seeded one. The STM32N6 is why: its database entry
+gives SRAM at `0x34180400`, which is that family's vector table and not its RAM
+load base of `0x34180000`, because the boot ROM prepends a signing header. Nothing
+in the database says which of the two it is reporting.
+
+The access port is not in the databases at all, so a seeded part gets `0` marked
+`assumed`, and `board_state` warns you about it. That matters because identity
+reads correctly on a port that cannot halt the core, which is exactly how the
+STM32N6 wasted a day of this project's time.
 
 ## Describing your own board
 

@@ -7,7 +7,7 @@ import sys
 
 from .quirks import BoardConfigError
 from .runner import release_all_servers
-from .server import load_board_config, mcp
+from .server import load_board_config, load_vendor_seed, mcp
 
 
 def _release_and_exit(signum: int, _frame: object) -> None:
@@ -56,6 +56,15 @@ def main() -> None:
     # than the one they described, and the client would see a working server.
     #
     # stderr rather than stdout: stdout is the MCP transport.
+    seeded, skipped = load_vendor_seed()
+    if seeded:
+        print(
+            f"stlink-mcp: seeded {seeded} device IDs from STMicroelectronics' "
+            f"device databases ({skipped} skipped as ambiguous). None of these is "
+            "measured; board_state reports the provenance of every value.",
+            file=sys.stderr,
+        )
+
     try:
         count, path = load_board_config()
     except BoardConfigError as exc:

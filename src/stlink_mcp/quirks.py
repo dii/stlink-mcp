@@ -416,23 +416,49 @@ def set_user_boards(boards: Mapping[int, FamilyQuirks]) -> None:
 # loaded, it should be added then, with the caller that needs it.
 
 
+#: Entries parsed from STMicroelectronics' device databases. See vendordb.py.
+_VENDOR_BOARDS: dict[int, FamilyQuirks] = {}
+
+
+def set_vendor_boards(boards: Mapping[int, FamilyQuirks]) -> None:
+    _VENDOR_BOARDS.clear()
+    _VENDOR_BOARDS.update(boards)
+
+
 def for_device_id(
     device_id: int | None, overrides: Mapping[int, FamilyQuirks] | None = None
 ) -> FamilyQuirks:
     """Quirks for a device ID, or the generic fallback if it is unknown.
 
-    A user-described board wins over the built-in table. That is deliberate: the
-    built-in entry describes a device ID, which is coarser than a part and much
-    coarser than a board, and the person with the thing plugged in knows more
-    about it than this file does. The difference is not silent, because the
-    entry carries `user-stated` provenance and `board_state` reports it.
+    Precedence, and every step of it is deliberate:
+
+      1. a board the USER described        - they have the thing plugged in
+      2. a family MEASURED on hardware     - somebody watched it work
+      3. an entry seeded from the VENDOR database
+      4. DEFAULT, which offers no addresses to guess with
+
+    User first, because a built-in entry describes a device ID, which is coarser
+    than a part and much coarser than a board.
+
+    Measured above vendor-seeded, and the STM32N6 is why rather than a principle:
+    its database entry gives SRAM at 0x34180400, which is that family's VECTOR
+    TABLE and not its RAM load base of 0x34180000, because the boot ROM prepends
+    a 0x400 signing header. Seeding it would put a load address 0x400 too high
+    into a field that has been measured correctly. Nothing about the database
+    says which of the two it is reporting, so a hand-measured entry has to win.
+
+    None of this is silent: every entry carries provenance and `board_state`
+    reports it beside the values.
     """
     if device_id is None:
         return DEFAULT
     source = _USER_BOARDS if overrides is None else overrides
     if device_id in source:
         return source[device_id]
-    return FAMILIES.get(DEVICE_ID_TO_FAMILY.get(device_id, ""), DEFAULT)
+    measured = FAMILIES.get(DEVICE_ID_TO_FAMILY.get(device_id, ""))
+    if measured is not None:
+        return measured
+    return _VENDOR_BOARDS.get(device_id, DEFAULT)
 
 
 class BoardConfigError(ValueError):

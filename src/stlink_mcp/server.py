@@ -53,6 +53,7 @@ from .runner import (
     server_is_held,
 )
 from .toolchain import Toolchain, ToolchainError, find_toolchain
+from .vendordb import VendorDbError, seed_from_directory
 
 mcp = MCPServer("stlink-mcp")
 
@@ -719,6 +720,31 @@ def board_config_path() -> Path | None:
         return Path(env).expanduser()
     default = _default_boards_path()
     return default if default is not None and default.exists() else None
+
+
+#: Set to any non-empty value to run on measured and user-stated data only.
+_NO_SEED_ENV = "STLINK_MCP_NO_VENDOR_SEED"
+
+
+def load_vendor_seed() -> tuple[int, int]:
+    """Seed the quirks table from the installed device databases.
+
+    Returns (seeded, skipped). Failure to seed is NOT fatal, which is the one
+    place this differs from the user's board file: nobody asked for these
+    entries, so their absence returns the server to refusing on uncharacterised
+    parts, which is where it was before and is safe. A board file the user wrote
+    is a statement about their hardware, and starting without it would answer
+    questions about a different machine.
+    """
+    if os.environ.get(_NO_SEED_ENV):
+        return 0, 0
+    try:
+        toolchain = find_toolchain()
+        seeded, skipped = seed_from_directory(toolchain.programmer_bin_dir.parent / "Data_Base")
+    except (ToolchainError, VendorDbError):
+        return 0, 0
+    quirks_mod.set_vendor_boards(seeded)
+    return len(seeded), len(skipped)
 
 
 def load_board_config() -> tuple[int, Path | None]:

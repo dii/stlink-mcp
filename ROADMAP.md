@@ -12,8 +12,8 @@ Three decisions set the shape, all taken 2026-08-16:
 - **The primary user is an agent, with a human supervising.** Where the two want different
   things, the agent's need to not be misled wins. That is why fault decoding outranks a
   nicer console, and why Windows sits below evidence quality.
-- **Breadth before depth.** Only 2 of 103 device IDs are characterised, so the tool refuses
-  to run firmware on most STM32 parts. Widening that is worth more than deepening two.
+- **Breadth before depth.** DONE in phase 2: 2 device IDs measured, 99 more seeded from ST's
+  own databases, 4 refused as ambiguous.
 
 This plan was red-teamed before anything was built from it, per ADR-0018, and revised against
 the result. Findings RT1 to RT5 are folded in below; the report is
@@ -33,7 +33,7 @@ fixed first rather than inherited. (RT4)
 | Need | State |
 | --- | --- |
 | N1 verdict and evidence | Done. `result.verified/unverified/failed`, no tool sets `ok`, enforced by a contract test |
-| N2 missing facts refuse rather than guess | Done for RAM execution and external flash |
+| N2 missing facts refuse rather than guess | Done. Four device IDs with ambiguous SRAM are refused rather than seeded, and the write path refuses an unmeasured base |
 | N3 hidden state is reported | Done: reset, cache, degraded access port, held probe |
 | N4 nothing perturbs silently | Done: `target_was_reset`, `core_registers` documented as halting |
 | N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
@@ -115,7 +115,7 @@ path, where an observation exists and a wrong guess is undone by a reset. It is 
 for the write path. `flash_firmware` keeps its current behaviour until Phase 5 gives it a
 readback, and the seeding below does not change what it will write to. (RT7)
 
-## Phase 2 - seed from the vendor database
+## Phase 2 - seed from the vendor database (DONE)
 
 **Measured, then re-measured after the red-team found the first survey wrong.** Every figure
 here comes from `tools/survey_device_db.py`, which is checked in so the numbers can be re-run
