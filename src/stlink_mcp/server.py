@@ -325,6 +325,20 @@ def board_state(probe_serial: str | None = None) -> dict[str, Any]:
         "gdb_server_held": server_is_held(serial),
     }
 
+    # A part the databases describe and this refused to seed is NOT the same as a
+    # part nothing knows about, and until now both produced the generic entry with
+    # identical notes. The reason names the candidate addresses, which is exactly
+    # what someone writing a boards.toml entry for that part needs.
+    refusal = quirks_mod.vendor_refusal(info.device_id)
+    if refusal:
+        state["family"]["vendor_database_refused"] = refusal
+        state["family"]["how_to_proceed"] = (
+            "STMicroelectronics' database does describe this part; this server "
+            "refused to seed it rather than choose for you. Put the values you "
+            "want in a board file (see STLINK_MCP_BOARDS) and they will be used, "
+            "labelled user-stated."
+        )
+
     if not cached and probe.access_port_provenance is not None:
         state["access_port_provenance"] = probe.access_port_provenance
     if not cached and probe.unmeasured_port_warning:
@@ -402,6 +416,16 @@ def run_firmware(
         # server uses its own path and reaches AP1 when the programmer cannot.
 
     quirks = info.quirks
+    # Disclosed on the SUCCESS path, not only on a refusal.
+    #
+    # flash_firmware refuses an unmeasured base and names the provenance in the
+    # refusal, so a caller there cannot miss it. This tool ACTS on an unmeasured
+    # load address by design - a wrong one is undone by a reset and the console is
+    # a real observation - and it used to return `verified` with no hint that the
+    # address came from ST's database rather than a board. An agent could then
+    # honestly write "confirmed this part's RAM layout" from a number nobody has
+    # measured, which is the precise harm this project exists to prevent.
+    layout_provenance = quirks.provenance_of("vector_table_addr")
     if quirks.vector_table_addr is None:
         return failed(
             f"No RAM-execution layout is recorded for {quirks.name}. "
@@ -450,6 +474,8 @@ def run_firmware(
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "console_port": port,
+        "load_address": _hex(quirks.vector_table_addr),
+        "load_address_provenance": layout_provenance,
         "image_initial_sp": _hex(sp),
         "image_entry_point": _hex(pc),
         "load_size_bytes": size,
@@ -461,6 +487,17 @@ def run_firmware(
             "observation."
         ),
     }
+
+    if layout_provenance != quirks_mod.MEASURED:
+        detail["load_address_note"] = (
+            f"The address this image was loaded to is {layout_provenance}, not "
+            f"measured on hardware. The run itself IS verified, by this board's own "
+            "console output, so the image did start. What is not established is that "
+            f"{_hex(quirks.vector_table_addr)} is the right place for this part in "
+            "general: a working run is good evidence for it and not a measurement of "
+            "it. Do not record it as a confirmed layout on the strength of this "
+            "result alone."
+        )
 
     if quirks.debug_closes_on_run:
         detail["next_run_note"] = (
@@ -726,25 +763,57 @@ def board_config_path() -> Path | None:
 _NO_SEED_ENV = "STLINK_MCP_NO_VENDOR_SEED"
 
 
-def load_vendor_seed() -> tuple[int, int]:
+def vendor_database_dir() -> Path:
+    """Where the device databases live, inside whichever CubeCLT is selected."""
+    return find_toolchain().programmer_bin_dir.parent / "Data_Base"
+
+
+def load_vendor_seed() -> str:
     """Seed the quirks table from the installed device databases.
 
-    Returns (seeded, skipped). Failure to seed is NOT fatal, which is the one
-    place this differs from the user's board file: nobody asked for these
-    entries, so their absence returns the server to refusing on uncharacterised
-    parts, which is where it was before and is safe. A board file the user wrote
-    is a statement about their hardware, and starting without it would answer
-    questions about a different machine.
+    Returns a one-line human-readable status, ALWAYS, and never an empty string.
+    That is the fix for three different conditions that used to be indented into
+    the same silence: the feature switched off, no CubeCLT found, and a parse that
+    yielded nothing because ST renamed a tag. All three returned (0, 0) and the
+    start-up message was gated on a non-zero count, so a format change that lost
+    all 99 device IDs looked exactly like a machine with no toolchain.
+
+    Failure to seed is NOT fatal, which is the one place this differs from the
+    user's board file: nobody asked for these entries, so their absence returns
+    the server to refusing on uncharacterised parts, which is where it was and is
+    safe. A board file the user wrote is a statement about their hardware, and
+    starting without it would answer questions about a different machine.
     """
     if os.environ.get(_NO_SEED_ENV):
-        return 0, 0
+        return f"vendor seeding is OFF because {_NO_SEED_ENV} is set"
     try:
-        toolchain = find_toolchain()
-        seeded, skipped = seed_from_directory(toolchain.programmer_bin_dir.parent / "Data_Base")
-    except (ToolchainError, VendorDbError):
-        return 0, 0
-    quirks_mod.set_vendor_boards(seeded)
-    return len(seeded), len(skipped)
+        db_dir = vendor_database_dir()
+    except ToolchainError as exc:
+        return f"vendor seeding skipped, no STM32CubeCLT install found ({exc})"
+    try:
+        result = seed_from_directory(db_dir)
+    except VendorDbError as exc:
+        return f"vendor seeding skipped: {exc}"
+
+    quirks_mod.set_vendor_boards(result.entries, result.refusals)
+
+    parts = [f"seeded {len(result.entries)} device IDs from {db_dir}"]
+    if result.refusals:
+        parts.append(f"{len(result.refusals)} refused as ambiguous")
+    if result.unreadable:
+        # Loud, because a file that matched the glob and could not be read is the
+        # one case here that means something is wrong rather than merely unknown.
+        parts.append(
+            f"{len(result.unreadable)} UNREADABLE: "
+            + "; ".join(f"{n} ({r})" for n, r in sorted(result.unreadable.items()))
+        )
+    if not result.entries:
+        parts.append(
+            "WHICH IS NONE - the directory exists and yielded nothing, so the "
+            "database format has probably changed and every part will now be "
+            "treated as uncharacterised"
+        )
+    return ", ".join(parts) + ". None of this is measured; board_state reports the provenance of every value."
 
 
 def load_board_config() -> tuple[int, Path | None]:

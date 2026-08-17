@@ -420,9 +420,26 @@ def set_user_boards(boards: Mapping[int, FamilyQuirks]) -> None:
 _VENDOR_BOARDS: dict[int, FamilyQuirks] = {}
 
 
-def set_vendor_boards(boards: Mapping[int, FamilyQuirks]) -> None:
+#: Device IDs the vendor databases DESCRIBE and this project refused to seed,
+#: with the reason. Kept because "refused for ambiguity" and "never heard of"
+#: are different answers and used to be the same one: the reasons were computed
+#: and then reduced to a count by the first caller, so a part ST documents in
+#: detail looked identical to a part nobody has ever seen.
+_VENDOR_REFUSALS: dict[int, str] = {}
+
+
+def set_vendor_boards(
+    boards: Mapping[int, FamilyQuirks], refusals: Mapping[int, str] | None = None
+) -> None:
     _VENDOR_BOARDS.clear()
     _VENDOR_BOARDS.update(boards)
+    _VENDOR_REFUSALS.clear()
+    _VENDOR_REFUSALS.update(refusals or {})
+
+
+def vendor_refusal(device_id: int | None) -> str | None:
+    """Why this device ID was not seeded, if the databases described it at all."""
+    return None if device_id is None else _VENDOR_REFUSALS.get(device_id)
 
 
 def for_device_id(

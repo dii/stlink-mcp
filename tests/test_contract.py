@@ -761,3 +761,103 @@ class TestAnUnmeasuredAccessPortIsAnnounced:
             assert name in family or name == "access_port", (
                 f"{name} has a provenance in the payload but no value beside it"
             )
+
+
+class TestASeededAddressIsDisclosedWhereItIsUsed:
+    """RT1 and RT8 from the phase 2 red-team.
+
+    `flash_firmware` refuses an unmeasured base and names the provenance in the
+    refusal, so a caller there cannot miss it. `run_firmware` ACTS on an unmeasured
+    load address by design - a wrong one is undone by a reset and the console is a
+    real observation - and it used to return `verified` with nothing in the payload
+    saying the address came from ST's database rather than a board. An agent could
+    then honestly write "confirmed this part's RAM layout" from a number nobody had
+    measured, which is the precise harm the intent statement describes.
+
+    These are also the only tests that drive run_firmware with a seeded entry at
+    all. Before them, every test reaching run_firmware's body used the measured
+    STM32N6, so the capability phase 2 exists to add had no coverage.
+    """
+
+    @pytest.fixture
+    def seeded_bench(self, bench, monkeypatch):
+        from stlink_mcp import quirks as quirks_mod
+
+        seeded = quirks_mod.FamilyQuirks(
+            name="STM32F4",
+            access_port=0,
+            ram_load_base=0x20000000,
+            vector_table_addr=0x20000000,
+            flash_base=0x08000000,
+            notes="seeded from the vendor database, nothing measured",
+            default_provenance=quirks_mod.VENDOR_DB,
+            provenance={"access_port": quirks_mod.ASSUMED},
+        )
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: seeded)
+        monkeypatch.setattr(_FakeProbe, "device_id", 0x413)
+        monkeypatch.setattr(_FakeProbe, "gdb_access_port", lambda self, info: 0)
+        return bench
+
+    def test_a_seeded_part_can_actually_run_firmware(self, seeded_bench) -> None:
+        """The end-to-end capability, which had no test. A seeded entry must be
+        usable, not merely parseable."""
+        seeded_bench.console_text = "hello from a part nobody measured\n"
+        out = call("run_firmware", elf_path=str(seeded_bench.elf))
+        assert out["ok"] is True
+        assert out["load_address"] == "0x20000000"
+
+    def test_the_result_says_the_load_address_was_not_measured(self, seeded_bench) -> None:
+        seeded_bench.console_text = "alive\n"
+        out = call("run_firmware", elf_path=str(seeded_bench.elf))
+        assert out["load_address_provenance"] == "vendor-db"
+        assert "not\nmeasured" in out["load_address_note"].replace(" ", "\n") or \
+            "not measured" in out["load_address_note"]
+
+    def test_it_does_not_invite_the_agent_to_record_a_confirmed_layout(
+        self, seeded_bench
+    ) -> None:
+        """The note has to separate two things a successful run does NOT
+        distinguish: that the image started, and that the address is right for
+        this part in general."""
+        seeded_bench.console_text = "alive\n"
+        note = call("run_firmware", elf_path=str(seeded_bench.elf))["load_address_note"]
+        assert "confirmed layout" in note or "confirmed" in note
+
+    def test_a_measured_part_carries_no_such_note(self, bench) -> None:
+        """The fake board is the measured STM32N6, so the caveat must be absent
+        rather than always-on noise."""
+        bench.console_text = "alive\n"
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert out["load_address_provenance"] == "measured"
+        assert "load_address_note" not in out
+
+
+class TestARefusedDeviceIsNotTheSameAsAnUnknownOne:
+    """RT3. The four ambiguous device IDs are refused deliberately, and the reason
+    naming the candidate addresses was computed and then reduced to a count by the
+    first caller. At runtime they looked identical to a part ST has never heard
+    of."""
+
+    def test_board_state_reports_why_the_database_entry_was_refused(
+        self, bench, monkeypatch
+    ) -> None:
+        from stlink_mcp import quirks as quirks_mod
+
+        monkeypatch.setattr(_FakeProbe, "device_id", 0x42B)
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: quirks_mod.DEFAULT)
+        monkeypatch.setattr(
+            quirks_mod, "_VENDOR_REFUSALS",
+            {0x42B: "the database names 0x20010000, 0x30004000 as SRAM"},
+        )
+        family = call("board_state")["family"]
+        assert "0x20010000" in family["vendor_database_refused"]
+        assert "board file" in family["how_to_proceed"]
+
+    def test_a_genuinely_unknown_part_gets_no_such_claim(self, bench, monkeypatch) -> None:
+        from stlink_mcp import quirks as quirks_mod
+
+        monkeypatch.setattr(_FakeProbe, "device_id", 0xDEAD)
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: quirks_mod.DEFAULT)
+        monkeypatch.setattr(quirks_mod, "_VENDOR_REFUSALS", {})
+        family = call("board_state")["family"]
+        assert "vendor_database_refused" not in family

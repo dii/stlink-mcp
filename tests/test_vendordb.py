@@ -22,8 +22,30 @@ from stlink_mcp.vendordb import (
     seed_from_directory,
 )
 
-DB_DIR = Path("/opt/st/stm32cubeclt_1.22.0/STM32CubeProgrammer/Data_Base")
-needs_db = pytest.mark.skipif(not DB_DIR.is_dir(), reason="CubeCLT not installed here")
+def _installed_db_dir() -> Path | None:
+    """Where the databases are on THIS machine, via the same lookup the server uses.
+
+    Emphatically not a hardcoded path. It was
+    `/opt/st/stm32cubeclt_1.22.0/STM32CubeProgrammer/Data_Base`, and the skip
+    marker below tested that exact directory, so the first CubeCLT upgrade would
+    have made every test in TestAgainstTheRealDatabases skip - and a skipped test
+    is green. The class whose entire job is to notice ST changing its format would
+    have vanished at precisely the moment a format change happened. Same shape as
+    a `pgrep` that can never match: a check that cannot fire, reading as a pass.
+    """
+    try:
+        from stlink_mcp.server import vendor_database_dir
+
+        db = vendor_database_dir()
+    except Exception:
+        return None
+    return db if db.is_dir() else None
+
+
+DB_DIR = _installed_db_dir()
+needs_db = pytest.mark.skipif(
+    DB_DIR is None, reason="no STM32CubeCLT install found on this machine"
+)
 
 
 @pytest.fixture(scope="module")
@@ -165,7 +187,7 @@ class TestAgainstTheRealDatabases:
     changed shows up here rather than as a wrong address on a board."""
 
     def test_most_device_ids_are_seedable(self, result) -> None:
-        seeded, skipped = result
+        seeded, skipped = result.entries, result.refusals
         assert len(seeded) >= 95, (
             f"only {len(seeded)} device IDs seeded, which is far below the 99 "
             "measured on CubeCLT 1.22.0. Either the format changed or the parser "
@@ -173,7 +195,7 @@ class TestAgainstTheRealDatabases:
         )
 
     def test_the_ambiguous_ones_are_refused_rather_than_guessed(self, result) -> None:
-        seeded, skipped = result
+        seeded, skipped = result.entries, result.refusals
         for device_id in (0x42B, 0x42C, 0x472, 0x49A):
             assert device_id in skipped, f"{device_id:#x} should be refused"
             assert device_id not in seeded
@@ -186,7 +208,7 @@ class TestAgainstTheRealDatabases:
         the measurement disagree, and that disagreement is why measured outranks
         seeded.
         """
-        seeded, _ = result
+        seeded = result.entries
         h7 = seeded[0x450]
         assert h7.ram_load_base == quirks.FAMILIES["STM32H7"].ram_load_base
         assert h7.flash_base == quirks.FAMILIES["STM32H7"].flash_base
@@ -194,17 +216,168 @@ class TestAgainstTheRealDatabases:
     def test_the_n6_is_the_known_disagreement(self, result) -> None:
         """Pins the reason for the precedence rule. If this ever stops being
         true, the rule needs re-deriving rather than trusting."""
-        seeded, _ = result
+        seeded = result.entries
         assert seeded[0x486].ram_load_base == 0x34180400
         assert quirks.FAMILIES["STM32N6"].ram_load_base == 0x34180000
 
     def test_nothing_seeded_claims_to_be_measured(self, result) -> None:
-        seeded, _ = result
+        seeded = result.entries
         for device_id, entry in seeded.items():
             origins = set(entry.provenance_summary().values())
             assert quirks.MEASURED not in origins, f"{device_id:#x} claims a measurement"
 
     def test_every_seeded_entry_is_internally_consistent(self, result) -> None:
-        seeded, _ = result
+        seeded = result.entries
         for device_id, entry in seeded.items():
             assert quirks.check_consistency(entry) == [], f"{device_id:#x}"
+
+
+class TestNothingIsDroppedSilently:
+    """The theme of the phase 2 red-team: this module computed good diagnostic
+    information and every caller reduced it to a count."""
+
+    def _db(self, d, name, did, srams):
+        body = "".join(
+            f'<Parameters address="{a}" name="SRAM" size="0x1000"/>' for a in srams
+        )
+        (d / name).write_text(
+            f"<Root><Device><DeviceID>{did}</DeviceID><Series>TESTX</Series>"
+            f"<Peripherals><Peripheral><Configuration>{body}</Configuration>"
+            f"</Peripheral></Peripherals></Device></Root>"
+        )
+        return d / name
+
+    def test_an_unreadable_file_is_reported_and_not_fatal(self, tmp_path) -> None:
+        """It raised PermissionError, which is an OSError and not an ET.ParseError,
+        so the narrower catch let it escape load_vendor_seed - which catches only
+        ToolchainError and VendorDbError - and out of main(), killing the server
+        with a traceback. Directly against load_vendor_seed's own promise."""
+        import os
+
+        self._db(tmp_path, "STM32_Prog_DB_0x77A.xml", "0x77A", ["0x20000000"])
+        bad = self._db(tmp_path, "STM32_Prog_DB_0x77B.xml", "0x77B", ["0x20000000"])
+        os.chmod(bad, 0o000)
+        try:
+            r = seed_from_directory(tmp_path)
+            assert 0x77A in r.entries, "the readable file must still be seeded"
+            assert "STM32_Prog_DB_0x77B.xml" in r.unreadable
+            assert "PermissionError" in r.unreadable["STM32_Prog_DB_0x77B.xml"]
+        finally:
+            os.chmod(bad, 0o600)
+
+    def test_malformed_xml_is_reported_by_name(self, tmp_path) -> None:
+        """It used to be stashed under a sentinel key of -1 and then deleted three
+        lines before the return, so the file vanished from both halves."""
+        (tmp_path / "STM32_Prog_DB_0x77C.xml").write_text("<Root><unclosed>")
+        self._db(tmp_path, "STM32_Prog_DB_0x77D.xml", "0x77D", ["0x20000000"])
+        r = seed_from_directory(tmp_path)
+        assert "STM32_Prog_DB_0x77C.xml" in r.unreadable
+        assert 0x77D in r.entries
+        assert -1 not in r.refusals, "no sentinel keys in the refusals"
+
+    def test_a_refusal_names_the_addresses_it_would_not_choose_between(self, tmp_path) -> None:
+        self._db(tmp_path, "STM32_Prog_DB_0x77E.xml", "0x77E",
+                 ["0x20000000", "0x20008000", "0x20020000"])
+        r = seed_from_directory(tmp_path)
+        assert "0x20008000" in r.refusals[0x77E]
+
+
+class TestOneDeviceIdInTwoFiles:
+    """Reproduced with synthetic databases, because the only real duplicate on
+    CubeCLT 1.22.0 (0x485) agrees and so exercises none of this."""
+
+    def _pair(self, d, did, first, second):
+        for suffix, srams in (("", first), ("_swv", second)):
+            body = "".join(
+                f'<Parameters address="{a}" name="SRAM" size="0x1000"/>' for a in srams
+            )
+            (d / f"STM32_Prog_DB_{did}{suffix}.xml").write_text(
+                f"<Root><Device><DeviceID>{did}</DeviceID><Series>TESTX</Series>"
+                f"<Peripherals><Peripheral><Configuration>{body}</Configuration>"
+                f"</Peripheral></Peripherals></Device></Root>"
+            )
+        return seed_from_directory(d)
+
+    def test_a_usable_entry_survives_an_unusable_sibling(self, tmp_path) -> None:
+        """The defect: seen_files was recorded before the usability check, so on
+        the second file `seeded.get(id)` was consulted, found nothing when the
+        FIRST file was the unusable one, and the good entry was deleted with the
+        reason "which disagree about the addresses to use" - a comparison the code
+        had never performed."""
+        r = self._pair(tmp_path, "0x777", ["0x20000000"],
+                       ["0x20000000", "0x20008000", "0x20020000"])
+        assert r.entries[0x777].ram_load_base == 0x20000000
+        assert 0x777 not in r.refusals
+
+    def test_the_usable_file_is_taken_whichever_order_it_comes_in(self, tmp_path) -> None:
+        r = self._pair(tmp_path, "0x778",
+                       ["0x20000000", "0x20008000", "0x20020000"], ["0x20000000"])
+        assert r.entries[0x778].ram_load_base == 0x20000000
+
+    def test_a_genuine_disagreement_is_refused_and_names_both(self, tmp_path) -> None:
+        r = self._pair(tmp_path, "0x779", ["0x20000000"], ["0x24000000"])
+        assert 0x779 not in r.entries
+        assert "0x20000000" in r.refusals[0x779] and "0x24000000" in r.refusals[0x779]
+
+    def test_agreeing_files_produce_one_entry_and_no_complaint(self, tmp_path) -> None:
+        r = self._pair(tmp_path, "0x77F", ["0x20000000"], ["0x20000000"])
+        assert r.entries[0x77F].ram_load_base == 0x20000000
+        assert not r.refusals
+
+
+class TestTheStatusLineDistinguishesEveryZeroCase:
+    """Three different conditions produced (0, 0) and a start-up message gated on
+    a non-zero count, so a format change that lost all 99 device IDs was
+    indistinguishable from a machine with no toolchain installed."""
+
+    def test_switched_off_says_so(self, monkeypatch) -> None:
+        from stlink_mcp import server
+
+        monkeypatch.setenv("STLINK_MCP_NO_VENDOR_SEED", "1")
+        assert "OFF" in server.load_vendor_seed()
+
+    def test_no_toolchain_says_so(self, monkeypatch) -> None:
+        from stlink_mcp import server
+        from stlink_mcp.toolchain import ToolchainError
+
+        monkeypatch.delenv("STLINK_MCP_NO_VENDOR_SEED", raising=False)
+        monkeypatch.setattr(
+            server, "vendor_database_dir",
+            lambda: (_ for _ in ()).throw(ToolchainError("nothing installed")),
+        )
+        assert "no STM32CubeCLT install" in server.load_vendor_seed()
+
+    def test_a_directory_that_yields_nothing_is_called_out_loudly(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The renamed-tag case: files present, every one unusable. This must not
+        read like the absence of the feature."""
+        from stlink_mcp import server
+
+        monkeypatch.delenv("STLINK_MCP_NO_VENDOR_SEED", raising=False)
+        (tmp_path / "STM32_Prog_DB_0x777.xml").write_text(
+            "<Root><Device><DevID>0x777</DevID></Device></Root>"
+        )
+        monkeypatch.setattr(server, "vendor_database_dir", lambda: tmp_path)
+        status = server.load_vendor_seed()
+        assert "WHICH IS NONE" in status and "format has probably changed" in status
+
+    def test_unreadable_files_are_named_in_the_status(self, tmp_path, monkeypatch) -> None:
+        from stlink_mcp import server
+
+        monkeypatch.delenv("STLINK_MCP_NO_VENDOR_SEED", raising=False)
+        (tmp_path / "STM32_Prog_DB_0x777.xml").write_text("<Root><unclosed>")
+        monkeypatch.setattr(server, "vendor_database_dir", lambda: tmp_path)
+        assert "UNREADABLE" in server.load_vendor_seed()
+
+
+@needs_db
+class TestTheDetectorFollowsTheInstall:
+    def test_the_database_dir_is_resolved_not_hardcoded(self) -> None:
+        """DB_DIR was pinned to /opt/st/stm32cubeclt_1.22.0/..., so the first
+        upgrade would have skipped this whole class - and a skipped test is
+        green."""
+        from stlink_mcp.server import vendor_database_dir
+
+        assert DB_DIR == vendor_database_dir()
+        assert "1.22.0" not in str(DB_DIR) or DB_DIR == vendor_database_dir()

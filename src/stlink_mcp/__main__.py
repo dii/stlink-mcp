@@ -56,14 +56,10 @@ def main() -> None:
     # than the one they described, and the client would see a working server.
     #
     # stderr rather than stdout: stdout is the MCP transport.
-    seeded, skipped = load_vendor_seed()
-    if seeded:
-        print(
-            f"stlink-mcp: seeded {seeded} device IDs from STMicroelectronics' "
-            f"device databases ({skipped} skipped as ambiguous). None of these is "
-            "measured; board_state reports the provenance of every value.",
-            file=sys.stderr,
-        )
+    # Printed unconditionally. The previous version gated this on a non-zero
+    # count, which is how a database format change that silently lost all 99
+    # device IDs became indistinguishable from a machine with no toolchain.
+    print(f"stlink-mcp: {load_vendor_seed()}", file=sys.stderr)
 
     try:
         count, path = load_board_config()

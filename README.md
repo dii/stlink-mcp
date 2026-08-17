@@ -57,8 +57,10 @@ value from that source says so rather than pretending to be a measurement.
 
 Four device IDs are deliberately left unsupported (`0x42B`, `0x42C`, `0x472`,
 `0x49A`): their databases name several separate SRAM banks, and choosing between
-them would be a guess. Anything else unrecognised still falls back to
-identification and memory reads only.
+them would be a guess. If you attach one, `board_state` says so and names the
+addresses it would not choose between, so it is not confused with a part nobody
+has heard of, and you can settle it in a board file. Anything else unrecognised
+still falls back to identification and memory reads only.
 
 The order things happen in, and why, is in [ROADMAP.md](ROADMAP.md).
 
@@ -195,6 +197,12 @@ that is not measured unless you name the address yourself, because that write
 persists and there is no readback to catch a wrong one. A RAM run will go ahead
 on a `vendor-db` address, because a wrong one is undone by a reset and the console
 either speaks or it does not.
+
+`run_firmware` will load to a `vendor-db` address and, on success, says in the
+same result that the address was not measured: the run really is verified by the
+console, and that is evidence for the address rather than a measurement of it.
+The distinction matters because the obvious next step after a working run is to
+write the layout down as confirmed.
 
 A measured entry always beats a seeded one. The STM32N6 is why: its database entry
 gives SRAM at `0x34180400`, which is that family's vector table and not its RAM

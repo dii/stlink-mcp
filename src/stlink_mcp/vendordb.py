@@ -44,6 +44,7 @@ and the N6 never reaches this code because it is characterised by hand.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .quirks import ASSUMED, VENDOR_DB, FamilyQuirks, check_consistency
@@ -59,6 +60,28 @@ _FLASH_PREFIX = "0x0800"
 
 class VendorDbError(RuntimeError):
     """The device database directory could not be used at all."""
+
+
+@dataclass(frozen=True)
+class SeedResult:
+    """What a parse of the databases produced, INCLUDING what it could not use.
+
+    The three fields exist separately because they are three different facts and
+    a caller needs all of them. An earlier version returned the entries plus a
+    dict of refusal reasons, and the reasons died at the first caller, which
+    reduced them to a count: so a device deliberately refused for ambiguity was
+    indistinguishable at runtime from a device ST has never heard of. Worse, an
+    unparseable file was stashed under a sentinel key and then deleted three
+    lines later, inside the function whose own docstring says a silently smaller
+    set of supported parts is the same failure as a silently wrong address.
+    """
+
+    entries: dict[int, FamilyQuirks] = field(default_factory=dict)
+    refusals: dict[int, str] = field(default_factory=dict)
+    """Device IDs the databases describe and this refused to use, and why. Meant
+    to be reachable from the tool that hits one, not just counted."""
+    unreadable: dict[str, str] = field(default_factory=dict)
+    """Files that matched the glob and could not be read or parsed, by name."""
 
 
 def parse_hex(value: str | None) -> int | None:
@@ -125,12 +148,13 @@ def resolve_sram_base(bases: set[int]) -> tuple[int | None, str | None]:
     )
 
 
-def seed_from_directory(db_dir: Path) -> tuple[dict[int, FamilyQuirks], dict[int, str]]:
-    """Parse every device database. Returns (usable entries, why each was not).
+def seed_from_directory(db_dir: Path) -> SeedResult:
+    """Parse every device database into a SeedResult.
 
-    Both halves are returned because a silently smaller set of supported parts is
-    the same failure as a silently wrong address: the caller is entitled to know
-    that a device ID was seen and skipped, and why.
+    Everything that could not be used is reported rather than dropped, because a
+    silently smaller set of supported parts is the same failure as a silently
+    wrong address: the caller is entitled to know that a device ID was seen and
+    skipped, and why.
     """
     files = sorted(db_dir.glob("STM32_Prog_DB_0x*.xml"))
     if not files:
@@ -139,16 +163,26 @@ def seed_from_directory(db_dir: Path) -> tuple[dict[int, FamilyQuirks], dict[int
             "STM32CubeProgrammer/Data_Base inside a CubeCLT install."
         )
 
-    seeded: dict[int, FamilyQuirks] = {}
-    skipped: dict[int, str] = {}
+    result = SeedResult()
+    seeded, skipped, unreadable = result.entries, result.refusals, result.unreadable
     seen_files: dict[int, str] = {}
+    resolved: dict[int, tuple[int | None, int | None]] = {}
 
     for path in files:
         try:
             root = ET.parse(path).getroot()
         except ET.ParseError as exc:
-            continue_reason = f"{path.name} is not parseable XML ({exc})"
-            skipped.setdefault(-1, continue_reason)
+            unreadable[path.name] = f"not parseable XML: {exc}"
+            continue
+        except OSError as exc:
+            # NOT merged with the clause above, and not left to propagate. An
+            # unreadable file raises PermissionError, which is an OSError and not
+            # an ET.ParseError, so the narrower catch let it escape through
+            # load_vendor_seed - which catches only ToolchainError and
+            # VendorDbError - and out of main(), killing the server with a
+            # traceback. That directly contradicted load_vendor_seed's own
+            # promise that failing to seed is never fatal.
+            unreadable[path.name] = f"{type(exc).__name__}: {exc}"
             continue
 
         device_id = parse_hex(root.findtext(".//DeviceID"))
@@ -160,20 +194,42 @@ def seed_from_directory(db_dir: Path) -> tuple[dict[int, FamilyQuirks], dict[int
         flash = _flash_base(root)
 
         if device_id in seen_files:
-            # Two files, one device ID. Agreement is checked rather than assumed;
-            # disagreement refuses the ID instead of letting file order decide.
-            existing = seeded.get(device_id)
-            agrees = existing is not None and (
-                existing.ram_load_base == base and existing.flash_base == flash
-            )
-            if not agrees:
+            # Two files, one device ID. Compare what each file RESOLVED TO,
+            # rather than inferring disagreement from whether an entry exists.
+            #
+            # The first version compared against `seeded.get(device_id)`, which
+            # is absent whenever the first file was unusable for any reason. So
+            # a clean first file followed by an ambiguous second one deleted the
+            # good entry and recorded "which disagree about the addresses to
+            # use" - a comparison the code had not performed. Reproduced with
+            # two synthetic databases sharing one device ID.
+            first = resolved.get(device_id)
+            if first == (base, flash):
+                continue  # genuinely the same, nothing to decide
+            if base is None:
+                # This file is unusable and the other one was fine. That is not a
+                # disagreement, and the usable entry stays.
+                continue
+            if first is not None and first[0] is None:
+                # The other way round: the first file was unusable, this one is
+                # not, so take this one.
+                resolved[device_id] = (base, flash)
+                seen_files[device_id] = path.name
+                skipped.pop(device_id, None)
+            else:
                 seeded.pop(device_id, None)
                 skipped[device_id] = (
-                    f"declared by both {seen_files[device_id]} and {path.name}, "
-                    "which disagree about the addresses to use"
+                    f"declared by both {seen_files[device_id]} and {path.name} "
+                    f"with different addresses "
+                    f"(SRAM {_show(first[0] if first else None)} against "
+                    f"{_show(base)}, flash {_show(first[1] if first else None)} "
+                    f"against {_show(flash)}), so choosing between the files "
+                    "would be a guess"
                 )
-            continue
-        seen_files[device_id] = path.name
+                continue
+        else:
+            seen_files[device_id] = path.name
+            resolved[device_id] = (base, flash)
 
         if base is None:
             skipped[device_id] = why_not or "no usable SRAM base"
@@ -211,5 +267,8 @@ def seed_from_directory(db_dir: Path) -> tuple[dict[int, FamilyQuirks], dict[int
 
         seeded[device_id] = entry
 
-    skipped.pop(-1, None)
-    return seeded, skipped
+    return result
+
+
+def _show(value: int | None) -> str:
+    return "none" if value is None else f"0x{value:08X}"
