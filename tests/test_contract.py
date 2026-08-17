@@ -38,6 +38,7 @@ TOOL_CALLS: dict[str, dict] = {
     "core_registers": {},
     "capture_console": {"seconds": 0.01},
     "reset_target": {},
+    "read_fault_status": {},
 }
 
 
@@ -184,7 +185,8 @@ class _FakeProbe:
         return 1
 
     def read_memory(self, address: int, length_bytes: int) -> dict[int, int]:
-        return {address: 0xDEADBEEF}
+        n_words = max(1, length_bytes // 4)
+        return {address + i * 4: 0 for i in range(n_words)}
 
     def core_registers(self) -> dict[str, int]:
         return {"PC": 0x34180D3C}
@@ -861,3 +863,69 @@ class TestARefusedDeviceIsNotTheSameAsAnUnknownOne:
         monkeypatch.setattr(quirks_mod, "_VENDOR_REFUSALS", {})
         family = call("board_state")["family"]
         assert "vendor_database_refused" not in family
+
+
+class TestFaultStatusReportsWhatsActuallyThere:
+    """Phase 5: read and decode the Cortex-M fault status registers.
+
+    The tool reads the SCB fault registers without halting or resetting the
+    target, decodes every set bit, and reports a plain-English diagnosis. When
+    a fault is active it also gives the agent a next step to find where the
+    fault happened.
+    """
+
+    def test_clean_registers_report_no_fault(self, bench) -> None:
+        out = call("read_fault_status")
+        assert_contract(out)
+        assert out["any_fault_active"] is False
+        assert "no fault" in out["diagnosis"]
+        assert "next_step" not in out
+
+    def test_active_fault_includes_next_step(self, bench, monkeypatch) -> None:
+        from stlink_mcp import faults as fm
+
+        def read_with_fault(self, address, length_bytes):
+            words = {address + i * 4: 0 for i in range(length_bytes // 4)}
+            if address == fm.FAULT_REGION_BASE:
+                words[fm.CFSR] = (1 << 9) | (1 << 15)  # PRECISERR + BFARVALID
+                words[fm.HFSR] = 1 << 30  # FORCED
+                words[fm.BFAR] = 0x40001234
+            return words
+
+        monkeypatch.setattr(_FakeProbe, "read_memory", read_with_fault)
+        out = call("read_fault_status")
+        assert_contract(out)
+        assert out["any_fault_active"] is True
+        assert out["bus_fault_address"] == "0x40001234"
+        assert "0x40001234" in out["diagnosis"]
+        assert "escalated" in out["diagnosis"]
+        assert "core_registers" in out["next_step"]
+
+    def test_does_not_reset_the_target(self, bench) -> None:
+        out = call("read_fault_status")
+        assert out["target_was_reset"] is False
+
+    def test_raw_registers_are_reported(self, bench) -> None:
+        out = call("read_fault_status")
+        raw = out["raw_registers"]
+        assert "CFSR" in raw
+        assert "HFSR" in raw
+        assert "BFAR" in raw
+
+    def test_debug_halt_reason_reported_when_present(
+        self, bench, monkeypatch
+    ) -> None:
+        from stlink_mcp import faults as fm
+
+        def read_with_halt(self, address, length_bytes):
+            words = {address + i * 4: 0 for i in range(length_bytes // 4)}
+            if address == fm.FAULT_REGION_BASE:
+                words[fm.DFSR] = 1 << 1  # BKPT
+            return words
+
+        monkeypatch.setattr(_FakeProbe, "read_memory", read_with_halt)
+        out = call("read_fault_status")
+        assert_contract(out)
+        assert out["any_fault_active"] is False
+        reasons = out["debug_halt_reason"]
+        assert any(r["bit"] == "BKPT" for r in reasons)

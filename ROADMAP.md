@@ -38,7 +38,7 @@ fixed first rather than inherited. (RT4)
 | N4 nothing perturbs silently | Done: `target_was_reset`, `core_registers` documented as halting |
 | N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
-| N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector, and reports the halt it took to check |
+| N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault" |
 | N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `probe.py:164`, `-d` in `runner.py:145`. No JTAG |
 | N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals |
 
@@ -212,9 +212,14 @@ turns every user with a board into a source of measured data.
 
 ## Phase 5 - depth, chosen for the agent user
 
-- **Fault decoding.** Read and interpret the Cortex-M fault registers to answer "why did it
-  fault". Family independent, and it is the question an agent actually has when a run fails.
-  Highest daily value of anything in this file.
+- **Fault decoding. DONE.** `read_fault_status` reads the six SCB fault registers (CFSR,
+  HFSR, DFSR, MMFAR, BFAR, AFSR) without halting or resetting the target, decodes every
+  set bit, and reports a plain-English diagnosis with the faulting address when the hardware
+  recorded it. When a fault is active the result includes a next step telling the agent how
+  to find the faulting instruction via the exception frame on the stack. The decode logic is
+  pure and fully tested offline (60 tests for every defined bit, every common crash pattern,
+  and every address validity gate). The registers are at fixed Cortex-M addresses and do not
+  vary by family, which is why this was built before JTAG.
 - **Flash readback verification.** `flash_firmware` trusts the programmer's own "File
   download complete" and says so honestly in `verified_by`. The one operation that writes
   permanently is the one that does not read back and compare, which is an open N1 gap.

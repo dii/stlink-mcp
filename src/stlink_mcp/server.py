@@ -31,6 +31,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import console as console_mod
+from . import faults as faults_mod
 from . import quirks as quirks_mod
 from .result import failed, unverified, verified
 from .probe import (
@@ -1103,6 +1104,100 @@ def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
         return unverified(probe.degraded_reason, **detail)
 
     return verified("registers read back from the halted core", **detail)
+
+
+@mcp.tool()
+def read_fault_status(probe_serial: str | None = None) -> dict[str, Any]:
+    """Read and decode the Cortex-M fault status registers.
+
+    Answers "why did it fault" by reading the SCB fault registers (CFSR, HFSR,
+    DFSR and the fault address registers) from the target. These are at fixed
+    addresses in every Cortex-M and do not vary by family or vendor.
+
+    Does not reset or halt the target. The registers are sticky: they hold the
+    state from the most recent fault until software clears them by writing 1 to
+    each set bit. Call this after a crash, or call it on a running target to
+    check whether it has faulted and recovered.
+
+    When no fault is active, the result says so. When one is, the diagnosis
+    names what happened in plain English, with the faulting address when the
+    hardware recorded it. The raw register values are included for anyone who
+    needs them.
+    """
+    try:
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return failed(error)
+        if server_is_held(serial):
+            return failed(
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+            )
+        probe = Probe(toolchain, serial=serial)
+        info = probe.identify(allow_reset=False)
+        if not info.connected:
+            return failed(
+                "Could not reach the core without resetting it. Reading the "
+                "fault registers requires a debug connection, and resetting "
+                "clears them, which would destroy the information this tool "
+                "exists to read.",
+                probe_serial=serial,
+                hint=explain_connect_failure(info),
+            )
+        words = probe.read_memory(
+            faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc))
+
+    status = faults_mod.decode(words)
+
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        "connect_mode": probe.connect_mode,
+        "target_was_reset": probe.target_was_reset,
+        "any_fault_active": status.any_fault,
+        "diagnosis": status.diagnosis,
+        "faults": [
+            {"category": f.category, "bit": f.name, "meaning": f.meaning}
+            for f in status.faults
+        ],
+        "raw_registers": {
+            name: f"0x{val:08X}" for name, val in status.raw.items()
+        },
+        "note": (
+            "These registers are sticky: they hold the state from the most "
+            "recent fault until software clears them by writing 1 to each set "
+            "bit, or until the target is reset. A clean read means no fault "
+            "since the last reset or clear, not that the program is healthy."
+        ),
+    }
+
+    if status.mmfar is not None:
+        detail["memmanage_fault_address"] = f"0x{status.mmfar:08X}"
+    if status.bfar is not None:
+        detail["bus_fault_address"] = f"0x{status.bfar:08X}"
+
+    if status.debug:
+        detail["debug_halt_reason"] = [
+            {"bit": d.name, "meaning": d.meaning} for d in status.debug
+        ]
+
+    if status.any_fault:
+        detail["next_step"] = (
+            "To find WHERE the fault happened: call core_registers() to read "
+            "the PC (halts the core). If the core is in the fault handler, "
+            "the exception frame on the stack holds the faulting PC: read the "
+            "SP from core_registers, then read_memory at that address for 32 "
+            "bytes. Words 0-3 are R0-R3, word 4 is R12, word 5 is LR, word "
+            "6 is the faulting PC, word 7 is xPSR. On Cortex-M with FP, the "
+            "frame may be 26 words if the FP context was active."
+        )
+
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **detail)
+
+    return verified("fault status registers read from the target", **detail)
 
 
 @mcp.tool()
