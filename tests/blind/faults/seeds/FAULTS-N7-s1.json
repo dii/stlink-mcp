@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N7-s1",
+  "kind": "seed",
+  "description": "(a) any_fault is always True, so it reports True even with an empty .faults",
+  "edits": [
+    {
+      "find": "    def any_fault(self) -> bool:\n        return bool(self.faults)",
+      "replace": "    def any_fault(self) -> bool:\n        return True"
+    }
+  ],
+  "need": "FAULTS-N7"
+}

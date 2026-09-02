@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N11-s4",
+  "kind": "seed",
+  "description": "(b) the raw dict's MMFAR and BFAR entries are swapped with each other, so raw disagrees with the values decode() actually used for mmfar and bfar",
+  "edits": [
+    {
+      "find": "            \"MMFAR\": mmfar_raw,\n            \"BFAR\": bfar_raw,\n",
+      "replace": "            \"MMFAR\": bfar_raw,\n            \"BFAR\": mmfar_raw,\n"
+    }
+  ],
+  "need": "FAULTS-N11"
+}

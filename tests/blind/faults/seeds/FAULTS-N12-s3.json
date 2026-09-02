@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N12-s3",
+  "kind": "seed",
+  "description": "(b) an extra seventh key (\"SCB_CFSR\", an alias alongside \"CFSR\") is present in FaultStatus.raw's key set, so it is not exactly the six CMSIS register names, even though all six original keys are still present",
+  "edits": [
+    {
+      "find": "        raw={\n            \"CFSR\": cfsr,\n",
+      "replace": "        raw={\n            \"CFSR\": cfsr,\n            \"SCB_CFSR\": cfsr,\n"
+    }
+  ],
+  "need": "FAULTS-N12"
+}

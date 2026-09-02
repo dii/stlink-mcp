@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N9-s2",
+  "kind": "seed",
+  "description": "(b) two bits from different status bytes (MMFSR and BFSR) are reported with the same category value",
+  "edits": [
+    {
+      "find": "    faults.extend(_extract(bfsr, _BFSR_BITS, \"BusFault\"))",
+      "replace": "    faults.extend(_extract(bfsr, _BFSR_BITS, \"MemManage\"))"
+    }
+  ],
+  "need": "FAULTS-N9"
+}

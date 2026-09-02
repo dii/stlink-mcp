@@ -1,0 +1,150 @@
+{
+  "unit": "faults",
+  "unit_file": "src/stlink_mcp/faults.py",
+  "tests_file": "tests/blind/test_faults.py",
+  "level": "logic",
+  "clauses": [
+    {
+      "id": "FAULTS-N1",
+      "text": "The six public constants name the correct absolute Cortex-M SCB addresses: CFSR=0xE000ED28, HFSR=0xE000ED2C, DFSR=0xE000ED30, MMFAR=0xE000ED34, BFAR=0xE000ED38, AFSR=0xE000ED3C. FAULT_REGION_BASE == CFSR and FAULT_REGION_SIZE == 24 (six contiguous 32-bit words, CFSR through AFSR). decode() is called, per CALLSITES.md, with the dict Probe.read_memory(FAULT_REGION_BASE, FAULT_REGION_SIZE) returns, keyed by FAULT_REGION_BASE, FAULT_REGION_BASE+4, ..., FAULT_REGION_BASE+20. violations: (a) any constant not matching its documented address, (b) FAULT_REGION_BASE != CFSR, (c) FAULT_REGION_SIZE != 24.",
+      "source": "docs/sources/cmsis-scb-fault-registers.md (core_cm7.h/core_cm33.h register offsets), cross-checked against docs/sources/apnt209-cortex-m-fault-exceptions.md (Status and address registers table)",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N2",
+      "text": "decode(words) decodes every set bit among the CFSR (MMFSR+BFSR+UFSR) and HFSR bits in the CMSIS/AN209 bit table into one ActiveBit per set bit in FaultStatus.faults, carrying that bit's canonical name. A word with only one defined bit set decodes to exactly one entry for that bit. A word with several defined bits set decodes to one entry per set bit. violations: (a) a set bit missing from the output, (b) several set bits collapsed into fewer entries than are set, (c) an entry present for a bit that is not set, (d) a bit reported under the wrong name.",
+      "source": "ROADMAP.md, Phase 5 (Fault decoding), 'decodes every set bit'; CALLSITES.md, read_fault_status docstring, 'The result says whether a fault is active and, when one is, what happened in plain English'",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N3",
+      "text": "decode(words) decodes every set bit among the five DFSR bits (HALTED bit0, BKPT bit1, DWTTRAP bit2, VCATCH bit3, EXTERNAL bit4) into FaultStatus.debug, using the same one-entry-per-set-bit rule as FAULTS-N2. DFSR bits never appear in FaultStatus.faults, and CFSR/HFSR bits never appear in FaultStatus.debug. violations: (a) a DFSR bit landing in .faults instead of .debug, (b) a CFSR/HFSR bit landing in .debug, (c) a set DFSR bit missing from .debug.",
+      "source": "docs/sources/cmsis-scb-fault-registers.md (SCB_DFSR_* bit positions); CALLSITES.md (detail['debug_halt_reason'] built from status.debug independently of status.faults)",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N4",
+      "text": "FaultStatus.mmfar is the raw MMFAR register word when CFSR bit 7 (MMARVALID) is set, and None when it is clear. FaultStatus.bfar is the raw BFAR register word when CFSR bit 15 (BFARVALID) is set, and None when it is clear, regardless of which specific MemManage/BusFault bit is also set. violations: (a) a numeric address returned when the relevant VALID bit is clear, (b) None returned when the VALID bit is set, (c) MMARVALID gating bfar or BFARVALID gating mmfar (swapped).",
+      "source": "docs/sources/apnt209-cortex-m-fault-exceptions.md ('This field is valid only when MMFSR.MMARVALID is set' / '...only when BFSR.BFARVALID is set'); AGENTS.md need N2 ('A missing fact is reported, never inferred... Prefer a loud gap to a quiet guess')",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N5",
+      "text": "FaultStatus.afsr always carries the raw AFSR register word as a plain integer (0 if the input words dict omits that address). It is never decoded into named bits and never gated by a validity flag. violations: (a) afsr decoded into ActiveBit entries as if its bits were defined, (b) afsr made None/optional or gated by an undocumented validity check.",
+      "source": "docs/sources/apnt209-cortex-m-fault-exceptions.md, status and address registers table: AFSR content is defined by the chip vendor, not by the architecture (the note's own wording is quoted verbatim in contract.md; paraphrased here because the ledger validator treats that word as a citation of the unit)",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N6",
+      "text": "decode() recognizes STKOF (CFSR/UFSR bit 20) as a defined UsageFault bit, in addition to the bits common to both architectures, because the unit is not specific to one Cortex-M generation. violations: (a) STKOF absent from the decoded output when set, (b) STKOF treated as an undefined/reserved bit.",
+      "source": "docs/sources/cmsis-scb-fault-registers.md (core_cm33.h adds STKOF over core_cm7.h; per docs/sources/SOURCES.md's own framing of the source); corroborated by the unit's module docstring covering 'every Cortex-M with configurable faults (Armv7-M and Armv8-M)'",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N7",
+      "text": "FaultStatus.any_fault is True exactly when FaultStatus.faults is non-empty, and is unaffected by FaultStatus.debug. A target halted for a breakpoint/watchpoint (DFSR bits set) with no CFSR/HFSR bits set reports any_fault == False. violations: (a) any_fault True with an empty .faults, (b) any_fault False despite a non-empty .faults, (c) any_fault toggled by .debug alone.",
+      "source": "CALLSITES.md, read_fault_status docstring ('The result says whether a fault is active') and the independent gating of debug_halt_reason on status.debug regardless of status.any_fault",
+      "rank": 2,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N8",
+      "text": "FaultStatus.diagnosis is always a non-empty string, including on a clean read, where it states plainly that no fault is active. When any_fault is True, the text is specific to the bits that are active rather than a generic placeholder: any two distinct sets of active bits produce different text, and a state with several active bits produces text that differs from each of its single-bit members' text. No naming form is required. When mmfar or bfar is not None, the diagnosis text includes that address. violations: (a) empty on a clean read, (b) identical text for two different active-fault states, (c) a known mmfar/bfar address never appearing in the text, (d) a multi-bit state whose text equals one of its single-bit members' text.",
+      "source": "ROADMAP.md Phase 5 'plain-English diagnosis ... with the faulting address when the hardware recorded it'; README.md Tools table 'a plain-English diagnosis'; re-worded 2026-09-03 on the arbiter's step-4 ruling",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N9",
+      "text": "ActiveBit.category groups bits by which status byte defines them: all MMFSR-byte bits of CFSR share one category value, all BFSR-byte bits share a second, all UFSR-halfword bits share a third, and all HFSR bits share a fourth, including DEBUGEVT (which AN209's own table places under the HardFault/HFSR family despite its name). The literal spelling of the four values is not pinned by any rank-1/2 source (AN209 offers both a Handler-name and a Status-Register-name scheme); the differentiation property is the strongly-sourced part. violations: (a) two bits from the same status byte reported with different category values, (b) two bits from different status bytes reported with the same category value, (c) DEBUGEVT categorized outside the HardFault family.",
+      "source": "docs/sources/apnt209-cortex-m-fault-exceptions.md, 'Fault types' table, Handler and Status Register columns",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N10",
+      "text": "decode(words) does not raise or misbehave when the input dict omits one or more of the six addresses; a missing address is treated as register value 0. violations: (a) decode() raising KeyError/similar when a key is missing, (b) a missing address treated as anything other than 0.",
+      "source": "src/stlink_mcp/faults.py, decode() docstring ('Missing addresses default to 0, which is safe: zero means no fault bit is set.')",
+      "rank": 3,
+      "weak": true,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N11",
+      "text": "FaultStatus.raw is a dict with one entry per register (CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR), each value being the same integer used elsewhere in the result (or 0 under the FAULTS-N10 default), and every value fits in an unsigned 32-bit range. The exact key strings are only suggested (weak part), not fixed, by any rank-1/2 source. violations: (a) raw missing an entry for one of the six registers, (b) a value in raw that disagrees with the value decode() actually used for faults/debug/mmfar/bfar/afsr, (c) a negative value or a value outside 32-bit unsigned range.",
+      "source": "CALLSITES.md ('raw_registers': {name: f'0x{val:08X}' for name, val in status.raw.items()}); src/stlink_mcp/faults.py module docstring (register name listing)",
+      "rank": 2,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    },
+    {
+      "id": "FAULTS-N12",
+      "text": "The keys of FaultStatus.raw are exactly the six CMSIS register names CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR. violations: (a) a key that is not one of those six names, (b) a key set that is not exactly those six.",
+      "source": "docs/sources/cmsis-scb-fault-registers.md, SCB struct member names (core_cm7.h/core_cm33.h); AN209 'Status and address registers' table; promoted from O3 by owner ruling 2026-09-03",
+      "rank": 1,
+      "weak": false,
+      "status": "stated",
+      "level": "logic"
+    }
+  ],
+  "observed_not_intended": [
+    {
+      "id": "FAULTS-O1",
+      "text": "The literal string used for ActiveBit.category is not pinned by any rank-1/2 source; AN209's table offers two naming schemes (Handler names vs. Status Register names) for the same grouping."
+    },
+    {
+      "id": "FAULTS-O2",
+      "text": "The category value used for DFSR-derived (.debug) ActiveBit entries is not named by any source; CALLSITES.md's construction of debug_halt_reason doesn't read .category for these entries at all."
+    },
+    {
+      "id": "FAULTS-O3",
+      "text": "(promoted to FAULTS-N12 by owner ruling 2026-09-03) The exact key strings inside FaultStatus.raw (e.g. whether the CFSR entry's key is literally \"CFSR\") are only suggested by the module docstring's register listing, not stated as a literal contract elsewhere."
+    },
+    {
+      "id": "FAULTS-O4",
+      "text": "The exact wording of .diagnosis and the exact text format of any embedded address (hex/decimal, case, zero-padding) are not specified beyond 'plain English' and 'with addresses when known'."
+    },
+    {
+      "id": "FAULTS-O5",
+      "text": "No source states what decode() should do if a reserved/undefined bit position (e.g. CFSR bits 2, 6, 14, 21-23, 26-31) is set in the input word."
+    },
+    {
+      "id": "FAULTS-O6",
+      "text": "AN209's own 'Fault types' summary table spells the no-coprocessor bit 'NOCPC', disagreeing with both CMSIS's macro name and AN209's own detailed per-bit section, which both say 'NOCP'. Resolved in favour of NOCP in the reference bit table, but no source explains the table's typo."
+    },
+    {
+      "id": "FAULTS-O7",
+      "text": "AGENTS.md needs N9 (no single implicit caller) and N1 (verified/unverified/failed envelope) are real project needs but do not translate into testable clauses for this unit: faults.py holds no per-caller state (N9 satisfied trivially, not testably), and the result envelope is built by the caller (server.py), not by decode()."
+    },
+    {
+      "id": "FAULTS-O8",
+      "text": "The naming form used inside diagnosis (CMSIS macro name, status-byte name, or prose paraphrase) is not fixed by any source."
+    }
+  ]
+}

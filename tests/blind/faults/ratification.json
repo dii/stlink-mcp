@@ -1,0 +1,681 @@
+{
+  "who": "Dawid Oosthuizen",
+  "when": "2026-09-02T22:48:12+00:00",
+  "contract_sha256": "e6379aab85a2f89b258ad76c9ab75c6e8b09a35d90b6c6bc9cf5a250c20b0c08",
+  "note": "Re-ratified 2026-09-03 after the step-4 reds: N8 re-worded per the arbiter (distinctness, no naming form), O8 added, O3 promoted to N12 (raw keys). Owner: 'yes to all'.",
+  "scope": [
+    "contract",
+    "weak-source clauses",
+    "levels"
+  ],
+  "rulings": [
+    {
+      "kind": "weak-clause",
+      "item": "FAULTS-N10",
+      "ruling": "strengthen: CALLSITES.md (rank 2), server.py:1092-1098",
+      "when": "2026-09-02T21:12:13+00:00",
+      "by": "arbiter",
+      "reason": "CALLSITES.md places decode(words) at server.py:1098, outside the try/except that closes at 1096, so a KeyError on a missing address escapes the MCP tool as an unhandled exception instead of the failed()/verified() envelope that AGENTS.md N1 (rank 1) requires of every result; that is rank-2 support for violation (a), independent of the docstring. The remainder of the clause, that the substituted value is 0, is the only default that leaves FAULTS-N2 and FAULTS-N7 true (no entry for a bit nothing set, any_fault False), so it needs no separate source. Keep the clause as written and cite CALLSITES.md beside the docstring.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O1",
+      "ruling": "accidental",
+      "when": "2026-09-02T21:12:14+00:00",
+      "by": "arbiter",
+      "reason": "Both candidate spellings sit in the same rank-1 table (AN209 Fault types, the Handler column and the Status Register column) and no source chooses between them, so pinning either would invent a requirement. CALLSITES.md forwards f.category into the tool result without comparing it against any literal, so no caller depends on the spelling. FAULTS-N9 already carries the load-bearing part: bits from one status byte share a value, bits from different bytes do not.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O2",
+      "ruling": "accidental",
+      "when": "2026-09-02T21:12:14+00:00",
+      "by": "arbiter",
+      "reason": "CALLSITES.md builds debug_halt_reason from bit and meaning only, so the category of a DFSR-derived ActiveBit never reaches the tool output and no caller reads it; it exists only because the dataclass requires the field. AN209 does not cover DFSR at all, so there is nothing to source even if someone wanted it pinned. A test writer should assert nothing about this value.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O3",
+      "ruling": "escalate: proposed clause FAULTS-N12 pinning the six raw keys to the CMSIS register names; source rank 1, docs/sources/cmsis-scb-fault-registers.md SCB struct members",
+      "when": "2026-09-02T21:12:14+00:00",
+      "by": "arbiter",
+      "reason": "The key strings are the only thing in raw_registers that tells the agent which value belongs to which register, and CALLSITES.md forwards them verbatim into the agent-facing result, so an unrecognisable key misleads the primary user that AGENTS.md is written for. The contract is also ambiguous here: FAULTS-N11 names the six registers in its clause text while its weak note says the spellings are only suggested, and the writer must know whether to assert the key set. Unlike O1 there is one candidate spelling and it has a rank-1 source, so this is cheap for a human to settle.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O4",
+      "ruling": "accidental",
+      "when": "2026-09-02T21:12:27+00:00",
+      "by": "arbiter",
+      "reason": "No source fixes the wording or the address format, and FAULTS-N8 already carries what a reader needs (always non-empty, names an active fault, contains a known mmfar/bfar address) with an explicit instruction to test by substring. CALLSITES.md passes status.diagnosis straight through and does its own 0x%08X formatting for the separate address fields, so no caller parses the sentence. Pinning exact text would couple the suite to the implementation, which is the failure this skill exists to prevent.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O5",
+      "ruling": "accidental",
+      "when": "2026-09-02T21:12:27+00:00",
+      "by": "arbiter",
+      "reason": "Neither rank-1 document defines those bit positions or says what to do when one is set, and no caller acts on them: CALLSITES.md only iterates whatever entries decode returns. FAULTS-N2 and FAULTS-N3 already scope decoding to the bits in the reference table, so the writer asserts nothing about positions outside it. Left recorded and untested rather than given an invented behaviour.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O6",
+      "ruling": "accidental",
+      "when": "2026-09-02T21:12:27+00:00",
+      "by": "arbiter",
+      "reason": "The name is not in fact sourceless: core_cm7.h and core_cm33.h define SCB_CFSR_NOCP_Pos and the AN209 detailed UFSR section heads the bit NOCP, so two rank-1 places agree and only the AN209 summary table says NOCPC. That resolution is already carried by the contract reference table and is tested through FAULTS-N2 violation (d), a bit reported under the wrong name. What has no source is only the explanation of the typo, and nothing depends on that.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O7",
+      "ruling": "accidental",
+      "when": "2026-09-02T21:12:27+00:00",
+      "by": "arbiter",
+      "reason": "CALLSITES.md shows the verified/unverified/failed envelope being built in server.py around decode, and the faults.py stub holds six module constants and no mutable state, so both exclusions are checkable in a minute and neither yields a testable clause at this unit. The one demand AGENTS.md N1 does place on decode, that it must not raise and so bypass the envelope, is already covered by FAULTS-N10 and is the basis of the strengthen ruling recorded there. Nothing further to test here.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N1",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:42+00:00",
+      "by": "arbiter",
+      "reason": "The sentence asserts the numeric values of six module constants and two relations between them (FAULT_REGION_BASE equals CFSR, FAULT_REGION_SIZE is 24), settled by comparing against the CMSIS offset table and the AN209 address table with no board attached. The System Control Block is named as the source of the documented addresses, not as hardware whose state the clause asserts, and no on-target observation would settle a constant better than the rank-1 documents do. This is the closest call of the eleven and the one worth putting in the human sample.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N2",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:42+00:00",
+      "by": "arbiter",
+      "reason": "The sentence is a mapping from one integer word to one ActiveBit per set bit, exercised with a literal dict. CFSR and HFSR appear as labels of the input value, not as hardware the test must reach, and no timing, power or peripheral access is asserted.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N3",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:42+00:00",
+      "by": "arbiter",
+      "reason": "The clause asserts that two output lists are populated from disjoint parts of the input dict, which is a property of decode over supplied integers. DFSR names which input word is meant; nothing about a halted or running target is claimed.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N4",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:42+00:00",
+      "by": "arbiter",
+      "reason": "Gating mmfar and bfar on bits 7 and 15 of an input integer is arithmetic over the dict decode is handed. MMFAR and BFAR name which words are meant; the clause says nothing about the target state at the time of the read, which is the callers concern in server.py.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N5",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:42+00:00",
+      "by": "arbiter",
+      "reason": "The clause says afsr is passed through as a plain integer and never decoded or gated. Implementation defined content is the reason not to decode it, not a hardware observation any test has to make.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N6",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:42+00:00",
+      "by": "arbiter",
+      "reason": "Whether bit 20 is recognised as STKOF is a table-membership question about the decoder, settled by core_cm33.h. Armv7-M and Armv8-M name which header the definition comes from, not a part the test must run on; a host test sets bit 20 in a literal word.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N7",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:56+00:00",
+      "by": "arbiter",
+      "reason": "any_fault is a boolean over the decoded faults list, computed from the same input dict. The breakpoint example in the sentence describes a DFSR word supplied as input, not a target that has actually halted, so no hardware state is asserted.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N8",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:56+00:00",
+      "by": "arbiter",
+      "reason": "diagnosis is a string built from the already-decoded structure and checked by substring presence. The phrase about the hardware recording an address belongs to the quoted ROADMAP source, and in the clause itself the address is just a value already present in the input dict.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N9",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:56+00:00",
+      "by": "arbiter",
+      "reason": "The clause asserts a partition over decoded entries, checkable by comparing two entries from the same status byte and two from different bytes. MMFSR, BFSR, UFSR and HFSR come from the AN209 table as names for groups of input bits, not as devices a test must touch.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N10",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:56+00:00",
+      "by": "arbiter",
+      "reason": "Missing-key defaulting is a property of a Python dict lookup inside decode. The failure it guards against, an exception escaping the tool at server.py:1098, happens on the host, and a test supplies a short dict directly with no probe involved.",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N11",
+      "ruling": "accept",
+      "when": "2026-09-02T21:12:56+00:00",
+      "by": "arbiter",
+      "reason": "raw is a dict assembled from the same integers decode used elsewhere, and the unsigned 32-bit property is checked by formatting a value. The register names appear as dictionary keys, not as hardware, and nothing here needs a target.",
+      "sampled": false
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O3",
+      "ruling": "intended: promoted to FAULTS-N12 (raw keys are the six CMSIS register names)",
+      "when": "2026-09-02T22:48:12+00:00",
+      "by": "human",
+      "who": "Dawid Oosthuizen"
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N8",
+      "ruling": "agree",
+      "when": "2026-09-02T22:48:12+00:00",
+      "by": "arbiter",
+      "reason": "owner re-checked the arbiter's ruling on the 4-item random sample (seed 20260903) and agreed, 2026-09-03",
+      "sampled": true,
+      "human": "Dawid Oosthuizen"
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N2",
+      "ruling": "agree",
+      "when": "2026-09-02T22:48:12+00:00",
+      "by": "arbiter",
+      "reason": "owner re-checked the arbiter's ruling on the 4-item random sample (seed 20260903) and agreed, 2026-09-03",
+      "sampled": true,
+      "human": "Dawid Oosthuizen"
+    },
+    {
+      "kind": "sourceless-clause",
+      "item": "FAULTS-O5",
+      "ruling": "agree",
+      "when": "2026-09-02T22:48:12+00:00",
+      "by": "arbiter",
+      "reason": "owner re-checked the arbiter's ruling on the 4-item random sample (seed 20260903) and agreed, 2026-09-03",
+      "sampled": true,
+      "human": "Dawid Oosthuizen"
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N4",
+      "ruling": "agree",
+      "when": "2026-09-02T22:48:12+00:00",
+      "by": "arbiter",
+      "reason": "owner re-checked the arbiter's ruling on the 4-item random sample (seed 20260903) and agreed, 2026-09-03",
+      "sampled": true,
+      "human": "Dawid Oosthuizen"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N1-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Setting HFSR to 0xE000ED2D makes FAULTS-N1's sentence 'HFSR=0xE000ED2C' false (violation a), and the N1-tagged address test went red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N1-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Pointing FAULT_REGION_BASE at HFSR makes 'FAULT_REGION_BASE == CFSR' false (violation b), caught by the N1-tagged base test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N1-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "A region size of 20 makes 'FAULT_REGION_SIZE == 24' false (violation c), caught by the N1-tagged size test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N2-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Deleting the IMPRECISERR row leaves CFSR bit 10 undecoded when set, which is violation (a) of FAULTS-N2, and the N2-tagged single-bit case for that bit went red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N2-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Truncating the MMFSR extraction to its first element collapses several set bits into fewer entries than are set, violation (b), caught by the N2-tagged all-bits-set test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N2-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Appending FORCED unconditionally puts an entry in .faults for a bit that is not set, violation (c), and 23 N2-tagged tests went red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N2-s4",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Spelling the bit PRECISERRR reports CFSR bit 9 under a name that is not the reference table's canonical one, violation (d), caught by that bit's N2-tagged test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N3-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Routing the DFSR bits into .faults and leaving .debug empty makes 'DFSR bits never appear in FaultStatus.faults' false, violation (a), with six N3-tagged tests red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N3-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Concatenating the HFSR extraction into .debug makes 'CFSR/HFSR bits never appear in FaultStatus.debug' false, violation (b), caught by the N3-tagged disjointness test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N3-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Deleting the EXTERNAL row leaves a set DFSR bit 4 missing from .debug, violation (c), caught by that bit's N3-tagged test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N4-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Removing the MMARVALID gate returns a numeric mmfar while the VALID bit is clear, violation (a), the quiet guess the clause forbids.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N4-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Forcing bfar to None discards a real address when BFARVALID is set, violation (b), caught by the N4-tagged present-when-valid test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N4-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:36+00:00",
+      "by": "arbiter",
+      "reason": "Swapping the gates so MMARVALID controls bfar and BFARVALID controls mmfar is violation (c) verbatim, with four N4-tagged tests red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N5-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Gating afsr on BFARVALID makes both 'always carries the raw AFSR word as a plain integer' and 'never gated by a validity flag' false, violation (b).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N6-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Deleting the STKOF row makes CFSR bit 20 absent from the decoded output when set, violation (a), caught by both N6-tagged tests.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N6-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Masking UFSR bit 4 out before decoding treats STKOF as a reserved bit, violation (b), caught by both N6-tagged tests.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N7-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Hardcoding any_fault True makes it True with an empty .faults, violation (a), caught by the N7-tagged clean-read test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N7-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Hardcoding any_fault False makes it False despite a non-empty .faults, violation (b), with 22 N7-tagged cases red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N7-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "ORing .debug into any_fault makes a breakpoint-only halt report True, which the clause explicitly says must be False, violation (c).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N8-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Returning an empty string on a clean read makes 'diagnosis is always a non-empty string' false, violation (a).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N8-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Returning one hardcoded sentence for every active-fault state makes the distinctness sentence false, violation (b), with five N8-tagged tests red.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N8-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Suppressing the MMFAR/BFAR appends means a known address never appears in the text, violation (c), caught by both N8-tagged address tests.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N8-s4",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Breaking after the first non-HardFault cause makes a two-bit state's text equal to its first member's single-bit text, violation (d).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N9-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Splitting the MMFSR table across two category strings makes 'all bits from the MMFSR byte share one category value' false, violation (a).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N9-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Labelling the BFSR bits MemManage gives bits from two different status bytes the same category, violation (b).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N9-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Relabelling DEBUGEVT as Debug places it outside the HardFault family the clause assigns it to, violation (c).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N10-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Indexing words[CFSR] raises KeyError when the address is omitted, violation (a), caught by the N10-tagged empty-dict test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N10-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Defaulting a missing HFSR to 0xFFFFFFFF treats an absent address as something other than 0, violation (b).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N11-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:37+00:00",
+      "by": "arbiter",
+      "reason": "Dropping the AFSR entry leaves raw without one entry per register, violation (a), caught by the N11-tagged entry-count and value-match tests.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N11-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "Adding 1<<32 to raw['AFSR'] puts a value outside the unsigned 32-bit range the clause requires, violation (c).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N12-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "Keying the MMFAR word as 'MMFR' introduces a key that is not one of the six CMSIS register names, violation (a).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N12-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "Dropping the DFSR key leaves a key set that is not exactly the six CMSIS register names, violation (b), caught by the N12-tagged key-set test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N5-s1",
+      "ruling": "escalate",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "The edit does make FAULTS-N5 false: appending _extract(afsr, _HFSR_BITS, 'HardFault') decodes AFSR's bits into named ActiveBit entries, which violation (a) names exactly, so an AFSR word with bit 1, 30 or 31 set now produces VECTTBL/FORCED/DEBUGEVT entries in .faults. The tests that should have caught it are test_faults_n5_a_afsr_is_always_the_raw_register_word (parametrized over 0, 1, 0x12345678 and 0xFFFFFFFF) and test_faults_n5_b_afsr_unaffected_by_bits_or_valid_flags_elsewhere (AFSR=0xABCD1234, bit 31 set). They did not, because both assert only on the afsr field - equality with the input word plus isinstance(status.afsr, int) - while the seeded decoding lands in .faults; isinstance on the scalar is not a check that AFSR produced no named entries. No test in the suite sets a nonzero AFSR and then asserts anything about .faults or .debug, and every other test builds its input with make_words(), whose afsr argument defaults to 0, so an AFSR-derived entry can never surface anywhere else either. The missing test is: with all other registers zero and AFSR set to 0xFFFFFFFF, .faults and .debug must both be empty and any_fault False.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N11-s2",
+      "ruling": "escalate",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "The edit does make FAULTS-N11 false: raw['CFSR'] becomes cfsr & 0xFF, which disagrees with the cfsr value decode() actually used to compute faults/mmfar/bfar whenever any CFSR bit above bit 7 is set, which is violation (b) verbatim. The test that should have caught it is test_faults_n11_b_raw_values_match_the_registers_actually_used. It did not for two independent reasons: its CFSR fixture is 1 << 4 (MSTKERR), a value that lies entirely inside the MMFSR byte, so masking to that byte returns the identical number; and it compares sorted(status.raw.values()) against the sorted six input words, a multiset comparison that cannot see a value bound to the wrong key even when the values differ. The other three N11 tests are structurally blind to it: n11_a counts entries, n11_c only checks that the MMFAR and BFAR words appear somewhere among the values, and n11_d uses CFSR=0xFFFFFFFF but asserts only the 32-bit range, which 0xFF satisfies. The missing test is a per-key comparison, raw[name] == the word passed at that register's address, with a CFSR fixture carrying bits above bit 7 (a BFSR or UFSR bit, e.g. CFSR=0x01010101).",
+      "sampled": false
+    },
+    {
+      "kind": "refactor",
+      "item": "FAULTS-R1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "The edit only lifts the CFSR byte and halfword masks into local named constants with identical values (0xFF, >>8 & 0xFF, >>16 & 0xFFFF), so mmfsr/bfsr/ufsr are bit-identical and every clause from N1 to N12 holds unchanged; note the spec's description also claims a helper-variable rename that its edits do not actually make.",
+      "sampled": false
+    },
+    {
+      "kind": "refactor",
+      "item": "FAULTS-R2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:02:38+00:00",
+      "by": "arbiter",
+      "reason": "Both edits are value-preserving: the _gated helper reproduces the same raw-or-None truth table for mmfar and bfar for every cfsr word (FAULTS-N4), and len(self.faults) > 0 is identical to bool(self.faults) for a list (FAULTS-N7); nothing else in the module is touched, so all twelve clauses are preserved.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O9",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "FAULTS-N8 and note O4 leave the diagnosis wording and arrangement unspecified, and CALLSITES.md passes status.diagnosis through as one opaque string (\"diagnosis\": status.diagnosis) without parsing or splitting it. Sentence order is therefore a presentation detail no caller reads, and pinning it would fix text the contract deliberately refuses to fix.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O10",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "No source fixes the diagnosis wording (O4, and N8's own note), so substituting an escalation phrase for the FORCED meaning string violates nothing. The literal meaning string still reaches the caller unchanged through .faults[].meaning, which CALLSITES.md emits per bit as {\"category\":..., \"bit\":..., \"meaning\":...}, and the distinctness N8 does require (FORCED alone vs FORCED with other bits) still holds.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O11",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "FAULTS-N5 forbids decoding AFSR into named bits because no source says what its bits mean, so there is nothing plain-English for _diagnose to say about the value; ROADMAP Phase 5 asks the diagnosis for the faulting address, which is MMFAR/BFAR, not AFSR. The value is not lost either: CALLSITES.md emits it as raw_registers[\"AFSR\"] from status.raw.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O12",
+      "ruling": "escalate: proposed clause FAULTS-N13 pinning that decode() does not mutate the dict it is given and carries no state between calls; source rank 1, ROADMAP.md Phase 5 (\"The decode logic is pure and fully tested offline\"), corroborated rank 3 by the module docstring (\"Pure logic, no hardware\")",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "ROADMAP.md Phase 5 states in as many words that the decode logic is pure, and non-mutation of the argument is the checkable half of that claim; words.setdefault(CFSR, 0) is a plausible way to implement the FAULTS-N10 default that would silently rewrite a caller's dict. CALLSITES.md builds words from probe.read_memory on the line before decode(words), so any later reuse of that dict in read_fault_status relies on this, and the visible excerpt ends before the function does. Cheap remedies were tried first: no existing clause covers it (N10 is about missing keys, N11/N12 about status.raw, not about the input), and the property is testable in three lines against a copy of the input.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O13",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "No rank-1 or rank-2 source asks decode() to validate its input, and the only caller passes exactly read_memory(FAULT_REGION_BASE, FAULT_REGION_SIZE), six words at the six documented addresses, so an extra key cannot arise from it. A rejection clause would also sit badly beside FAULTS-N10, which requires decode() to tolerate an incomplete dict rather than raise.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O14",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "No source names either dataclass's mutability, and CALLSITES.md only reads fields (f.category, f.name, f.meaning, status.raw, status.mmfar, status.bfar, status.debug); nothing constructs, copies, hashes or mutates an ActiveBit or a FaultStatus. frozen=True is a declaration detail that is invisible in the result the caller builds.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O15",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "The contract's own general note records that no source specifies the order of entries in .faults or .debug, so a clause pinning MMFSR then BFSR then UFSR then HFSR could cite only the body it audits. CALLSITES.md iterates .faults into a JSON list with no positional meaning. The weaker call-to-call stability that purity does imply is covered by the FAULTS-N13 escalation on O12, which is worded order-insensitively.",
+      "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O16",
+      "ruling": "accidental",
+      "when": "2026-09-02T23:09:05+00:00",
+      "by": "arbiter",
+      "reason": "FAULTS-N11 pins the value per register and FAULTS-N12 the key set; iteration order of a dict is a representation detail on top of that. CALLSITES.md consumes it as {name: f\"0x{val:08X}\" for name, val in status.raw.items()}, a dict comprehension whose result is keyed rather than positional.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N5-s1",
+      "ruling": "accept",
+      "when": "2026-09-02T23:17:15+00:00",
+      "by": "arbiter",
+      "reason": "The edit appends _extract(afsr, _HFSR_BITS, 'HardFault') to faults, so AFSR bits 1/30/31 become named ActiveBit entries, which makes N5's sentence 'never decoded into named bits' false (violation a), and the red test test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug is a FAULTS-N5 test that sets only AFSR and asserts .faults is empty.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N11-s2",
+      "ruling": "accept",
+      "when": "2026-09-02T23:17:21+00:00",
+      "by": "arbiter",
+      "reason": "The edit stores mmfsr (the CFSR low byte) under raw['CFSR'], so for the red test's CFSR word of bits 9/17/25 the raw entry reads 0 while decode() used the full word for faults, making N11's 'each value being the same integer used elsewhere in the result' false (violation b), and the red test test_faults_n11_e_raw_values_match_by_key_not_by_membership is a FAULTS-N11 test.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N11-s4",
+      "ruling": "accept",
+      "when": "2026-09-02T23:17:27+00:00",
+      "by": "arbiter",
+      "reason": "The edit swaps raw's MMFAR and BFAR entries, so raw['MMFAR'] carries the BFAR word and disagrees with the value decode() actually used for mmfar, which is N11 violation (b) verbatim, and the FAULTS-N11 test test_faults_n11_e_raw_values_match_by_key_not_by_membership catches it because it compares by key with two distinct nonzero words (0x50005000 and 0x60006000).",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N12-s3",
+      "ruling": "accept",
+      "when": "2026-09-02T23:17:33+00:00",
+      "by": "arbiter",
+      "reason": "The edit adds a seventh key 'SCB_CFSR' alongside 'CFSR' in raw, so the key set is no longer exactly the six CMSIS register names even though all six survive, which is N12 violation (b), and both tests attributed red are FAULTS-N12 tests (test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names and test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names).",
+      "sampled": false
+    },
+    {
+      "kind": "level",
+      "item": "FAULTS-N12",
+      "ruling": "accept",
+      "when": "2026-09-02T23:20:19+00:00",
+      "by": "arbiter",
+      "reason": "The clause asserts only that six specific strings are the keys of the FaultStatus.raw dict decode() builds, which a host test settles by calling decode() with a literal dict and comparing set(status.raw). CFSR, HFSR, DFSR, MMFAR, BFAR and AFSR appear here as CMSIS-documented labels for words already read and handed in, not as registers the test must read or as any target state the clause claims; the rank-1 source is a header file, so an on-target run would settle it no better than the document does. This matches the accepted level on FAULTS-N11, which covers the same raw dict and was sampled by the owner.",
+      "sampled": false
+    }
+  ],
+  "history": [
+    {
+      "who": "Dawid Oosthuizen",
+      "when": "2026-09-02T22:24:30+00:00",
+      "contract_sha256": "8ba46f39106e8206ba7b7ca9ad819069847590ef89dd1250c09247eeef7a3cbe",
+      "note": "Ratified in conversation 2026-09-03 ('write all the blind tests and let's see'). O3 left escalated: the writer asserts count and values of raw, not key spellings. Sample of 4 arbiter rulings (seed 20260903: level N8, level N2, O5, level N4) presented, verdicts pending."
+    }
+  ]
+}

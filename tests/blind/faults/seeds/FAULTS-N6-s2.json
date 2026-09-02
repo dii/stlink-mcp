@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N6-s2",
+  "kind": "seed",
+  "description": "(b) STKOF (UFSR relative bit 4 / CFSR absolute bit 20) is masked out and treated as a reserved/undefined bit before decoding",
+  "edits": [
+    {
+      "find": "    ufsr = (cfsr >> 16) & 0xFFFF",
+      "replace": "    ufsr = (cfsr >> 16) & 0xFFFF & ~(1 << 4)  # STKOF treated as reserved"
+    }
+  ],
+  "need": "FAULTS-N6"
+}

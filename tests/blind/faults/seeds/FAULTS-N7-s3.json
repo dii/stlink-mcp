@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N7-s3",
+  "kind": "seed",
+  "description": "(c) any_fault is toggled by .debug: a breakpoint-only halt (DFSR set, no CFSR/HFSR) now reports any_fault True",
+  "edits": [
+    {
+      "find": "    def any_fault(self) -> bool:\n        return bool(self.faults)",
+      "replace": "    def any_fault(self) -> bool:\n        return bool(self.faults) or bool(self.debug)"
+    }
+  ],
+  "need": "FAULTS-N7"
+}

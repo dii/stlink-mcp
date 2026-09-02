@@ -1,0 +1,11 @@
+{
+  "id": "FAULTS-R1",
+  "kind": "refactor",
+  "description": "Rename the local loop/extraction helper variable and inline the byte/halfword masks as named constants; pure renaming and constant-extraction, no register table, gating logic, category string, or output shape changes, so every clause (register addresses, bit tables, mmfar/bfar gating, any_fault, diagnosis, raw dict) is preserved exactly.",
+  "edits": [
+    {
+      "find": "    mmfsr = cfsr & 0xFF\n    bfsr = (cfsr >> 8) & 0xFF\n    ufsr = (cfsr >> 16) & 0xFFFF",
+      "replace": "    _MMFSR_MASK = 0xFF\n    _BFSR_SHIFT = 8\n    _BFSR_MASK = 0xFF\n    _UFSR_SHIFT = 16\n    _UFSR_MASK = 0xFFFF\n    mmfsr = cfsr & _MMFSR_MASK\n    bfsr = (cfsr >> _BFSR_SHIFT) & _BFSR_MASK\n    ufsr = (cfsr >> _UFSR_SHIFT) & _UFSR_MASK"
+    }
+  ]
+}

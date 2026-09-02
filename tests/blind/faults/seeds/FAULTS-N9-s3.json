@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N9-s3",
+  "kind": "seed",
+  "description": "(c) DEBUGEVT is categorized outside the HardFault family instead of sharing HFSR's category",
+  "edits": [
+    {
+      "find": "    faults.extend(_extract(hfsr, _HFSR_BITS, \"HardFault\"))\n\n    debug = _extract(dfsr, _DFSR_BITS, \"Debug\")",
+      "replace": "    faults.extend(_extract(hfsr, _HFSR_BITS, \"HardFault\"))\n    faults[:] = [\n        ActiveBit(category=\"Debug\", name=f.name, meaning=f.meaning)\n        if f.name == \"DEBUGEVT\" else f\n        for f in faults\n    ]\n\n    debug = _extract(dfsr, _DFSR_BITS, \"Debug\")"
+    }
+  ],
+  "need": "FAULTS-N9"
+}

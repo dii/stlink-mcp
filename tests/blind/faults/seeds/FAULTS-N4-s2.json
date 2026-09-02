@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N4-s2",
+  "kind": "seed",
+  "description": "(b) bfar is always None, so real evidence is lost even when BFARVALID (CFSR bit 15) is set",
+  "edits": [
+    {
+      "find": "    bfar = bfar_raw if (cfsr & _BFARVALID) else None",
+      "replace": "    bfar = None"
+    }
+  ],
+  "need": "FAULTS-N4"
+}

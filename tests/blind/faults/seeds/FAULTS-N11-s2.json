@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N11-s2",
+  "kind": "seed",
+  "description": "(b) raw[\"CFSR\"] disagrees with the cfsr value decode() actually used to compute mmfsr/bfsr/ufsr (it stores only the MMFSR byte)",
+  "edits": [
+    {
+      "find": "            \"CFSR\": cfsr,",
+      "replace": "            \"CFSR\": mmfsr,"
+    }
+  ],
+  "need": "FAULTS-N11"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N11-s1",
+  "kind": "seed",
+  "description": "(a) raw is missing the AFSR entry, so it no longer has one entry per register",
+  "edits": [
+    {
+      "find": "            \"AFSR\": afsr,\n        },",
+      "replace": "        },"
+    }
+  ],
+  "need": "FAULTS-N11"
+}

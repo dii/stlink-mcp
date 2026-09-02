@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N4-s1",
+  "kind": "seed",
+  "description": "(a) mmfar returns a numeric address even when MMARVALID (CFSR bit 7) is clear",
+  "edits": [
+    {
+      "find": "    mmfar = mmfar_raw if (cfsr & _MMARVALID) else None",
+      "replace": "    mmfar = mmfar_raw"
+    }
+  ],
+  "need": "FAULTS-N4"
+}

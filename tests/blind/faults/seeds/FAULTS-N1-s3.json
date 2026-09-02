@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N1-s3",
+  "kind": "seed",
+  "description": "(c) FAULT_REGION_SIZE is not 24 bytes (six words, CFSR through AFSR)",
+  "edits": [
+    {
+      "find": "FAULT_REGION_SIZE = 24  # bytes; 6 words, CFSR through AFSR inclusive",
+      "replace": "FAULT_REGION_SIZE = 20  # bytes; 6 words, CFSR through AFSR inclusive"
+    }
+  ],
+  "need": "FAULTS-N1"
+}

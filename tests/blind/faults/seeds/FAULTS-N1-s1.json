@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N1-s1",
+  "kind": "seed",
+  "description": "(a) HFSR constant does not match its documented Cortex-M SCB address",
+  "edits": [
+    {
+      "find": "HFSR = 0xE000ED2C",
+      "replace": "HFSR = 0xE000ED2D"
+    }
+  ],
+  "need": "FAULTS-N1"
+}

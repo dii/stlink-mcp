@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N10-s1",
+  "kind": "seed",
+  "description": "(a) decode() raises KeyError when the input dict omits the CFSR address instead of defaulting to 0",
+  "edits": [
+    {
+      "find": "    cfsr = words.get(CFSR, 0)",
+      "replace": "    cfsr = words[CFSR]"
+    }
+  ],
+  "need": "FAULTS-N10"
+}

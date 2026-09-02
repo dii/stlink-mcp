@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N3-s3",
+  "kind": "seed",
+  "description": "(c) a set DFSR bit (EXTERNAL) is missing from .debug because its definition is dropped",
+  "edits": [
+    {
+      "find": "    (4, \"EXTERNAL\", \"external debug request\"),\n",
+      "replace": ""
+    }
+  ],
+  "need": "FAULTS-N3"
+}

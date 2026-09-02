@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N11-s3",
+  "kind": "seed",
+  "description": "(c) raw[\"AFSR\"] is pushed outside the unsigned 32-bit range unconditionally",
+  "edits": [
+    {
+      "find": "            \"AFSR\": afsr,\n        },\n    )",
+      "replace": "            \"AFSR\": afsr + (1 << 32),\n        },\n    )"
+    }
+  ],
+  "need": "FAULTS-N11"
+}

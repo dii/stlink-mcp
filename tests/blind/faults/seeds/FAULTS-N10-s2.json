@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N10-s2",
+  "kind": "seed",
+  "description": "(b) a missing HFSR address defaults to all-bits-set instead of 0",
+  "edits": [
+    {
+      "find": "    hfsr = words.get(HFSR, 0)",
+      "replace": "    hfsr = words.get(HFSR, 0xFFFFFFFF)"
+    }
+  ],
+  "need": "FAULTS-N10"
+}

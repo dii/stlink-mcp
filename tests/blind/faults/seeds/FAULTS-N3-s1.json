@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N3-s1",
+  "kind": "seed",
+  "description": "(a) DFSR bits land in .faults instead of .debug",
+  "edits": [
+    {
+      "find": "    debug = _extract(dfsr, _DFSR_BITS, \"Debug\")\n\n    mmfar = mmfar_raw if (cfsr & _MMARVALID) else None",
+      "replace": "    faults.extend(_extract(dfsr, _DFSR_BITS, \"Debug\"))\n    debug: list[ActiveBit] = []\n\n    mmfar = mmfar_raw if (cfsr & _MMARVALID) else None"
+    }
+  ],
+  "need": "FAULTS-N3"
+}

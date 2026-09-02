@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N5-s2",
+  "kind": "seed",
+  "description": "(b) afsr is gated by a validity check (CFSR BFARVALID) and becomes None, though no source defines such gating for AFSR",
+  "edits": [
+    {
+      "find": "    afsr = words.get(AFSR, 0)",
+      "replace": "    afsr = words.get(AFSR, 0) if (cfsr & _BFARVALID) else None"
+    }
+  ],
+  "need": "FAULTS-N5"
+}

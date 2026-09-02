@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N2-s2",
+  "kind": "seed",
+  "description": "(b) several set MMFSR bits collapse into fewer ActiveBit entries than are actually set",
+  "edits": [
+    {
+      "find": "faults.extend(_extract(mmfsr, _MMFSR_BITS, \"MemManage\"))",
+      "replace": "faults.extend(_extract(mmfsr, _MMFSR_BITS, \"MemManage\")[:1])"
+    }
+  ],
+  "need": "FAULTS-N2"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "FAULTS-R2",
+  "kind": "refactor",
+  "description": "Replace the if/elif ternary-style gating for mmfar/bfar with an equivalent helper function call, and rewrite the any_fault property's bool(self.faults) as len(self.faults) > 0; both are value-preserving rewrites (same truth table, same None-vs-int outcome for every input), so FAULTS-N4 and FAULTS-N7 hold exactly as before, and nothing else in the module is touched.",
+  "edits": [
+    {
+      "find": "    mmfar = mmfar_raw if (cfsr & _MMARVALID) else None\n    bfar = bfar_raw if (cfsr & _BFARVALID) else None",
+      "replace": "    def _gated(raw_value, cfsr_word, valid_bit):\n        return raw_value if (cfsr_word & valid_bit) else None\n\n    mmfar = _gated(mmfar_raw, cfsr, _MMARVALID)\n    bfar = _gated(bfar_raw, cfsr, _BFARVALID)"
+    },
+    {
+      "find": "    def any_fault(self) -> bool:\n        return bool(self.faults)",
+      "replace": "    def any_fault(self) -> bool:\n        return len(self.faults) > 0"
+    }
+  ]
+}

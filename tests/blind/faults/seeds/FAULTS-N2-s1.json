@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N2-s1",
+  "kind": "seed",
+  "description": "(a) a set bit (BFSR IMPRECISERR) is missing from the decoded output because its definition is dropped",
+  "edits": [
+    {
+      "find": "    (2, \"IMPRECISERR\", \"imprecise data bus error\"),\n",
+      "replace": ""
+    }
+  ],
+  "need": "FAULTS-N2"
+}

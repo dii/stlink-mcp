@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N4-s3",
+  "kind": "seed",
+  "description": "(c) MMARVALID and BFARVALID are swapped: MMARVALID now gates bfar and BFARVALID now gates mmfar",
+  "edits": [
+    {
+      "find": "    mmfar = mmfar_raw if (cfsr & _MMARVALID) else None\n    bfar = bfar_raw if (cfsr & _BFARVALID) else None",
+      "replace": "    mmfar = mmfar_raw if (cfsr & _BFARVALID) else None\n    bfar = bfar_raw if (cfsr & _MMARVALID) else None"
+    }
+  ],
+  "need": "FAULTS-N4"
+}

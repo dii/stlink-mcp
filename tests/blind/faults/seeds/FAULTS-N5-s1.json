@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N5-s1",
+  "kind": "seed",
+  "description": "(a) afsr's bits are decoded into ActiveBit fault entries as if they had defined meanings",
+  "edits": [
+    {
+      "find": "    bfar = bfar_raw if (cfsr & _BFARVALID) else None\n\n    return FaultStatus(",
+      "replace": "    bfar = bfar_raw if (cfsr & _BFARVALID) else None\n    faults.extend(_extract(afsr, _HFSR_BITS, \"HardFault\"))\n\n    return FaultStatus("
+    }
+  ],
+  "need": "FAULTS-N5"
+}

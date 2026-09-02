@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N8-s3",
+  "kind": "seed",
+  "description": "(c) a known MMFAR/BFAR address is never appended to the diagnosis text even though the corresponding VALID flag is set",
+  "edits": [
+    {
+      "find": "    if status.mmfar is not None:\n        root_causes.append(f\"MMFAR holds 0x{status.mmfar:08X}\")\n    if status.bfar is not None:\n        root_causes.append(f\"BFAR holds 0x{status.bfar:08X}\")",
+      "replace": "    if status.mmfar is not None:\n        pass\n    if status.bfar is not None:\n        pass"
+    }
+  ],
+  "need": "FAULTS-N8"
+}

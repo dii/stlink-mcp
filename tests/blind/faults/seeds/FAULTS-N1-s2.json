@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N1-s2",
+  "kind": "seed",
+  "description": "(b) FAULT_REGION_BASE is not equal to CFSR",
+  "edits": [
+    {
+      "find": "FAULT_REGION_BASE = CFSR",
+      "replace": "FAULT_REGION_BASE = HFSR"
+    }
+  ],
+  "need": "FAULTS-N1"
+}

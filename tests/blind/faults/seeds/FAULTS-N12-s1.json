@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N12-s1",
+  "kind": "seed",
+  "description": "(a) the MMFAR entry in FaultStatus.raw is keyed by a misspelt name outside the six CMSIS register names instead of the literal string \"MMFAR\"",
+  "edits": [
+    {
+      "find": "            \"MMFAR\": mmfar_raw,",
+      "replace": "            \"MMFR\": mmfar_raw,"
+    }
+  ],
+  "need": "FAULTS-N12"
+}

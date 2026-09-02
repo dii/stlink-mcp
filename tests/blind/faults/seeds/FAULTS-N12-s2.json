@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N12-s2",
+  "kind": "seed",
+  "description": "(b) FaultStatus.raw's key set drops the DFSR entry entirely, so it is not exactly the six CMSIS register names",
+  "edits": [
+    {
+      "find": "            \"DFSR\": dfsr,\n",
+      "replace": ""
+    }
+  ],
+  "need": "FAULTS-N12"
+}

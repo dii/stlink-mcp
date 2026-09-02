@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N2-s4",
+  "kind": "seed",
+  "description": "(d) the PRECISERR bit is reported under the wrong name (typo'd), not its canonical name from the reference table",
+  "edits": [
+    {
+      "find": "    (1, \"PRECISERR\", \"precise data bus error\"),",
+      "replace": "    (1, \"PRECISERRR\", \"precise data bus error\"),"
+    }
+  ],
+  "need": "FAULTS-N2"
+}

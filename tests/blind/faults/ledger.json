@@ -1,0 +1,1155 @@
+{
+  "tests": {
+    "test_faults_n1_a_scb_addresses_match_documented_offsets": [
+      "FAULTS-N1"
+    ],
+    "test_faults_n1_b_fault_region_base_equals_cfsr": [
+      "FAULTS-N1"
+    ],
+    "test_faults_n1_c_fault_region_size_is_24_bytes": [
+      "FAULTS-N1"
+    ],
+    "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order": [
+      "FAULTS-N1"
+    ],
+    "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry": [
+      "FAULTS-N2"
+    ],
+    "test_faults_n2_b_independently_set_bits_each_get_their_own_entry": [
+      "FAULTS-N2"
+    ],
+    "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries": [
+      "FAULTS-N2"
+    ],
+    "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only": [
+      "FAULTS-N3"
+    ],
+    "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug": [
+      "FAULTS-N3"
+    ],
+    "test_faults_n3_c_cfsr_and_hfsr_bits_never_land_in_debug": [
+      "FAULTS-N3"
+    ],
+    "test_faults_n4_a_address_is_none_when_valid_bit_clear": [
+      "FAULTS-N4"
+    ],
+    "test_faults_n4_b_address_present_when_valid_bit_set": [
+      "FAULTS-N4"
+    ],
+    "test_faults_n4_c_valid_bits_are_not_swapped": [
+      "FAULTS-N4"
+    ],
+    "test_faults_n5_a_afsr_is_always_the_raw_register_word": [
+      "FAULTS-N5"
+    ],
+    "test_faults_n5_b_afsr_unaffected_by_bits_or_valid_flags_elsewhere": [
+      "FAULTS-N5"
+    ],
+    "test_faults_n5_c_afsr_never_none_even_on_clean_read": [
+      "FAULTS-N5"
+    ],
+    "test_faults_n6_a_stkof_present_when_set_alone": [
+      "FAULTS-N6"
+    ],
+    "test_faults_n6_b_stkof_present_alongside_other_usagefault_bits": [
+      "FAULTS-N6"
+    ],
+    "test_faults_n7_a_any_fault_true_for_every_single_fault_bit": [
+      "FAULTS-N7"
+    ],
+    "test_faults_n7_b_any_fault_false_on_clean_read": [
+      "FAULTS-N7"
+    ],
+    "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set": [
+      "FAULTS-N7"
+    ],
+    "test_faults_n7_d_any_fault_unaffected_by_simultaneous_debug_bits": [
+      "FAULTS-N7"
+    ],
+    "test_faults_n8_a_diagnosis_nonempty_on_clean_read": [
+      "FAULTS-N8"
+    ],
+    "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct": [
+      "FAULTS-N8"
+    ],
+    "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member": [
+      "FAULTS-N8"
+    ],
+    "test_faults_n8_c_diagnosis_differs_across_distinct_fault_states": [
+      "FAULTS-N8"
+    ],
+    "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis": [
+      "FAULTS-N8"
+    ],
+    "test_faults_n8_e_known_bfar_address_appears_in_diagnosis": [
+      "FAULTS-N8"
+    ],
+    "test_faults_n9_a_bits_in_same_status_byte_share_category": [
+      "FAULTS-N9"
+    ],
+    "test_faults_n9_b_bits_from_different_status_bytes_get_different_category": [
+      "FAULTS-N9"
+    ],
+    "test_faults_n9_c_debugevt_categorized_within_hardfault_family": [
+      "FAULTS-N9"
+    ],
+    "test_faults_n10_a_empty_dict_does_not_raise": [
+      "FAULTS-N10"
+    ],
+    "test_faults_n10_b_missing_keys_default_to_zero_not_error": [
+      "FAULTS-N10"
+    ],
+    "test_faults_n11_a_raw_has_one_entry_per_register": [
+      "FAULTS-N11"
+    ],
+    "test_faults_n11_b_raw_values_match_the_registers_actually_used": [
+      "FAULTS-N11"
+    ],
+    "test_faults_n11_c_raw_mmfar_and_bfar_entries_are_unaffected_by_gating": [
+      "FAULTS-N11"
+    ],
+    "test_faults_n11_d_raw_values_fit_unsigned_32_bit_range": [
+      "FAULTS-N11"
+    ],
+    "test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names": [
+      "FAULTS-N12"
+    ],
+    "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names": [
+      "FAULTS-N12"
+    ],
+    "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug": [
+      "FAULTS-N5"
+    ],
+    "test_faults_n11_e_raw_values_match_by_key_not_by_membership": [
+      "FAULTS-N11"
+    ]
+  },
+  "seeds": [
+    {
+      "id": "FAULTS-N10-s1",
+      "kind": "seed",
+      "need": "FAULTS-N10",
+      "description": "(a) decode() raises KeyError when the input dict omits the CFSR address instead of defaulting to 0",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:32+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n10_a_empty_dict_does_not_raise"
+      ],
+      "red_tagged": [
+        "test_faults_n10_a_empty_dict_does_not_raise"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N10-s2",
+      "kind": "seed",
+      "need": "FAULTS-N10",
+      "description": "(b) a missing HFSR address defaults to all-bits-set instead of 0",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:34+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n10_a_empty_dict_does_not_raise",
+        "test_faults_n10_b_missing_keys_default_to_zero_not_error"
+      ],
+      "red_tagged": [
+        "test_faults_n10_a_empty_dict_does_not_raise",
+        "test_faults_n10_b_missing_keys_default_to_zero_not_error"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N11-s1",
+      "kind": "seed",
+      "need": "FAULTS-N11",
+      "description": "(a) raw is missing the AFSR entry, so it no longer has one entry per register",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:36+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n11_a_raw_has_one_entry_per_register",
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n11_a_raw_has_one_entry_per_register",
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "collection_errors": [],
+      "passed": 89,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N11-s2",
+      "kind": "seed",
+      "need": "FAULTS-N11",
+      "description": "(b) raw[\"CFSR\"] disagrees with the cfsr value decode() actually used to compute mmfsr/bfsr/ufsr (it stores only the MMFSR byte)",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:38+00:00",
+      "baseline_green": true,
+      "ratified": true,
+      "red_tests": [
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "arbiter"
+    },
+    {
+      "id": "FAULTS-N11-s3",
+      "kind": "seed",
+      "need": "FAULTS-N11",
+      "description": "(c) raw[\"AFSR\"] is pushed outside the unsigned 32-bit range unconditionally",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:40+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n11_d_raw_values_fit_unsigned_32_bit_range",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n11_d_raw_values_fit_unsigned_32_bit_range",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "collection_errors": [],
+      "passed": 90,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N11-s4",
+      "kind": "seed",
+      "need": "FAULTS-N11",
+      "description": "(b) the raw dict's MMFAR and BFAR entries are swapped with each other, so raw disagrees with the values decode() actually used for mmfar and bfar",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:42+00:00",
+      "baseline_green": true,
+      "ratified": true,
+      "red_tests": [
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "arbiter"
+    },
+    {
+      "id": "FAULTS-N12-s1",
+      "kind": "seed",
+      "need": "FAULTS-N12",
+      "description": "(a) the MMFAR entry in FaultStatus.raw is keyed by a misspelt name outside the six CMSIS register names instead of the literal string \"MMFAR\"",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:44+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names",
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names",
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names"
+      ],
+      "collection_errors": [],
+      "passed": 90,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N12-s2",
+      "kind": "seed",
+      "need": "FAULTS-N12",
+      "description": "(b) FaultStatus.raw's key set drops the DFSR entry entirely, so it is not exactly the six CMSIS register names",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:46+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n11_a_raw_has_one_entry_per_register",
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names"
+      ],
+      "collection_errors": [],
+      "passed": 89,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N12-s3",
+      "kind": "seed",
+      "need": "FAULTS-N12",
+      "description": "(b) an extra seventh key (\"SCB_CFSR\", an alias alongside \"CFSR\") is present in FaultStatus.raw's key set, so it is not exactly the six CMSIS register names, even though all six original keys are still present",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:48+00:00",
+      "baseline_green": true,
+      "ratified": true,
+      "red_tests": [
+        "test_faults_n11_a_raw_has_one_entry_per_register",
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names",
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names"
+      ],
+      "red_tagged": [
+        "test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names",
+        "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names"
+      ],
+      "collection_errors": [],
+      "passed": 89,
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "arbiter"
+    },
+    {
+      "id": "FAULTS-N1-s1",
+      "kind": "seed",
+      "need": "FAULTS-N1",
+      "description": "(a) HFSR constant does not match its documented Cortex-M SCB address",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:50+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n1_a_scb_addresses_match_documented_offsets",
+        "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
+      ],
+      "red_tagged": [
+        "test_faults_n1_a_scb_addresses_match_documented_offsets",
+        "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N1-s2",
+      "kind": "seed",
+      "need": "FAULTS-N1",
+      "description": "(b) FAULT_REGION_BASE is not equal to CFSR",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:51+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n1_b_fault_region_base_equals_cfsr",
+        "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
+      ],
+      "red_tagged": [
+        "test_faults_n1_b_fault_region_base_equals_cfsr",
+        "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N1-s3",
+      "kind": "seed",
+      "need": "FAULTS-N1",
+      "description": "(c) FAULT_REGION_SIZE is not 24 bytes (six words, CFSR through AFSR)",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:53+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n1_c_fault_region_size_is_24_bytes"
+      ],
+      "red_tagged": [
+        "test_faults_n1_c_fault_region_size_is_24_bytes"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N2-s1",
+      "kind": "seed",
+      "need": "FAULTS-N2",
+      "description": "(a) a set bit (BFSR IMPRECISERR) is missing from the decoded output because its definition is dropped",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:55+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-10-IMPRECISERR]",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-10-IMPRECISERR]",
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
+      ],
+      "red_tagged": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-10-IMPRECISERR]",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries"
+      ],
+      "collection_errors": [],
+      "passed": 87,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N2-s2",
+      "kind": "seed",
+      "need": "FAULTS-N2",
+      "description": "(b) several set MMFSR bits collapse into fewer ActiveBit entries than are actually set",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:57+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member"
+      ],
+      "red_tagged": [
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N2-s3",
+      "kind": "seed",
+      "need": "FAULTS-N2",
+      "description": "(c) an ActiveBit entry (FORCED) is present in faults even when its bit is not set",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:14:59+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-0-IACCVIOL]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-1-DACCVIOL]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-3-MUNSTKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-4-MSTKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-5-MLSPERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-8-IBUSERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-9-PRECISERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-10-IMPRECISERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-11-UNSTKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-12-STKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-13-LSPERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-16-UNDEFINSTR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-17-INVSTATE]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-18-INVPC]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-19-NOCP]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-24-UNALIGNED]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-25-DIVBYZERO]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-1-VECTTBL]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-30-FORCED]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-31-DEBUGEVT]",
+        "test_faults_n2_b_independently_set_bits_each_get_their_own_entry",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-0-HALTED]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-1-BKPT]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-2-DWTTRAP]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-3-VCATCH]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
+        "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug",
+        "test_faults_n3_c_cfsr_and_hfsr_bits_never_land_in_debug",
+        "test_faults_n6_a_stkof_present_when_set_alone",
+        "test_faults_n6_b_stkof_present_alongside_other_usagefault_bits",
+        "test_faults_n7_b_any_fault_false_on_clean_read",
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set",
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n8_c_diagnosis_differs_across_distinct_fault_states",
+        "test_faults_n10_a_empty_dict_does_not_raise",
+        "test_faults_n10_b_missing_keys_default_to_zero_not_error",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[bits-1-30-31]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[all-ones]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[many-bits-mirroring-cfsr-hfsr-positions]"
+      ],
+      "red_tagged": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-0-IACCVIOL]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-1-DACCVIOL]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-3-MUNSTKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-4-MSTKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-5-MLSPERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-8-IBUSERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-9-PRECISERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-10-IMPRECISERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-11-UNSTKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-12-STKERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-13-LSPERR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-16-UNDEFINSTR]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-17-INVSTATE]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-18-INVPC]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-19-NOCP]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-24-UNALIGNED]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-25-DIVBYZERO]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-1-VECTTBL]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-30-FORCED]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-31-DEBUGEVT]",
+        "test_faults_n2_b_independently_set_bits_each_get_their_own_entry",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries"
+      ],
+      "collection_errors": [],
+      "passed": 51,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N2-s4",
+      "kind": "seed",
+      "need": "FAULTS-N2",
+      "description": "(d) the PRECISERR bit is reported under the wrong name (typo'd), not its canonical name from the reference table",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:02+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-9-PRECISERR]",
+        "test_faults_n2_b_independently_set_bits_each_get_their_own_entry",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
+      ],
+      "red_tagged": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-9-PRECISERR]",
+        "test_faults_n2_b_independently_set_bits_each_get_their_own_entry",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries"
+      ],
+      "collection_errors": [],
+      "passed": 89,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N3-s1",
+      "kind": "seed",
+      "need": "FAULTS-N3",
+      "description": "(a) DFSR bits land in .faults instead of .debug",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:03+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-0-HALTED]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-1-BKPT]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-2-DWTTRAP]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-3-VCATCH]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
+        "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug",
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set"
+      ],
+      "red_tagged": [
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-0-HALTED]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-1-BKPT]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-2-DWTTRAP]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-3-VCATCH]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
+        "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug"
+      ],
+      "collection_errors": [],
+      "passed": 86,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N3-s2",
+      "kind": "seed",
+      "need": "FAULTS-N3",
+      "description": "(b) an HFSR (CFSR-family) bit lands in .debug alongside the DFSR bits",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:05+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n3_c_cfsr_and_hfsr_bits_never_land_in_debug"
+      ],
+      "red_tagged": [
+        "test_faults_n3_c_cfsr_and_hfsr_bits_never_land_in_debug"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N3-s3",
+      "kind": "seed",
+      "need": "FAULTS-N3",
+      "description": "(c) a set DFSR bit (EXTERNAL) is missing from .debug because its definition is dropped",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:07+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
+        "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug"
+      ],
+      "red_tagged": [
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
+        "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N4-s1",
+      "kind": "seed",
+      "need": "FAULTS-N4",
+      "description": "(a) mmfar returns a numeric address even when MMARVALID (CFSR bit 7) is clear",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:09+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n4_a_address_is_none_when_valid_bit_clear[mmfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[bfar]",
+        "test_faults_n10_a_empty_dict_does_not_raise",
+        "test_faults_n11_c_raw_mmfar_and_bfar_entries_are_unaffected_by_gating"
+      ],
+      "red_tagged": [
+        "test_faults_n4_a_address_is_none_when_valid_bit_clear[mmfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[bfar]"
+      ],
+      "collection_errors": [],
+      "passed": 89,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N4-s2",
+      "kind": "seed",
+      "need": "FAULTS-N4",
+      "description": "(b) bfar is always None, so real evidence is lost even when BFARVALID (CFSR bit 15) is set",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:11+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n4_b_address_present_when_valid_bit_set[bfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[bfar]",
+        "test_faults_n8_e_known_bfar_address_appears_in_diagnosis"
+      ],
+      "red_tagged": [
+        "test_faults_n4_b_address_present_when_valid_bit_set[bfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[bfar]"
+      ],
+      "collection_errors": [],
+      "passed": 90,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N4-s3",
+      "kind": "seed",
+      "need": "FAULTS-N4",
+      "description": "(c) MMARVALID and BFARVALID are swapped: MMARVALID now gates bfar and BFARVALID now gates mmfar",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:13+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n4_b_address_present_when_valid_bit_set[mmfar]",
+        "test_faults_n4_b_address_present_when_valid_bit_set[bfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[mmfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[bfar]",
+        "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis",
+        "test_faults_n8_e_known_bfar_address_appears_in_diagnosis",
+        "test_faults_n10_b_missing_keys_default_to_zero_not_error"
+      ],
+      "red_tagged": [
+        "test_faults_n4_b_address_present_when_valid_bit_set[mmfar]",
+        "test_faults_n4_b_address_present_when_valid_bit_set[bfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[mmfar]",
+        "test_faults_n4_c_valid_bits_are_not_swapped[bfar]"
+      ],
+      "collection_errors": [],
+      "passed": 86,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N5-s1",
+      "kind": "seed",
+      "need": "FAULTS-N5",
+      "description": "(a) afsr's bits are decoded into ActiveBit fault entries as if they had defined meanings",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:15+00:00",
+      "baseline_green": true,
+      "ratified": true,
+      "red_tests": [
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[bits-1-30-31]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[all-ones]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[many-bits-mirroring-cfsr-hfsr-positions]"
+      ],
+      "red_tagged": [
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[bits-1-30-31]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[all-ones]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[many-bits-mirroring-cfsr-hfsr-positions]"
+      ],
+      "collection_errors": [],
+      "passed": 90,
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "arbiter"
+    },
+    {
+      "id": "FAULTS-N5-s2",
+      "kind": "seed",
+      "need": "FAULTS-N5",
+      "description": "(b) afsr is gated by a validity check (CFSR BFARVALID) and becomes None, though no source defines such gating for AFSR",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:17+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[0]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[1]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[305419896]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[4294967295]",
+        "test_faults_n5_c_afsr_never_none_even_on_clean_read",
+        "test_faults_n10_a_empty_dict_does_not_raise",
+        "test_faults_n10_b_missing_keys_default_to_zero_not_error",
+        "test_faults_n11_b_raw_values_match_the_registers_actually_used",
+        "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
+      ],
+      "red_tagged": [
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[0]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[1]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[305419896]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[4294967295]",
+        "test_faults_n5_c_afsr_never_none_even_on_clean_read"
+      ],
+      "collection_errors": [],
+      "passed": 84,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N6-s1",
+      "kind": "seed",
+      "need": "FAULTS-N6",
+      "description": "(a) STKOF is absent from the decoded output when set, because its entry is dropped from the UFSR bit table",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:19+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
+        "test_faults_n6_a_stkof_present_when_set_alone",
+        "test_faults_n6_b_stkof_present_alongside_other_usagefault_bits",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-20-STKOF]",
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
+      ],
+      "red_tagged": [
+        "test_faults_n6_a_stkof_present_when_set_alone",
+        "test_faults_n6_b_stkof_present_alongside_other_usagefault_bits"
+      ],
+      "collection_errors": [],
+      "passed": 85,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N6-s2",
+      "kind": "seed",
+      "need": "FAULTS-N6",
+      "description": "(b) STKOF (UFSR relative bit 4 / CFSR absolute bit 20) is masked out and treated as a reserved/undefined bit before decoding",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:21+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
+        "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
+        "test_faults_n6_a_stkof_present_when_set_alone",
+        "test_faults_n6_b_stkof_present_alongside_other_usagefault_bits",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-20-STKOF]",
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
+      ],
+      "red_tagged": [
+        "test_faults_n6_a_stkof_present_when_set_alone",
+        "test_faults_n6_b_stkof_present_alongside_other_usagefault_bits"
+      ],
+      "collection_errors": [],
+      "passed": 85,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N7-s1",
+      "kind": "seed",
+      "need": "FAULTS-N7",
+      "description": "(a) any_fault is always True, so it reports True even with an empty .faults",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:23+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n7_b_any_fault_false_on_clean_read",
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[bits-1-30-31]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[all-ones]",
+        "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[many-bits-mirroring-cfsr-hfsr-positions]"
+      ],
+      "red_tagged": [
+        "test_faults_n7_b_any_fault_false_on_clean_read",
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set"
+      ],
+      "collection_errors": [],
+      "passed": 88,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N7-s2",
+      "kind": "seed",
+      "need": "FAULTS-N7",
+      "description": "(b) any_fault is always False, so it reports False despite a non-empty .faults",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:25+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-0-IACCVIOL]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-1-DACCVIOL]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-3-MUNSTKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-4-MSTKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-5-MLSPERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-8-IBUSERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-9-PRECISERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-10-IMPRECISERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-11-UNSTKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-12-STKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-13-LSPERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-16-UNDEFINSTR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-17-INVSTATE]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-18-INVPC]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-19-NOCP]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-20-STKOF]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-24-UNALIGNED]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-25-DIVBYZERO]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[HFSR-1-VECTTBL]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[HFSR-30-FORCED]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[HFSR-31-DEBUGEVT]",
+        "test_faults_n7_d_any_fault_unaffected_by_simultaneous_debug_bits"
+      ],
+      "red_tagged": [
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-0-IACCVIOL]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-1-DACCVIOL]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-3-MUNSTKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-4-MSTKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-5-MLSPERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-8-IBUSERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-9-PRECISERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-10-IMPRECISERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-11-UNSTKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-12-STKERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-13-LSPERR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-16-UNDEFINSTR]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-17-INVSTATE]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-18-INVPC]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-19-NOCP]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-20-STKOF]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-24-UNALIGNED]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-25-DIVBYZERO]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[HFSR-1-VECTTBL]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[HFSR-30-FORCED]",
+        "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[HFSR-31-DEBUGEVT]",
+        "test_faults_n7_d_any_fault_unaffected_by_simultaneous_debug_bits"
+      ],
+      "collection_errors": [],
+      "passed": 71,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N7-s3",
+      "kind": "seed",
+      "need": "FAULTS-N7",
+      "description": "(c) any_fault is toggled by .debug: a breakpoint-only halt (DFSR set, no CFSR/HFSR) now reports any_fault True",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:27+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set"
+      ],
+      "red_tagged": [
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N8-s1",
+      "kind": "seed",
+      "need": "FAULTS-N8",
+      "description": "(a) diagnosis is an empty string on a clean read instead of stating plainly that no fault is active",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:29+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n8_a_diagnosis_nonempty_on_clean_read"
+      ],
+      "red_tagged": [
+        "test_faults_n8_a_diagnosis_nonempty_on_clean_read"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N8-s2",
+      "kind": "seed",
+      "need": "FAULTS-N8",
+      "description": "(b) diagnosis returns the same hardcoded placeholder text for every active-fault state instead of naming the active fault",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:31+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n8_c_diagnosis_differs_across_distinct_fault_states",
+        "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis",
+        "test_faults_n8_e_known_bfar_address_appears_in_diagnosis"
+      ],
+      "red_tagged": [
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n8_c_diagnosis_differs_across_distinct_fault_states",
+        "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis",
+        "test_faults_n8_e_known_bfar_address_appears_in_diagnosis"
+      ],
+      "collection_errors": [],
+      "passed": 88,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N8-s3",
+      "kind": "seed",
+      "need": "FAULTS-N8",
+      "description": "(c) a known MMFAR/BFAR address is never appended to the diagnosis text even though the corresponding VALID flag is set",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:33+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis",
+        "test_faults_n8_e_known_bfar_address_appears_in_diagnosis"
+      ],
+      "red_tagged": [
+        "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis",
+        "test_faults_n8_e_known_bfar_address_appears_in_diagnosis"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N8-s4",
+      "kind": "seed",
+      "need": "FAULTS-N8",
+      "description": "(d) a multi-bit active-fault state produces diagnosis text identical to one of its single-bit members' text, because only the first active fault is reported",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:35+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member"
+      ],
+      "red_tagged": [
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N9-s1",
+      "kind": "seed",
+      "need": "FAULTS-N9",
+      "description": "(a) two bits from the same status byte (MMFSR) are reported with different category values",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:37+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n9_a_bits_in_same_status_byte_share_category"
+      ],
+      "red_tagged": [
+        "test_faults_n9_a_bits_in_same_status_byte_share_category"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N9-s2",
+      "kind": "seed",
+      "need": "FAULTS-N9",
+      "description": "(b) two bits from different status bytes (MMFSR and BFSR) are reported with the same category value",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:39+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
+      ],
+      "red_tagged": [
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
+      ],
+      "collection_errors": [],
+      "passed": 92,
+      "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N9-s3",
+      "kind": "seed",
+      "need": "FAULTS-N9",
+      "description": "(c) DEBUGEVT is categorized outside the HardFault family instead of sharing HFSR's category",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:41+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [
+        "test_faults_n9_a_bits_in_same_status_byte_share_category",
+        "test_faults_n9_c_debugevt_categorized_within_hardfault_family"
+      ],
+      "red_tagged": [
+        "test_faults_n9_a_bits_in_same_status_byte_share_category",
+        "test_faults_n9_c_debugevt_categorized_within_hardfault_family"
+      ],
+      "collection_errors": [],
+      "passed": 91,
+      "status": "red-attributed"
+    }
+  ],
+  "refactors": [
+    {
+      "id": "FAULTS-R1",
+      "kind": "refactor",
+      "need": null,
+      "description": "Rename the local loop/extraction helper variable and inline the byte/halfword masks as named constants; pure renaming and constant-extraction, no register table, gating logic, category string, or output shape changes, so every clause (register addresses, bit tables, mmfar/bfar gating, any_fault, diagnosis, raw dict) is preserved exactly.",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:43+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [],
+      "red_tagged": [],
+      "collection_errors": [],
+      "passed": 93,
+      "status": "green"
+    },
+    {
+      "id": "FAULTS-R2",
+      "kind": "refactor",
+      "need": null,
+      "description": "Replace the if/elif ternary-style gating for mmfar/bfar with an equivalent helper function call, and rewrite the any_fault property's bool(self.faults) as len(self.faults) > 0; both are value-preserving rewrites (same truth table, same None-vs-int outcome for every input), so FAULTS-N4 and FAULTS-N7 hold exactly as before, and nothing else in the module is touched.",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-02T23:15:44+00:00",
+      "baseline_green": true,
+      "ratified": null,
+      "red_tests": [],
+      "red_tagged": [],
+      "collection_errors": [],
+      "passed": 93,
+      "status": "green"
+    }
+  ],
+  "audit": {
+    "needs_without_failing_test": [
+      {
+        "need": "FAULTS-N5",
+        "violation": "(a) AFSR's bits are decoded into ActiveBit fault entries in addition to being passed through as FaultStatus.afsr",
+        "why_unnoticed": "test_faults_n5_a/b/c call make_words with nonzero afsr values but assert only on status.afsr, never inspecting status.faults/status.debug for extraneous entries; no other test in the suite combines a nonzero AFSR value with an assertion on the exact contents of .faults (the multi-bit checks such as test_faults_n2_c always use the default afsr=0). Confirmed empirically: extending decode() to also run _extract(afsr, ...) into faults left all 89 tests green."
+      },
+      {
+        "need": "FAULTS-N11",
+        "violation": "(b), instance 1: raw[\"CFSR\"] holds mmfsr (the CFSR word masked to its low byte) instead of the full cfsr word",
+        "why_unnoticed": "The only test comparing raw's per-register values to the words actually used, test_faults_n11_b_raw_values_match_the_registers_actually_used, picks a CFSR test value of 1 << 4 (MSTKERR), which lies inside the low byte, so mmfsr == cfsr for that specific input. test_faults_n11_a only checks the entry count; test_faults_n11_c uses CFSR=0; test_faults_n11_d sets CFSR to 0xFFFFFFFF, whose masked byte (0xFF) still satisfies the 32-bit-range assertion. Confirmed empirically: replacing \"CFSR\": cfsr with \"CFSR\": mmfsr in the raw= literal left all 89 tests green."
+      },
+      {
+        "need": "FAULTS-N11",
+        "violation": "(b), instance 2: raw[\"MMFAR\"] and raw[\"BFAR\"] are swapped with each other (each still carries a real register word, just the other one's)",
+        "why_unnoticed": "Every test that checks raw's per-register values does so by set/multiset membership rather than by key: test_faults_n11_b compares sorted(status.raw.values()) against a sorted expected list, and test_faults_n11_c only checks `mmfar_word in status.raw.values()` / `bfar_word in status.raw.values()`. Both are satisfied by any permutation of the six values across the six keys; test_faults_n12_a/b check only the key set. No test does a keyed status.raw[\"MMFAR\"] == mmfar_raw comparison anywhere. Confirmed empirically: swapping the two dict entries (leaving FaultStatus.mmfar/.bfar themselves correctly computed from the un-swapped local variables) left all 89 tests green."
+      }
+    ],
+    "behaviour_without_need": [
+      {
+        "id": "FAULTS-O9",
+        "text": "_diagnose() always places the MMFAR sentence before the BFAR sentence when both are present, and both before the VECTTBL/DEBUGEVT sentences, a fixed ordering the contract does not require.",
+        "where": "src/stlink_mcp/faults.py:199-211",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O10",
+        "text": "_diagnose() never emits the literal FORCED meaning string from _HFSR_BITS; it substitutes either a \", escalated to a hard fault\" suffix or a different standalone sentence.",
+        "where": "src/stlink_mcp/faults.py:213-220",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O11",
+        "text": "_diagnose() never mentions the raw AFSR value anywhere in its text, even when FaultStatus.afsr/raw[\"AFSR\"] is nonzero.",
+        "where": "src/stlink_mcp/faults.py:177-223",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O12",
+        "text": "decode() reads words only through .get() and never mutates the caller's dict.",
+        "where": "src/stlink_mcp/faults.py:138-143",
+        "ruling": "escalate: proposed clause FAULTS-N13 pinning that decode() does not mutate the dict it is given and carries no state between calls; source rank 1, ROADMAP.md Phase 5 (\"The decode logic is pure and fully tested offline\"), corroborated rank 3 by the module docstring (\"Pure logic, no hardware\")",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O13",
+        "text": "decode() silently ignores any key in words other than the six documented addresses; an unexpected extra key is neither reported nor rejected.",
+        "where": "src/stlink_mcp/faults.py:138-143",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O14",
+        "text": "ActiveBit is declared frozen=True (immutable) while FaultStatus is a plain mutable dataclass.",
+        "where": "src/stlink_mcp/faults.py:42,50",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O15",
+        "text": "Within each category, _extract() always yields entries in ascending bit-position order, and .faults is always assembled in MMFSR, then BFSR, then UFSR, then HFSR order, deterministic though the contract disclaims any required order.",
+        "where": "src/stlink_mcp/faults.py:73-128,149-153",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      },
+      {
+        "id": "FAULTS-O16",
+        "text": "FaultStatus.raw's keys always iterate in the fixed insertion order CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR, though FAULTS-N11/N12 only require the key set.",
+        "where": "src/stlink_mcp/faults.py:166-173",
+        "ruling": "accidental",
+        "ruling_by": "arbiter"
+      }
+    ]
+  },
+  "arbiter": {
+    "sample_size": 4,
+    "agreement": 1.0,
+    "note": "4 of 18 triage rulings sampled at random (seed 20260903: level N8, level N2, O5, level N4); owner agreed with all four on 2026-09-03"
+  }
+}

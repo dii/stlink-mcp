@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N8-s1",
+  "kind": "seed",
+  "description": "(a) diagnosis is an empty string on a clean read instead of stating plainly that no fault is active",
+  "edits": [
+    {
+      "find": "    if not status.faults:\n        return (\n            \"no fault is active; the registers are clean since the last \"\n            \"reset or were cleared by software\"\n        )",
+      "replace": "    if not status.faults:\n        return \"\""
+    }
+  ],
+  "need": "FAULTS-N8"
+}

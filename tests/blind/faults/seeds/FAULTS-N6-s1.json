@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N6-s1",
+  "kind": "seed",
+  "description": "(a) STKOF is absent from the decoded output when set, because its entry is dropped from the UFSR bit table",
+  "edits": [
+    {
+      "find": "    (4, \"STKOF\", \"stack overflow (Armv8-M only)\"),\n",
+      "replace": ""
+    }
+  ],
+  "need": "FAULTS-N6"
+}
