@@ -95,9 +95,14 @@ class TestMemManageFaults:
         assert any(f.name == "MSTKERR" for f in status.faults)
 
     def test_unstacking_memmanage(self) -> None:
-        cfsr = 1 << 5  # MUNSTKERR
+        cfsr = 1 << 3  # MUNSTKERR (bit 3 per Arm; this test pinned bit 5 until 2026-09-03)
         status = faults.decode({faults.CFSR: cfsr})
         assert any(f.name == "MUNSTKERR" for f in status.faults)
+
+    def test_lazy_fp_memmanage(self) -> None:
+        cfsr = 1 << 5  # MLSPERR
+        status = faults.decode({faults.CFSR: cfsr})
+        assert any(f.name == "MLSPERR" for f in status.faults)
 
     def test_mmfar_ignored_when_invalid(self) -> None:
         cfsr = 1 << 1  # DACCVIOL only, no MMARVALID

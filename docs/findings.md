@@ -151,3 +151,18 @@ delivered the oldest: a plain string sort puts `stm32cubeclt_1.9.0` ahead of
 `stm32cubeclt_1.22.0`. Fixed with a version sort before anything else was
 built on it, because from the vendor-database seeding onward it would have
 meant reading a stale database with no signal that a newer one was skipped.
+
+## The MemManage bit map was wrong, and 52 tests agreed with it (2026-09-03)
+
+`_MMFSR_BITS` placed MUNSTKERR at CFSR bit 5 and had nothing at bit 3. Arm's CMSIS
+headers put MUNSTKERR at bit 3 and MLSPERR (MemManage during lazy floating-point state
+preservation) at bit 5. A real unstacking fault therefore decoded to no faults at all,
+`any_fault` false, "no fault is active": the confidently wrong answer this project exists
+to prevent. The suite did not catch it because its tests were written from the table, one
+of them asserting `1 << 5` decodes to MUNSTKERR. Found by a contract author working from
+Arm's header with the implementation withheld (the blind-tests protocol, first run on this
+repo), before any test was written. The same run found the diagnosis attached the fault
+address to three specific bits rather than to the VALID flag, so a stacking fault with a
+valid MMFAR got no address in its text while IACCVIOL, which never records one, did. Both
+fixed the same day; the address is now reported for the register whenever its VALID flag
+is set.

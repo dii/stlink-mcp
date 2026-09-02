@@ -73,8 +73,9 @@ class FaultStatus:
 _MMFSR_BITS: list[tuple[int, str, str]] = [
     (0, "IACCVIOL", "instruction access violation"),
     (1, "DACCVIOL", "data access violation"),
+    (3, "MUNSTKERR", "unstacking for exception return faulted"),
     (4, "MSTKERR", "stacking for exception entry faulted"),
-    (5, "MUNSTKERR", "unstacking for exception return faulted"),
+    (5, "MLSPERR", "MemManage fault during floating-point lazy state preservation"),
 ]
 
 _BFSR_BITS: list[tuple[int, str, str]] = [
@@ -189,12 +190,16 @@ def _diagnose(status: FaultStatus) -> str:
     for f in status.faults:
         if f.category == "HardFault":
             continue
-        desc = f.meaning
-        if f.name == "PRECISERR" and status.bfar is not None:
-            desc += f" at 0x{status.bfar:08X}"
-        elif f.name in ("DACCVIOL", "IACCVIOL") and status.mmfar is not None:
-            desc += f" at 0x{status.mmfar:08X}"
-        root_causes.append(desc)
+        root_causes.append(f.meaning)
+
+    # The fault address belongs to the register that recorded it, gated only by
+    # the hardware's own VALID flag, never attributed to a particular bit: the
+    # earlier per-bit rule dropped a valid MMFAR for stacking faults and claimed
+    # one for IACCVIOL, which never records an address (AN209).
+    if status.mmfar is not None:
+        root_causes.append(f"MMFAR holds 0x{status.mmfar:08X}")
+    if status.bfar is not None:
+        root_causes.append(f"BFAR holds 0x{status.bfar:08X}")
 
     # HardFault-specific causes (standalone, not escalation context)
     if "VECTTBL" in names:
