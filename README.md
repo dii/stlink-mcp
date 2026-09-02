@@ -280,10 +280,12 @@ bisection to get back out.
   your project rather than to a programmer.
 * Only ST-LINK with STM32CubeCLT is supported. There is no abstraction layer
   waiting for a second backend: adding OpenOCD would mean introducing one first.
-* Linux is the tested platform. macOS should work, since the toolchain search
-  and the console device patterns both cover it, but it has not been run there.
-  Windows is not supported: the executable names and device paths are wrong for
-  it throughout.
+* Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer
+  2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q,
+  NUCLEO-H743ZI and STM32H753I-EVAL boards. Other Linux distributions should
+  work and have not been run. macOS is plausible and untried: the toolchain
+  search and the console device patterns cover it. Windows is not supported:
+  the executable names and device paths are wrong for it throughout.
 * Two device families are verified on hardware, STM32N6 and STM32H7. Everything
   else falls back to a generic entry that can identify a target but will refuse
   to run firmware on it, because it has no verified RAM layout to load into.
@@ -293,6 +295,29 @@ bisection to get back out.
   confuse the two. If you hit a parsing problem on a V2, the captured `-l`
   output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
+
+## Related projects
+
+Other MCP servers for STM32 exist, and this one was built before its author had
+looked for them. They were found on 2026-09-02, which is the wrong order: a
+search belongs before a roadmap. Two overlap with this project:
+
+* [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with
+  the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD,
+  and adds a full serial toolset, memory writes by symbol and live memory
+  monitoring. It does more than this project does, with one exception.
+* [Helistana/mcp-stm32cubeide-server](https://github.com/Helistana/mcp-stm32cubeide-server)
+  drives the same CubeIDE loop, with documentation in Chinese.
+
+The exception is the result contract. Those tools return text, and an "OK" in
+that text describes what the tool expected rather than what it observed. The
+first project's own TODO file records one such case: a build that compiled
+nothing was reported as OK, after which a stale image was flashed. Here every
+result carries `verified`, `unverified` or `failed` with its evidence beside
+it, and no tool can set `ok` on its own. That runs through every tool, which is
+why this is a separate project and not a contribution. The other differences
+are scope: this project does not build firmware, does not write memory, and
+runs images from RAM without signing.
 
 ## Licence
 
