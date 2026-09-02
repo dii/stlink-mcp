@@ -85,10 +85,11 @@ result:
 - **N9. Nothing assumes a single implicit caller.** Identity and per-caller policy are out of
   scope today and must remain addable without a redesign.
 
-N1 to N4 are what the code earns today. N5 is half done: quirks are data, but the only way to
-describe a board is to edit the package. **N6, N7, N8 and N9 do not exist yet** - there is no
-provenance, no reset tool, `port=SWD` is hardcoded in `probe.py` and `-d` in `runner.py`, and
-per-probe state sits in module globals. See `ROADMAP.md`.
+N1 to N7 are what the code earns today: a verdict with its evidence on every result, refusals
+where a fact is missing, hidden state reported, provenance on every part-specific value, a board
+file for hardware that is not ours, and reset and fault decoding as tools in their own right.
+**N8 and N9 do not exist yet** - `port=SWD` is hardcoded in `probe.py` and `-d` in `runner.py`,
+and per-probe state sits in module globals. See `ROADMAP.md`.
 
 ### Non-goals
 
