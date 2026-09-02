@@ -165,6 +165,11 @@ a vector table address as the RAM base, and they do not carry the access port
 at all, so a seeded part gets port `0` marked `assumed` and `board_state`
 warns you.
 
+The `vendor-db` values are read at run time from the STM32CubeProgrammer device
+database inside your own STM32CubeCLT install, which stays under ST's licence
+(SLA0048). This project ships none of those files and no table derived from
+them.
+
 ## Describing your own board
 
 Write a TOML file, one table per device ID as the programmer prints it, at

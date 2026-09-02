@@ -141,6 +141,11 @@ by hand against a board and the result recorded in the commit message.
 - No secrets, obviously, and no serial numbers of real probes outside test fixtures.
 - Not affiliated with STMicroelectronics, and the name deliberately avoids their
   STM32Cube product brand.
+- Never commit or package STM32CubeProgrammer's device database files, or any table derived
+  from them. Seeding happens at run time from the user's own install and nowhere else. Those
+  files are under ST's SLA0048, whose condition 5 forbids any use or redistribution that would
+  put them under open-source terms, and this repo is MIT. Quoting a single address as a fact,
+  or a count of what the database contains, is fine; a copied or pre-parsed dataset is not.
 - Prose in `README.md` follows the author's voice: plain descriptive words, no idioms, and
   a plain ASCII `-` rather than an em-dash.
 - Three audiences, three places. `README.md` is for someone who wants to use it, and
