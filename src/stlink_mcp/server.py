@@ -188,15 +188,11 @@ def _gdb_port_for(serial: str | None) -> int:
 
 @mcp.tool()
 def list_probes() -> dict[str, Any]:
-    """List every attached ST-LINK, with its firmware and its serial console.
+    """List every attached ST-LINK with its firmware, board name and serial console.
 
-    The serial-to-console mapping is the useful part with more than one board:
-    it is not positional, so pairing probes with /dev/ttyACM* by order gets it
-    wrong.
-
-    Works while other probes are held. This used to refuse outright whenever any
-    server was held, which was based on an untested assumption; enumeration is
-    not in fact blocked, so the held probes are simply marked.
+The console mapping is the useful part with more than one board: it is not
+positional, so pairing probes with /dev/ttyACM* by order gets it wrong. Works
+while other probes are held by a GDB server; those are marked as held.
     """
     try:
         toolchain = _toolchain()
@@ -239,32 +235,24 @@ def list_probes() -> dict[str, Any]:
 
 @mcp.tool()
 def board_state(probe_serial: str | None = None) -> dict[str, Any]:
-    """Identify a target and report what is known about it.
+    """Identify the target and the probe, and report what is known about the family.
 
-    When the probe is free, this tries each debug access port, because a wrong
-    access port and an absent target produce the same error message from the
-    vendor tools.
+Tries every debug access port when the probe is free, because a wrong port and
+an absent target produce the same error. When a GDB server holds the probe it
+answers from what was captured at acquisition and reports `unverified`.
 
-    When a GDB server is holding the probe it cannot do that, because the
-    programmer CLI cannot reach a held probe. It then answers from what was
-    captured when the server was acquired and says so, rather than presenting a
-    remembered identity as a fresh reading of the hardware.
+READ `family.provenance` BEFORE TRUSTING `family`. Every address carries a
+label saying where it came from:
 
-    READ `family.provenance` BEFORE TRUSTING `family`. Every address in that
-    section carries a label saying where it came from, because most of them are
-    not facts about your board:
+  measured     somebody ran it on this part and watched it work
+  vendor-db    read out of STMicroelectronics' device database
+  user-stated  typed into a board config file by whoever runs this server
+  assumed      nobody measured it and no source states it
 
-      measured     somebody ran it on this part and watched it work
-      vendor-db    read out of STMicroelectronics' device database
-      user-stated  typed into a board config file by whoever runs this server
-      assumed      nobody measured it and no source states it; it is this
-                   project's default for the STM32 range
-
-    Only `measured` means the value has been seen to work. `flash_firmware`
-    refuses to write to a base that is not measured unless you pass the address
-    yourself. `access_port_warning`, when present, says the port in use is a
-    guess, which matters because identity reads correctly on a port that cannot
-    halt the core.
+Only `measured` has been seen to work; `flash_firmware` refuses an unmeasured
+base unless you pass the address. `access_port_warning`, when present, means
+the port in use is a guess, and identity reads correctly on a port that cannot
+halt the core.
     """
     try:
         toolchain = _toolchain()
@@ -378,18 +366,12 @@ def run_firmware(
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
-    Verification is console output from THAT board's own serial port, captured
-    from before the target is resumed so start-up banners are not missed.
-
-    Two weaker outcomes are reported honestly rather than as success. If the GDB
-    batch does not reach its end markers the load did not complete, and any
-    console output is the previous image still running. If the load completes but
-    nothing arrives on the console, that is reported as unverified rather than as
-    a run, because a target that is silent and a target that does not print look
-    identical from here.
-
-    Does not sign anything: an image placed directly in RAM by a debugger
-    bypasses the boot ROM.
+Verified by console output from that board's own serial port, captured from
+before the target resumes. `failed` if the GDB batch did not reach its end
+markers, since then the load did not complete and any output is the previous
+image. `unverified` if the load completed but the console stayed silent.
+Resets the target before loading and holds the GDB server afterwards; see
+`release_probe`. Bypasses the boot ROM, so no signing is involved.
     """
     try:
         toolchain = _toolchain()
@@ -559,13 +541,12 @@ def run_firmware(
 
 @mcp.tool()
 def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
-    """Shut down held GDB servers and free the probes.
+    """Shut down held GDB servers and free their probes; with no serial, all of them.
 
-    With no serial, releases all of them. Needed before read_memory,
-    core_registers or flash_firmware can be used after a run. On parts where the
-    access port is left unreachable by a typical image, this is a one-way door
-    until the board is power cycled, so it is never done implicitly. That is a
-    property of the image and removable in it; see the family notes.
+Needed before read_memory, core_registers or flash_firmware can reach a probe
+after a run. Never done implicitly: on an STM32N6 running a stock FSBL image,
+releasing is a one-way door until the board is power cycled. `unverified` if
+nothing was held.
     """
     affected = [probe_serial] if probe_serial is not None else list(_held)
     quirks = [_held[s][1].quirks for s in affected if s in _held]
@@ -597,11 +578,12 @@ def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
 def flash_firmware(
     image_path: str, probe_serial: str | None = None, address: int | None = None
 ) -> dict[str, Any]:
-    """Program a signed image into a target's boot memory for standalone boot.
+    """Program a signed image into the target's boot memory for standalone boot.
 
-    Prefer run_firmware for edit-build-run: it is faster and needs no signing.
-    This tool does not sign, because signing needs keys and options that belong
-    to the project rather than to a programmer.
+Prefer run_firmware while developing: faster, and no signing. Does not sign.
+Refuses to write to a flash base that is not `measured` unless you pass
+`address` yourself, and nothing is read back afterwards; `verified_by` says
+what was and was not checked.
     """
     try:
         toolchain = _toolchain()
@@ -681,13 +663,12 @@ def flash_firmware(
 def read_memory(
     address: int, length_bytes: int = 32, probe_serial: str | None = None
 ) -> dict[str, Any]:
-    """Read target memory as 32-bit words, without disturbing the target.
+    """Read target memory as 32-bit words without halting or resetting the target.
 
-    Connects hotplug-only, so it neither halts nor resets the core. That is a
-    real constraint rather than a preference: on a part where running firmware
-    has closed the family's debug access port, reopening it needs a reset, and a
-    reset destroys the very state you are reading memory to inspect. This
-    refuses instead, and says why.
+Connects hotplug-only. On a part whose running firmware has closed the debug
+access port, reopening it would need a reset, which destroys the state you are
+reading; this refuses instead and says why. Cannot reach a probe held by a GDB
+server until `release_probe`.
     """
     try:
         toolchain = _toolchain()
@@ -835,42 +816,13 @@ def load_board_config() -> tuple[int, Path | None]:
 
 @mcp.tool()
 def reset_target(probe_serial: str | None = None) -> dict[str, Any]:
-    """Reset the target, and check that it actually restarted.
+    """Reset the target and check that it actually restarted.
 
-    Reset is one of the three things this server promises and it used to happen
-    only as a side effect of something else, which meant nobody could ask for it
-    and nobody was told whether it worked.
-
-    How it verifies, and why it is done this way. The reset is performed by the
-    CONNECT, using HWRSTPULSE, rather than by issuing `-rst` afterwards.
-    Measured on a NUCLEO-H743ZI whose reset handler is at 0x0807FA98: a hotplug
-    connect followed by `-rst -halt` leaves the PC at 0x0807FC2C, and the
-    reverse order leaves it at 0x0807FC3A. Both reset the part correctly and
-    then lose the race to halt it, so the core is already hundreds of bytes into
-    start-up and its PC cannot be compared against anything. A resetting connect
-    lands on the vector exactly, every time, which is what makes the check
-    possible at all.
-
-    The core is halted to read the PC and then released. That brief halt is
-    reported rather than hidden, because it is a state change the caller did not
-    ask for.
-
-    THERE IS NO `leave_halted` OPTION, and there was one for a day. It could not
-    be delivered: a halt issued by STM32_Programmer_CLI does not survive the
-    invocation that made it. Measured 2026-08-17 by sampling the PC across
-    separate reads after a reset-and-halt - on a NUCLEO-H743ZI it went 0x0807FA98
-    then 0x0807FE96, 0x08060AFC, 0x08080482, and the STM32H753I-EV did the same.
-    The option reported `core_halted: true` while the core was demonstrably
-    running, which is the exact defect this project exists to remove, shipped by
-    the tool built to remove it.
-
-    For the same reason this result does not claim whether the core is halted
-    NOW. Nothing here can observe that: a static program counter is what a halted
-    core looks like and also what a tight loop looks like, and on an
-    STM32N6 sitting in its boot ROM the PC read identically three times while
-    that proved nothing either way. What is reported is what was done and what
-    the programmer confirmed. To hold a target stopped, use the GDB server path
-    that `run_firmware` keeps alive, which genuinely holds one.
+The reset is a resetting connect; the core is halted at the reset vector just
+long enough to compare the PC against word 1 of the vector table, then
+released, and that brief halt is reported. The result does not claim whether
+the core is halted now, because nothing here can observe that. To hold a
+target stopped, use the GDB server that run_firmware keeps alive.
     """
     try:
         toolchain = _toolchain()
@@ -1064,9 +1016,9 @@ def reset_target(probe_serial: str | None = None) -> dict[str, Any]:
 def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
     """Read the core registers. This HALTS the core.
 
-    The most direct way to find out what a program is really doing, and what
-    settles "did it actually start" when there is no console. Perturbing, so it
-    is never used inside the routine checks.
+The direct way to find out what a program is doing, and what settles "did it
+start" when there is no console. Reports `target_was_reset` when reaching the
+core needed a reset. Perturbing, so never used inside routine checks.
     """
     try:
         toolchain = _toolchain()
@@ -1108,21 +1060,14 @@ def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
 
 @mcp.tool()
 def read_fault_status(probe_serial: str | None = None) -> dict[str, Any]:
-    """Read and decode the Cortex-M fault status registers.
+    """Read and decode the Cortex-M fault status registers without halting or
+resetting the target.
 
-    Answers "why did it fault" by reading the SCB fault registers (CFSR, HFSR,
-    DFSR and the fault address registers) from the target. These are at fixed
-    addresses in every Cortex-M and do not vary by family or vendor.
-
-    Does not reset or halt the target. The registers are sticky: they hold the
-    state from the most recent fault until software clears them by writing 1 to
-    each set bit. Call this after a crash, or call it on a running target to
-    check whether it has faulted and recovered.
-
-    When no fault is active, the result says so. When one is, the diagnosis
-    names what happened in plain English, with the faulting address when the
-    hardware recorded it. The raw register values are included for anyone who
-    needs them.
+The registers are sticky until software clears them, so call this after a
+crash, or on a running target to check whether it faulted and recovered. The
+result says whether a fault is active and, when one is, what happened in plain
+English, with the faulting address when the hardware recorded it and the next
+step for finding the faulting instruction.
     """
     try:
         toolchain = _toolchain()
@@ -1204,18 +1149,11 @@ def read_fault_status(probe_serial: str | None = None) -> dict[str, Any]:
 def capture_console(
     seconds: float = 5.0, probe_serial: str | None = None
 ) -> dict[str, Any]:
-    """Capture what a target prints on its serial console.
+    """Capture what a target prints on its serial console for a number of seconds.
 
-    Resolves the port from the probe's serial rather than taking the first
-    /dev/ttyACM*, which with two boards attached is the wrong one about half the
-    time, and with the five attached while this was written is a one-in-five pick.
-
-    Refuses rather than guessing, like every other tool here. It used to compute
-    the ambiguity error and then discard it, falling through to the first
-    matching device path: the one behaviour its own docstring said it avoided.
-    Reading the wrong board is not harmless for a verification tool, because
-    silence from the wrong board reads as "firmware not running" and output from
-    the wrong board reads as "it works".
+The port is resolved from the probe's serial, never by taking the first
+/dev/ttyACM*, which with two boards attached is the wrong one about half the
+time. Refuses when it cannot resolve a port for that probe.
     """
     try:
         toolchain = _toolchain()

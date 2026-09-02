@@ -85,11 +85,8 @@ result:
 - **N9. Nothing assumes a single implicit caller.** Identity and per-caller policy are out of
   scope today and must remain addable without a redesign.
 
-N1 to N7 are what the code earns today: a verdict with its evidence on every result, refusals
-where a fact is missing, hidden state reported, provenance on every part-specific value, a board
-file for hardware that is not ours, and reset and fault decoding as tools in their own right.
-**N8 and N9 do not exist yet** - `port=SWD` is hardcoded in `probe.py` and `-d` in `runner.py`,
-and per-probe state sits in module globals. See `ROADMAP.md`.
+Which of these the code meets today is tracked in one place, the "Where it stands" table in
+`ROADMAP.md`. This file states the needs and does not restate their status.
 
 ### Non-goals
 
@@ -146,3 +143,8 @@ by hand against a board and the result recorded in the commit message.
   STM32Cube product brand.
 - Prose in `README.md` follows the author's voice: plain descriptive words, no idioms, and
   a plain ASCII `-` rather than an em-dash.
+- Three audiences, three places. `README.md` is for someone who wants to use it, and
+  carries conclusions only. Measurements, dates, and what was got wrong on the way go in
+  `docs/findings.md`, which the README links to. Tool docstrings are instructions for the
+  agent that calls the tool, roughly 40 to 80 words: an agent loads every one of them on
+  every session, and a long description buries the one line that changes what it does.

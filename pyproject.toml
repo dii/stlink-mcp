@@ -43,26 +43,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/stlink_mcp"]
 
-# The sdist contents are listed explicitly, and that is not tidiness.
-#
-# Hatchling builds an sdist from the FILESYSTEM, honouring this repo's
-# .gitignore but NOT the user's global git ignore file. So a file can be
-# correctly invisible to git, absent from the GitHub repo, and still be
-# published to PyPI. That is not hypothetical: a local red-team report carrying
-# an absolute path from the author's machine was in the built sdist while being
-# properly excluded from every commit, and `git status` said nothing, because
-# from git's point of view nothing was wrong.
-#
-# An exclude rule would have fixed that one file. An explicit include list is
-# what stops the next locally-ignored working file - notes, captures, worklogs -
-# from being published the same silent way. Two mechanisms that look like they
-# agree about what "ignored" means, and do not, is the exact failure this
-# project exists to argue about, so it is not going to ship one.
+# The sdist contents are an explicit include list, not an exclude rule.
+# Hatchling builds an sdist from the filesystem, honouring this repo's
+# .gitignore but not the user's global ignore file, so a file git never tracked
+# can still be published. That happened here once (docs/findings.md, "The
+# packaging tool publishes what git hides"). An include list stops the next
+# locally-ignored working file from going out the same silent way.
 [tool.hatch.build.targets.sdist]
 include = [
     "src/stlink_mcp",
     "tests",
     "tools",
+    "docs",
     "AGENTS.md",
     "CLAUDE.md",
     "GEMINI.md",

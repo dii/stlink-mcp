@@ -1,39 +1,31 @@
 # stlink-mcp
 
 An MCP server that lets an AI coding agent program, run and inspect an STM32
-target attached to your development machine over ST-LINK.
-
-It runs locally, next to the board. It drives the STM32CubeCLT command line
-tools that you already have installed.
+target over ST-LINK. It runs locally, next to the board, and drives the
+STM32CubeCLT command line tools you already have installed.
 
 ## Why this exists
 
-You can point an agent at `STM32_Programmer_CLI` and let it work things out. The
-problem is that these tools report success for things they did not do.
-
-Three real examples, all from one afternoon of bringing up an STM32N6:
+ST's command line tools report success for things they did not do. Three
+examples from one afternoon with an STM32N6:
 
 * `STM32_Programmer_CLI -s <address>` printed "Start operation achieved
   successfully" while the program counter never left the boot ROM.
-* `ST-LINK_gdbserver` printed "Failed to halt target". The core was fine. The
-  server was talking to the wrong debug access port.
-* A GDB load against a target that was already running completed cleanly and
-  changed nothing, so the previous program carried on and its output looked
-  like a successful new run.
+* `ST-LINK_gdbserver` printed "Failed to halt target". The core was fine; the
+  server was on the wrong debug access port.
+* A GDB load against a running target completed cleanly and changed nothing,
+  so the previous program carried on and its output read as a successful new
+  run.
 
-An agent driving those tools directly inherits every one of those lies, and then
-writes confident, wrong conclusions into your codebase. That is worse than no
-tooling, because it costs you the time and leaves bad documentation behind.
-
-So the rule here is simple:
+An agent driving those tools inherits every one of those and writes confident,
+wrong conclusions into your codebase. So the rule here is:
 
 > **A tool reports success only after checking that the thing it was asked to do
 > actually happened.**
 
-`run_firmware` does not report success because GDB exited zero. It reports
-success because the target produced console output.
-
-Every result therefore has one of three states, and `ok` is never set by hand:
+`run_firmware` reports success because the target produced console output, not
+because GDB exited zero. Every result has one of three states, and no tool sets
+`ok` by hand:
 
 | `status` | `ok` | meaning |
 | --- | --- | --- |
@@ -41,28 +33,22 @@ Every result therefore has one of three states, and `ok` is never set by hand:
 | `unverified` | `false` | may well have worked, but nothing watched it |
 | `failed` | `false` | it did not work, and `error` says why |
 
-`unverified` is the one that matters, and it is deliberately not `ok`. A run
-nobody watched is not a success however likely it is to have worked, so
-`unverified_because` is there to tell it apart from a real failure. Reporting
-that case as success is exactly the harm this project exists to prevent, and an
-earlier version of this tool did it: `ok: true` alongside `verified_by:
-"nothing"`.
+`unverified` is deliberately not `ok`: a run nobody watched is not a success,
+however likely it is to have worked. `unverified_because` says what was not
+checked, so it is not mistaken for a failure.
 
 ## Status
 
-Alpha, and honest about it. Two families are **measured on hardware**, STM32N6 and
-STM32H7. A further **99 device IDs are seeded from STMicroelectronics' own device
-databases** on your disk, which covers most of the modern STM32 range, and every
-value from that source says so rather than pretending to be a measurement.
+Alpha. Two families are measured on hardware, STM32N6 and STM32H7. A further
+99 device IDs are seeded from STMicroelectronics' own device databases on your
+disk, and every value from that source is labelled as such. Four device IDs
+(`0x42B`, `0x42C`, `0x472`, `0x49A`) are refused rather than guessed, because
+their databases name several separate SRAM banks; `board_state` names the
+addresses it would not choose between, and a board file settles it. Anything
+else unrecognised falls back to identification and memory reads only.
 
-Four device IDs are deliberately left unsupported (`0x42B`, `0x42C`, `0x472`,
-`0x49A`): their databases name several separate SRAM banks, and choosing between
-them would be a guess. If you attach one, `board_state` says so and names the
-addresses it would not choose between, so it is not confused with a part nobody
-has heard of, and you can settle it in a board file. Anything else unrecognised
-still falls back to identification and memory reads only.
-
-The order things happen in, and why, is in [ROADMAP.md](ROADMAP.md).
+Plans are in [ROADMAP.md](ROADMAP.md). The measurements behind the claims in
+this file are in [docs/findings.md](docs/findings.md).
 
 ## Requirements
 
@@ -109,63 +95,40 @@ uv sync
 | `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |
 | `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing. Works while other probes are held |
 
-### Why the GDB server is kept alive
+### The GDB server stays alive between runs
 
-`run_firmware` starts a GDB server and **holds it** rather than tearing it down.
-That is not laziness. On the STM32N6, once a typical image has run the debug
-access port cannot be re-acquired, and only removing power gets it back. Holding
-the server is therefore the difference between one power cycle per session and
-one per run.
-
-**That is a property of the image, not of the part**, which is worth stating
-plainly because this project got it wrong for two days and wrote the wrong
-version into its own docs. The cause is one line at the end of ST's
-`system_stm32n6xx_fsbl.c`:
+`run_firmware` starts a GDB server and holds it. On the STM32N6, an image built
+from ST's FSBL template closes debug access port 1 when it starts, and only a
+power cycle reopens it. The cause is one line at the end of ST's
+`system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out
+of `SystemInit`:
 
 ```c
 RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
 ```
 
-`SystemInit` turns the SYSCFG clock on early so it can write `INITSVTORCR`, then
-turns it off again on the way out. On the N6 that clock is what keeps debug
-access port 1 alive. Remove that single write and the port survives: four
-consecutive load-and-run cycles with no power cycle, against the stock image
-closing it on the very next run of the same board.
+Remove that write and the port survives across runs. With the stock image,
+holding the server is the difference between one power cycle per session and
+one per run. Either way the target is reset before every load; without that,
+each image inherits the previous run's peripheral and interrupt state and
+faults during start-up.
 
-Found by bisecting `SystemInit`, which also eliminated the boot ROM handoff (a
-bare image with no startup chain leaves the port open), the startup assembly,
-TrustZone and the SAU, `INITSVTORCR`, the PWR supply block, and every peripheral
-reset in there.
+While the server holds a probe, `read_memory`, `core_registers` and
+`flash_firmware` cannot reach that probe until you call `release_probe`. Other
+probes are unaffected, and so is enumeration.
 
-Two methodology notes, both earned the hard way. Confirm a probe is free **by
-port** with `ss -ltnp`, never by process name: Linux truncates process names to
-fifteen characters, so `pgrep ST-LINK_gdbserver` matches nothing at all and reads
-exactly like a clean control. And connect-under-reset (`mode=UR`) is not a way
-out here; it fails on a healthy board too.
-
-An already established connection keeps working across repeated load-and-run
-cycles, **provided the target is reset before every load**. That precondition is
-not optional and is easy to lose: the server's own `--halt` resets once, when the
-server starts, so without an explicit reset each image inherits the previous
-run's live peripherals and interrupt state, and faults during start-up in a way
-that reads as a firmware bug.
-
-The cost is that the server owns **that** probe, so `read_memory`,
-`core_registers` and `flash_firmware` cannot reach it until you call
-`release_probe`. Other probes are unaffected, and so is enumeration.
-
-`run_firmware` is the one to use while developing. It is faster than programming
-flash, and an image placed straight into RAM by a debugger bypasses the boot ROM,
-so no signing is involved even on parts that require signed images to boot.
+`run_firmware` is the one to use while developing: faster than flashing, and
+an image placed in RAM by the debugger bypasses the boot ROM, so no signing is
+involved even on parts that require signed images to boot.
 
 ### More than one board
 
 Every tool takes a `probe_serial`. With several boards attached, omitting it is
-an **error**, not a guess: probe order is not stable across replugs, and loading
+an error, not a guess: probe order is not stable across replugs, and loading
 firmware onto the wrong board is a failure that looks like success.
 
-`list_probes` also reports which serial port belongs to which probe. That mapping
-is not positional, so pairing probes with `/dev/ttyACM*` by order gets it wrong,
+`list_probes` reports which serial port belongs to which probe. That mapping is
+not positional, so pairing probes with `/dev/ttyACM*` by order gets it wrong,
 and `run_firmware` uses each board's own console to verify it. Each board gets
 its own GDB server on its own port.
 
@@ -192,34 +155,20 @@ beside the value:
 | `user-stated` | typed into a board file by whoever runs this server |
 | `assumed` | nobody measured it and no source states it; a default for the range |
 
-Only `measured` means the value has been seen to work, and the difference changes
-behaviour rather than just wording. `flash_firmware` refuses to write to a base
-that is not measured unless you name the address yourself, because that write
-persists and there is no readback to catch a wrong one. A RAM run will go ahead
-on a `vendor-db` address, because a wrong one is undone by a reset and the console
-either speaks or it does not.
-
-`run_firmware` will load to a `vendor-db` address and, on success, says in the
-same result that the address was not measured: the run really is verified by the
-console, and that is evidence for the address rather than a measurement of it.
-The distinction matters because the obvious next step after a working run is to
-write the layout down as confirmed.
-
-A measured entry always beats a seeded one. The STM32N6 is why: its database entry
-gives SRAM at `0x34180400`, which is that family's vector table and not its RAM
-load base of `0x34180000`, because the boot ROM prepends a signing header. Nothing
-in the database says which of the two it is reporting.
-
-The access port is not in the databases at all, so a seeded part gets `0` marked
-`assumed`, and `board_state` warns you about it. That matters because identity
-reads correctly on a port that cannot halt the core, which is exactly how the
-STM32N6 wasted a day of this project's time.
+Only `measured` means the value has been seen to work, and the label changes
+behaviour. `flash_firmware` refuses to write to a base that is not measured
+unless you name the address yourself, because that write persists and nothing
+is read back. `run_firmware` will load to a `vendor-db` address, because a
+wrong one is undone by a reset, and the result still says the address was not
+measured. A measured entry always beats a seeded one: the databases can report
+a vector table address as the RAM base, and they do not carry the access port
+at all, so a seeded part gets port `0` marked `assumed` and `board_state`
+warns you.
 
 ## Describing your own board
 
-You do not have to wait for a family to be characterised here, and you do not
-have to edit an installed package. Write a TOML file, one table per device ID as
-the programmer prints it:
+Write a TOML file, one table per device ID as the programmer prints it, at
+`~/.config/stlink-mcp/boards.toml` or wherever `STLINK_MCP_BOARDS` points:
 
 ```toml
 ["0x413"]
@@ -231,47 +180,22 @@ flash_base = 0x08000000
 notes = "addresses from the reference manual, not yet run on the board"
 ```
 
-Put it at `~/.config/stlink-mcp/boards.toml`, or point `STLINK_MCP_BOARDS` at it.
 It is loaded before the server accepts anything, and a file it cannot use stops
-the server rather than starting without your boards.
+the server. Your entry wins over the built-in table for that device ID.
 
-TOML because it has hex integer literals, so an address is written the way every
-datasheet and debugger writes it. A load address in decimal is a transcription
-error waiting to happen.
-
-Your entry wins over the built-in table for that device ID. That is deliberate:
-the built-in entry describes a device ID, which is coarser than a part and much
-coarser than a board, and you know more about the thing plugged into your machine
-than this project does.
-
-**Everything in that file is `user-stated`, and it cannot say otherwise.** There
-is no way to mark a value `measured`, and the omission is the point. This server
-cannot tell a value you measured from a value you typed, and `measured` is what
-lets `flash_firmware` write without being told an address. If a config file could
-assert it, a typo would unlock an irreversible operation. If you have measured
-your board, pass `address` when you flash, and the claim is recorded as yours.
-
-`board_state` reports the provenance of every value beside the value itself, so
-an agent can see which numbers a person has actually seen work.
+Everything in that file is `user-stated`, and there is no way to mark a value
+`measured`: that label is what lets `flash_firmware` write without being told
+an address, and a typo in a config file must not unlock an irreversible write.
+If you have measured your board, pass `address` when you flash.
 
 ## Adding a family
 
-Add one entry to `src/stlink_mcp/quirks.py` and map its device ID. Fill in only
-what you have verified on hardware. A missing value fails loudly; a wrong value
-fails silently, which is the failure mode this project exists to remove.
-
-The STM32N6 entry is a good illustration of why the table is needed at all: that
-family has no internal flash, its boot ROM authenticates the image it loads out
-of external flash, and its debug is on access port 1 rather than 0.
-
-The table is keyed on the device ID the probe reports, and that is deliberately
-coarser than a part number. ST's own database calls 0x450 `STM32H7xx`, so an
-STM32H743 and an STM32H753 arrive as the same device and share one entry. Fill
-in values that hold for everything behind the ID, and keep anything that varies
-by board or by image out of it. That distinction is not academic here: an
-earlier version of this table carried a flag describing what a vendor startup
-file did, in a field named for what the silicon does, and it took two days and a
-bisection to get back out.
+Add one entry to `src/stlink_mcp/quirks.py` and map its device ID, filling in
+only what you have verified on hardware; a test fails the build otherwise. The
+table is keyed on the device ID the probe reports, which is coarser than a part
+number: ST's database calls `0x450` `STM32H7xx`, so an STM32H743 and an
+STM32H753 share one entry. Put in values that hold for everything behind the
+ID, and keep anything that varies by board or by image out of it.
 
 ## Limitations
 
@@ -282,25 +206,22 @@ bisection to get back out.
   waiting for a second backend: adding OpenOCD would mean introducing one first.
 * Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer
   2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q,
-  NUCLEO-H743ZI and STM32H753I-EVAL boards. Other Linux distributions should
+  NUCLEO-H743ZI and STM32H753I-EVAL2 boards. Other Linux distributions should
   work and have not been run. macOS is plausible and untried: the toolchain
   search and the console device patterns cover it. Windows is not supported:
   the executable names and device paths are wrong for it throughout.
-* Two device families are verified on hardware, STM32N6 and STM32H7. Everything
-  else falls back to a generic entry that can identify a target but will refuse
-  to run firmware on it, because it has no verified RAM layout to load into.
+* Two device families are verified on hardware, STM32N6 and STM32H7. Parts
+  seeded from the vendor database can run firmware; anything unrecognised can
+  be identified and read but not run.
 * Every probe this has run against is ST-LINK V3 generation. The probe list
-  parser should handle an older ST-LINK/V2 or V2-1 - nothing in it assumes a
-  V3 - but that is reasoning, not a measurement, and this project tries not to
-  confuse the two. If you hit a parsing problem on a V2, the captured `-l`
-  output is the useful bug report.
+  parser should handle an older ST-LINK/V2 or V2-1, but that is reasoning, not
+  a measurement. If you hit a parsing problem on a V2, the captured `-l` output
+  is the useful bug report.
 * It is not affiliated with STMicroelectronics.
 
 ## Related projects
 
-Other MCP servers for STM32 exist, and this one was built before its author had
-looked for them. They were found on 2026-09-02, which is the wrong order: a
-search belongs before a roadmap. Two overlap with this project:
+Other MCP servers for STM32 exist. Two overlap with this project:
 
 * [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with
   the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD,
@@ -310,14 +231,12 @@ search belongs before a roadmap. Two overlap with this project:
   drives the same CubeIDE loop, with documentation in Chinese.
 
 The exception is the result contract. Those tools return text, and an "OK" in
-that text describes what the tool expected rather than what it observed. The
-first project's own TODO file records one such case: a build that compiled
-nothing was reported as OK, after which a stale image was flashed. Here every
-result carries `verified`, `unverified` or `failed` with its evidence beside
-it, and no tool can set `ok` on its own. That runs through every tool, which is
-why this is a separate project and not a contribution. The other differences
-are scope: this project does not build firmware, does not write memory, and
-runs images from RAM without signing.
+that text describes what the tool expected rather than what it observed, as the
+first project's own TODO file records for its build step. Here every result
+carries `verified`, `unverified` or `failed` with its evidence beside it, and
+no tool can set `ok` on its own. The other differences are scope: this project
+does not build firmware, does not write memory, and runs images from RAM
+without signing.
 
 ## Licence
 
