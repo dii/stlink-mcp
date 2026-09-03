@@ -85,7 +85,7 @@ uv sync
 | tool | what it does | how it verifies |
 | --- | --- | --- |
 | `board_state` | Identifies the target, the probe, and the family's quirks | Tries every access port, since a wrong port and an absent target look identical. Reports `unverified` when a held server means it is answering from cache |
-| `run_firmware` | Loads an ELF into RAM and starts it | Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
+| `run_firmware` | Loads an ELF into RAM and starts it | Refuses, before any load, an image not linked for the family's RAM, since a GDB load writes wherever the image says. Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
 | `flash_firmware` | Programs a signed image into boot memory | The programmer's own report that the download completed. Nothing is read back, and `verified_by` says so |
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port |
 | `core_registers` | Reads the core registers. Halts the core | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset |
@@ -119,7 +119,10 @@ probes are unaffected, and so is enumeration.
 
 `run_firmware` is the one to use while developing: faster than flashing, and
 an image placed in RAM by the debugger bypasses the boot ROM, so no signing is
-involved even on parts that require signed images to boot.
+involved even on parts that require signed images to boot. The image must be
+linked for RAM, with its vector table at the address `board_state` reports for
+the family; a default flash-linked build is refused before anything is loaded,
+because a GDB load writes each segment to the address the image carries.
 
 ### More than one board
 
@@ -226,22 +229,35 @@ ID, and keep anything that varies by board or by image out of it.
 
 ## Related projects
 
-Other MCP servers for STM32 exist. Two overlap with this project:
+Other MCP servers drive microcontrollers over a debug probe, and three overlap
+with this one:
 
+* [Adancurusul/embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp)
+  is the broad one: probe-rs or OpenOCD underneath, so ST-LINK, J-Link, DAPLink
+  and Black Magic probes, several architectures, breakpoints, RTT, flash and
+  run tools, and a fault-diagnosis tool documented as reporting raw evidence
+  without asserting a root cause, which is close to the stance taken here.
 * [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with
   the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD,
   and adds a full serial toolset, memory writes by symbol and live memory
-  monitoring. It does more than this project does, with one exception.
+  monitoring.
 * [Helistana/mcp-stm32cubeide-server](https://github.com/Helistana/mcp-stm32cubeide-server)
-  drives the same CubeIDE loop, with documentation in Chinese.
+  drives the same CubeIDE loop, with fault decoding and documentation in
+  Chinese.
 
-The exception is the result contract. Those tools return text, and an "OK" in
-that text describes what the tool expected rather than what it observed, as the
-first project's own TODO file records for its build step. Here every result
-carries `verified`, `unverified` or `failed` with its evidence beside it, and
-no tool can set `ok` on its own. The other differences are scope: this project
-does not build firmware, does not write memory, and runs images from RAM
-without signing.
+There are more, mostly J-Link or OpenOCD servers. Every one of them does more
+than this project. What this project does differently is narrow and checkable:
+every result carries `verified`, `unverified` or `failed` with the observation
+named, and no tool can set `ok` on its own, where the CubeIDE-based servers
+return text whose "OK" describes what the tool expected (the second project's
+own TODO file records a build reported OK with nothing compiled); every
+part-specific address carries a provenance that changes what the tool will do;
+the STM32N6 behaviour in [docs/findings.md](docs/findings.md) was measured on
+the board rather than inferred; and its tests were seeded and shown to fail.
+It does not build firmware, does not write memory, has no JTAG or RTT, and
+runs images from RAM without signing. It was built before its author had
+looked for any of the above; the field was searched on 2026-09-02, three weeks
+in, which is the wrong order and is recorded as such in the findings.
 
 ## Licence
 

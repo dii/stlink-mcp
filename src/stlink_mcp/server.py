@@ -32,6 +32,7 @@ from mcp.server import MCPServer
 
 from . import console as console_mod
 from . import faults as faults_mod
+from . import image as image_mod
 from . import quirks as quirks_mod
 from .result import failed, unverified, verified
 from .probe import (
@@ -370,6 +371,9 @@ Verified by console output from that board's own serial port, captured from
 before the target resumes. `failed` if the GDB batch did not reach its end
 markers, since then the load did not complete and any output is the previous
 image. `unverified` if the load completed but the console stayed silent.
+Refuses, before any load, an ELF not linked for this family's RAM (no loadable
+segment covers the vector table address), because a GDB load writes wherever
+the image says and a flash-linked build would be programmed into flash.
 Resets the target before loading and holds the GDB server afterwards; see
 `release_probe`. Bypasses the boot ROM, so no signing is involved.
     """
@@ -417,6 +421,19 @@ Resets the target before loading and holds the GDB server afterwards; see
         )
 
     elf = Path(elf_path).expanduser()
+    if not elf.exists():
+        return failed(f"No such ELF: {elf}")
+    # A GDB load writes wherever the image says. Refuse, before any server is
+    # started, an image that is not linked for this family's RAM: a flash-linked
+    # build would be programmed into flash on the run path (found by the
+    # 2026-09-03 red-team, RT1) and then started from garbage.
+    not_ram = image_mod.check_ram_image(elf, quirks.vector_table_addr)
+    if not_ram:
+        return failed(
+            not_ram, probe_serial=serial, elf=str(elf),
+            vector_table_addr=f"0x{quirks.vector_table_addr:08X}",
+            vector_table_provenance=layout_provenance,
+        )
     # This board's own console, not whichever ttyACM* happens to be first.
     port = probe_info.console_port if probe_info else console_mod.find_console_port()
     gdb_port = _gdb_port_for(serial)

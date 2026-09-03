@@ -166,3 +166,30 @@ address to three specific bits rather than to the VALID flag, so a stacking faul
 valid MMFAR got no address in its text while IACCVIOL, which never records one, did. Both
 fixed the same day; the address is now reported for the register whenever its VALID flag
 is set.
+
+## The run path could write flash (red-team RT1, 2026-09-03)
+
+`run_firmware` handed GDB an ELF and said `load`, and GDB writes each loadable segment to
+the address the image carries. With a default flash-linked build (0x08000000, what
+STM32CubeIDE and CMake produce), ST-LINK_gdbserver programs flash (that is what its `-cp`
+path to CubeProgrammer is for; UM2576 says so), and the tool then reads a stack pointer and
+program counter from the family's RAM vector table, which holds unrelated bytes, and starts
+the core there. It reported `unverified`, or `verified` on a stale RAM image's output. The
+project's own written policy treated the run path as reversible, which it was only for an
+image linked for RAM, and nothing said the image had to be. Found by a red-team reviewer
+reading the GDB script and the gdbserver's own help text; confirmed by an independent
+skeptic against GDB's documentation and the gdbserver's binary. Fix: the image's loadable
+segments are read before any server is started, and an image that does not cover the
+family's vector table address is refused by name (`image.py`). A newcomer persona reading
+the README had asked exactly this question, unprompted: whether a normal Debug build works.
+
+## The field was not searched before building (2026-09-02)
+
+This project was built on 2026-08-14 and went through four review passes without anyone
+asking whether it already existed. The search happened on 2026-09-02, while checking a
+proposed rename, and found shieldyguy/stm32-mcp (six months older), Helistana's CubeIDE
+server, and, a day later, Adancurusul/embedded-debugger-mcp, the closest neighbour on this
+project's own axis. A separate project would likely still have been the outcome, because
+the difference is the result contract rather than a feature, but that should have been a
+decision. The lesson went into the review checklist: search before the roadmap, and name
+the neighbours in the README.

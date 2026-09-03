@@ -209,8 +209,13 @@ class _FakeProbe:
 @pytest.fixture
 def bench(monkeypatch, tmp_path):
     """A whole fake bench: no CLI, no probe, no serial port, no board."""
+    # A real (minimal) ELF32 whose one loadable segment covers this family's RAM
+    # vector table, because run_firmware now refuses anything else before it
+    # starts a server (red-team RT1, 2026-09-03).
+    from elfgen import minimal_elf32
+    vt = probe_mod.TargetInfo(connected=True, device_id=_FakeProbe.device_id).quirks.vector_table_addr
     elf = tmp_path / "image.elf"
-    elf.write_bytes(b"\x7fELF not really")
+    elf.write_bytes(minimal_elf32(vt - 0x400, 0x1000))
 
     state = SimpleNamespace(
         elf=elf,
@@ -323,6 +328,26 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert_contract(r)
         assert r["status"] == result.UNVERIFIED
         assert "console" in r["unverified_because"].lower()
+
+    def test_a_flash_linked_image_is_refused_before_any_load(self, bench) -> None:
+        """RT1 (2026-09-03): a normally linked build (0x08000000) handed to
+        run_firmware made GDB program flash and then start the core from garbage,
+        while the tool reported unverified. The refusal has to come before a
+        server is started, so nothing is written."""
+        from elfgen import minimal_elf32
+        bench.elf.write_bytes(minimal_elf32(0x08000000, 0x1000))
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.FAILED
+        assert "not linked" in r["error"] and "0x08000000" in r["error"]
+        assert "vector_table_addr" in r
+
+    def test_a_file_that_is_not_an_elf_is_refused(self, bench) -> None:
+        bench.elf.write_bytes(b"\x7fELF not really")
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.FAILED
+        assert "ELF" in r["error"]
 
     def test_console_output_is_what_verifies_a_run(self, bench) -> None:
         bench.console_text = "target link test: tx\n  probe ok\n"
@@ -798,6 +823,10 @@ class TestASeededAddressIsDisclosedWhereItIsUsed:
         monkeypatch.setattr(probe_mod, "for_device_id", lambda did: seeded)
         monkeypatch.setattr(_FakeProbe, "device_id", 0x413)
         monkeypatch.setattr(_FakeProbe, "gdb_access_port", lambda self, info: 0)
+        # The image has to be linked for THIS part's RAM, or run_firmware refuses
+        # it before any load (RT1, 2026-09-03).
+        from elfgen import minimal_elf32
+        bench.elf.write_bytes(minimal_elf32(seeded.vector_table_addr, 0x1000))
         return bench
 
     def test_a_seeded_part_can_actually_run_firmware(self, seeded_bench) -> None:
