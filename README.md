@@ -4,10 +4,32 @@ An MCP server that lets an AI coding agent program, run and inspect an STM32
 target over ST-LINK. It runs locally, next to the board, and drives the
 STM32CubeCLT command line tools you already have installed.
 
-## Why this exists
+## Why you would want this
 
-ST's command line tools report success for things they did not do. Three
-examples from one afternoon with an STM32N6:
+Firmware development is a loop: change the code, build, load it onto the
+board, watch the console, read the fault registers when it hangs, change the
+code again. An agent that can only edit files does the first step and then
+waits for you to do the rest and report back. Every result reaches it as your
+summary of what you saw, and it reasons from that.
+
+With this server attached, the agent runs the loop itself. It identifies the
+board, loads the image, captures the console, reads the registers and the
+fault status, and decides what to change next from what the target actually
+did. You supervise the conclusions instead of relaying the evidence.
+
+## Why the reports have to be true
+
+That loop is only as good as what the tools tell the agent. A developer
+catches a tool that overstates, because they hold information the tool never
+gave them: the LED that did not change, console text that looks like the
+previous build, the board in their hand. An agent has none of that. The text a
+tool returns is its entire model of the hardware, so a tool that reports
+success for something it did not do makes the agent confidently wrong, and the
+agent then writes that wrongness into code, commit messages and documentation,
+where it costs far more than the failed operation did.
+
+ST's command line tools do overstate. Three examples from one afternoon with
+an STM32N6:
 
 * `STM32_Programmer_CLI -s <address>` printed "Start operation achieved
   successfully" while the program counter never left the boot ROM.
@@ -17,8 +39,7 @@ examples from one afternoon with an STM32N6:
   so the previous program carried on and its output read as a successful new
   run.
 
-An agent driving those tools inherits every one of those and writes confident,
-wrong conclusions into your codebase. So the rule here is:
+An agent driving those tools inherits every one of them. So the rule here is:
 
 > **A tool reports success only after checking that the thing it was asked to do
 > actually happened.**
@@ -36,6 +57,18 @@ because GDB exited zero. Every result has one of three states, and no tool sets
 `unverified` is deliberately not `ok`: a run nobody watched is not a success,
 however likely it is to have worked. `unverified_because` says what was not
 checked, so it is not mistaken for a failure.
+
+## Who this is for
+
+Use it if your board has an ST-LINK, STM32CubeCLT is already installed, and
+you want an agent whose every report names what was observed on the target.
+It is deliberately small: ten tools, and no breakpoints, stepping, RTT or
+memory writes.
+
+Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp)
+if you need breakpoints, single-stepping, RTT, a J-Link or DAPLink probe, a
+target that is not an STM32, a readback check after flashing, or Windows.
+[Related projects](#related-projects) has the comparison.
 
 ## Status
 
@@ -229,35 +262,37 @@ ID, and keep anything that varies by board or by image out of it.
 
 ## Related projects
 
-Other MCP servers drive microcontrollers over a debug probe, and three overlap
-with this one:
+Three other MCP servers cover the same ground, and each does more than this
+one. The difference is what a result means.
 
 * [Adancurusul/embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp)
-  is the broad one: probe-rs or OpenOCD underneath, so ST-LINK, J-Link, DAPLink
-  and Black Magic probes, several architectures, breakpoints, RTT, flash and
-  run tools, and a fault-diagnosis tool documented as reporting raw evidence
-  without asserting a root cause, which is close to the stance taken here.
+  (Rust; probe-rs or OpenOCD underneath) has breakpoints, stepping, RTT, flash
+  programming with an optional readback compare, J-Link and DAPLink probes,
+  several architectures, and a fault tool that reports the registers without
+  asserting a cause. Its success text is the backend call returning: `run`
+  reports "resumed execution successfully" with nothing observed afterwards,
+  `reset` prints a program counter from a snapshot that is allowed to fail and
+  shows zero when it does, and `run_firmware` ends with "Firmware is now
+  running on target" whether or not RTT was attached. Read from its source on
+  2026-09-04; the file references are in [docs/findings.md](docs/findings.md).
 * [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with
   the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD,
   and adds a full serial toolset, memory writes by symbol and live memory
-  monitoring.
+  monitoring. It returns the tools' own text; its TODO file records a build
+  reported OK with nothing compiled.
 * [Helistana/mcp-stm32cubeide-server](https://github.com/Helistana/mcp-stm32cubeide-server)
-  drives the same CubeIDE loop, with fault decoding and documentation in
+  drives the same CubeIDE loop, with fault decoding, and is documented in
   Chinese.
 
-There are more, mostly J-Link or OpenOCD servers. Every one of them does more
-than this project. What this project does differently is narrow and checkable:
-every result carries `verified`, `unverified` or `failed` with the observation
-named, and no tool can set `ok` on its own, where the CubeIDE-based servers
-return text whose "OK" describes what the tool expected (the second project's
-own TODO file records a build reported OK with nothing compiled); every
-part-specific address carries a provenance that changes what the tool will do;
-the STM32N6 behaviour in [docs/findings.md](docs/findings.md) was measured on
-the board rather than inferred; and its tests were seeded and shown to fail.
-It does not build firmware, does not write memory, has no JTAG or RTT, and
-runs images from RAM without signing. It was built before its author had
-looked for any of the above; the field was searched on 2026-09-02, three weeks
-in, which is the wrong order and is recorded as such in the findings.
+Here, `run_firmware` is verified by console output from the new image and by
+nothing else, a result nobody watched says `unverified`, and no tool can set
+`ok` on its own. Every part-specific address carries a provenance that changes
+what the tool will do, the STM32N6 behaviour in the findings was measured on
+the board, and the tests were seeded and shown to fail. What this project
+lacks against the three: building, memory writes, breakpoints, JTAG, RTT, and
+a readback after flashing. It was built before its author had looked for any
+of them; the field was searched on 2026-09-02, three weeks in, which is the
+wrong order and is recorded as such in the findings.
 
 ## Licence
 

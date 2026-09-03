@@ -193,3 +193,24 @@ project's own axis. A separate project would likely still have been the outcome,
 the difference is the result contract rather than a feature, but that should have been a
 decision. The lesson went into the review checklist: search before the roadmap, and name
 the neighbours in the README.
+
+## What the neighbours report (read 2026-09-04)
+
+The README's comparison with embedded-debugger-mcp rests on its source at commit 7113ae44
+(2026-07-16), files `src/tools/debugger_tools/target_control.rs` and
+`src/tools/debugger_tools/flash.rs`:
+
+- `run` returns "Target resumed execution successfully! ... Status: Running" once
+  `backend.run()` returns Ok. No read of the core follows.
+- `reset` calls `backend.snapshot().await.ok()` and maps a failed snapshot to `(0, 0)`, so the
+  message "Target reset completed successfully." can carry `PC: 0x00000000` when the read
+  failed. That is the same shape as the "Start operation achieved successfully" that opened
+  this project.
+- `run_firmware` emits "Firmware is now running on target." after `core.reset()` and
+  `core.run()` return Ok. The RTT attach in its step 4 is behind `args.attach_rtt`, and the
+  closing line is emitted either way.
+- `flash_program` takes `verify` (or the config's `verify_after_program`), and a separate
+  `flash_verify` compares raw bytes against target flash. This project reads nothing back after
+  `flash_firmware`, and its result says so.
+
+The comparison is fair only while that is what their code does. Re-read before repeating it.
