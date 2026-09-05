@@ -1111,7 +1111,7 @@
       "passed": 120,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "arbiter",
+      "ruling_by": "human",
       "runs": 3
     },
     {
@@ -1153,7 +1153,7 @@
       "passed": 110,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "arbiter",
+      "ruling_by": "human",
       "runs": 3
     }
   ],

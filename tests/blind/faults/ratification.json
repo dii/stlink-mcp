@@ -735,6 +735,26 @@
       "by": "arbiter",
       "reason": "After the arbiter's escalation and two writer rounds (round 2 still green: the fresh reference was computed before X and the cache corrupted both sides; round 3 takes the reference from the contract, raw equals the input words per FAULTS-N11, and re-primes before any fresh call). Facts: red-attributed, 2 tagged N13 cases (the two pairs that hold CFSR fixed), both FAIL when run alone against a seeded copy (isolation check), red_in_setup empty, 110 of 129 passed. For the owner's sample.",
       "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N13-s1",
+      "ruling": "accept",
+      "when": "2026-09-05T23:34:29+00:00",
+      "by": "arbiter",
+      "reason": "owner sample 2026-09-06 of the 2026-09-05 arbiter accept: the session re-applied the seed to a throwaway copy and the tagged test test_faults_n13_a_input_dict_key_set_unchanged_after_decode[empty-dict] fails when run alone; 9 reds, all N13, none in set-up",
+      "sampled": true,
+      "human": "dawid"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N13-s2",
+      "ruling": "accept",
+      "when": "2026-09-05T23:34:29+00:00",
+      "by": "arbiter",
+      "reason": "owner sample 2026-09-06 of the round-three accept (recorded as arbiter, made by the orchestrator after the isolation check): the session re-applied the seed to a throwaway copy; both round-three tagged tests fail when run alone, the N13 file gives 2 failed 34 passed seeded and 36 passed unseeded; the 17 reds in other clauses are the seed's own breadth as a process-lifetime cache",
+      "sampled": true,
+      "human": "dawid"
     }
   ],
   "history": [
