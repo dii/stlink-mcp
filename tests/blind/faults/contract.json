@@ -111,6 +111,16 @@
       "weak": false,
       "status": "stated",
       "level": "logic"
+    },
+    {
+      "id": "FAULTS-N13",
+      "text": "decode(words) does not modify the dict it is given and carries no state between calls: after the call the input dict has the same keys and values as before, and two calls with equal inputs return equal results whatever was decoded in between. violations: (a) the input dict gains a key or has a value changed by the call; (b) a result depends on an earlier call's input.",
+      "source": "ruling: owner 2026-09-05, intended: FAULTS-O12 (decode may mutate its input or keep state); corroborated by ROADMAP.md Phase 5 ('The decode logic is pure and fully tested offline') and the module docstring ('Pure logic, no hardware')",
+      "rank": 1,
+      "weak": false,
+      "status": "promoted-untested",
+      "level": "logic",
+      "note": "a writer round for this clause follows: blind tests carrying faults_n13, one seed per violation, arbiter, validate"
     }
   ],
   "observed_not_intended": [

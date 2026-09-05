@@ -226,3 +226,13 @@ timing, a peripheral, power, or hardware state — they describe what `decode()`
 module docstring describes ("Pure logic, no hardware."). The actual register read (`allow_reset`,
 probe connection, etc.) is caller-side (`server.py`, rank 2) and out of scope for this unit's
 contract.
+
+## Promoted from a behaviour ruling (owner, 2026-09-05)
+
+FAULTS-N13 (rank 1, ruling: owner 2026-09-05 on FAULTS-O12; corroborated by ROADMAP.md Phase 5 "The decode logic is
+pure and fully tested offline" and the module docstring "Pure logic, no hardware"): decode(words) does not modify the
+dict it is given and carries no state between calls: after the call the input dict has the same keys and values as
+before, and two calls with equal inputs return equal results whatever was decoded in between.
+  Note: violations: (a) the input dict gains a key or has a value changed by the call; (b) a result depends on an
+  earlier call's input. Status: promoted, untested until its writer round.
+

@@ -218,7 +218,7 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:40+00:00",
       "baseline_green": true,
-      "ratified": null,
+      "ratified": true,
       "red_tests": [
         "test_faults_n11_b_raw_values_match_the_registers_actually_used",
         "test_faults_n11_d_raw_values_fit_unsigned_32_bit_range",
@@ -231,7 +231,9 @@
       ],
       "collection_errors": [],
       "passed": 90,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "human"
     },
     {
       "id": "FAULTS-N11-s4",
@@ -331,7 +333,7 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:50+00:00",
       "baseline_green": true,
-      "ratified": null,
+      "ratified": true,
       "red_tests": [
         "test_faults_n1_a_scb_addresses_match_documented_offsets",
         "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
@@ -342,7 +344,9 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "human"
     },
     {
       "id": "FAULTS-N1-s2",
@@ -437,7 +441,7 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:59+00:00",
       "baseline_green": true,
-      "ratified": null,
+      "ratified": true,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-0-IACCVIOL]",
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-1-DACCVIOL]",
@@ -509,7 +513,9 @@
       ],
       "collection_errors": [],
       "passed": 51,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "human"
     },
     {
       "id": "FAULTS-N2-s4",
@@ -769,7 +775,7 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:21+00:00",
       "baseline_green": true,
-      "ratified": null,
+      "ratified": true,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
         "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
@@ -786,7 +792,9 @@
       ],
       "collection_errors": [],
       "passed": 85,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "human"
     },
     {
       "id": "FAULTS-N7-s1",
@@ -1114,8 +1122,9 @@
         "id": "FAULTS-O12",
         "text": "decode() reads words only through .get() and never mutates the caller's dict.",
         "where": "src/stlink_mcp/faults.py:138-143",
-        "ruling": "escalate: proposed clause FAULTS-N13 pinning that decode() does not mutate the dict it is given and carries no state between calls; source rank 1, ROADMAP.md Phase 5 (\"The decode logic is pure and fully tested offline\"), corroborated rank 3 by the module docstring (\"Pure logic, no hardware\")",
-        "ruling_by": "arbiter"
+        "ruling": "intended",
+        "ruling_by": "dawid",
+        "when": "2026-09-05"
       },
       {
         "id": "FAULTS-O13",
@@ -1150,6 +1159,17 @@
   "arbiter": {
     "sample_size": 4,
     "agreement": 1.0,
-    "note": "4 of 18 triage rulings sampled at random (seed 20260903: level N8, level N2, O5, level N4); owner agreed with all four on 2026-09-03"
+    "note": "4 of 18 triage rulings sampled at random (seed 20260903: level N8, level N2, O5, level N4); owner agreed with all four on 2026-09-03",
+    "seed_sample": {
+      "size": 4,
+      "items": [
+        "FAULTS-N1-s1",
+        "FAULTS-N2-s3",
+        "FAULTS-N6-s2",
+        "FAULTS-N11-s3"
+      ],
+      "agreement": 1.0,
+      "note": "owner re-checked the four caveated accepts on 2026-09-05 and agreed with all"
+    }
   }
 }

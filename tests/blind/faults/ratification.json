@@ -1,8 +1,8 @@
 {
-  "who": "Dawid Oosthuizen",
-  "when": "2026-09-02T22:48:12+00:00",
-  "contract_sha256": "e6379aab85a2f89b258ad76c9ab75c6e8b09a35d90b6c6bc9cf5a250c20b0c08",
-  "note": "Re-ratified 2026-09-03 after the step-4 reds: N8 re-worded per the arbiter (distinctness, no naming form), O8 added, O3 promoted to N12 (raw keys). Owner: 'yes to all'.",
+  "who": "dawid",
+  "when": "2026-09-05T06:43:53+00:00",
+  "contract_sha256": "76ecfb4c40b7f57477b3876c425c81050337ee74a59a8bf30b1242a0d8a50578",
+  "note": "owner 2026-09-05: FAULTS-N13 promoted from O12 (intended), four caveated seed accepts confirmed",
   "scope": [
     "contract",
     "weak-source clauses",
@@ -668,6 +668,46 @@
       "by": "arbiter",
       "reason": "The clause asserts only that six specific strings are the keys of the FaultStatus.raw dict decode() builds, which a host test settles by calling decode() with a literal dict and comparing set(status.raw). CFSR, HFSR, DFSR, MMFAR, BFAR and AFSR appear here as CMSIS-documented labels for words already read and handed in, not as registers the test must read or as any target state the clause claims; the rank-1 source is a header file, so an on-target run would settle it no better than the document does. This matches the accepted level on FAULTS-N11, which covers the same raw dict and was sampled by the owner.",
       "sampled": false
+    },
+    {
+      "kind": "behaviour",
+      "item": "FAULTS-O12",
+      "ruling": "intended",
+      "when": "2026-09-05T06:43:53+00:00",
+      "by": "human",
+      "who": "dawid"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N1-s1",
+      "ruling": "accept",
+      "when": "2026-09-05T06:43:53+00:00",
+      "by": "human",
+      "who": "dawid"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N2-s3",
+      "ruling": "accept",
+      "when": "2026-09-05T06:43:53+00:00",
+      "by": "human",
+      "who": "dawid"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N6-s2",
+      "ruling": "accept",
+      "when": "2026-09-05T06:43:53+00:00",
+      "by": "human",
+      "who": "dawid"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N11-s3",
+      "ruling": "accept",
+      "when": "2026-09-05T06:43:53+00:00",
+      "by": "human",
+      "who": "dawid"
     }
   ],
   "history": [
@@ -676,6 +716,12 @@
       "when": "2026-09-02T22:24:30+00:00",
       "contract_sha256": "8ba46f39106e8206ba7b7ca9ad819069847590ef89dd1250c09247eeef7a3cbe",
       "note": "Ratified in conversation 2026-09-03 ('write all the blind tests and let's see'). O3 left escalated: the writer asserts count and values of raw, not key spellings. Sample of 4 arbiter rulings (seed 20260903: level N8, level N2, O5, level N4) presented, verdicts pending."
+    },
+    {
+      "who": "Dawid Oosthuizen",
+      "when": "2026-09-02T22:48:12+00:00",
+      "contract_sha256": "e6379aab85a2f89b258ad76c9ab75c6e8b09a35d90b6c6bc9cf5a250c20b0c08",
+      "note": "Re-ratified 2026-09-03 after the step-4 reds: N8 re-worded per the arbiter (distinctness, no naming form), O8 added, O3 promoted to N12 (raw keys). Owner: 'yes to all'."
     }
   ]
 }
