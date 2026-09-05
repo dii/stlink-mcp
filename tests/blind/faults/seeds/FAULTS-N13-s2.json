@@ -1,0 +1,20 @@
+{
+  "id": "FAULTS-N13-s2",
+  "need": "FAULTS-N13",
+  "kind": "seed",
+  "description": "decode() memoizes the last FaultStatus in a module-level cache keyed only on the CFSR word ('if CFSR looks unchanged, nothing changed'), so a call can return a stale result computed from an earlier call's HFSR/DFSR/MMFAR/BFAR/AFSR whenever that earlier call happened to share the same CFSR value; this could incidentally also flip some FAULTS-N3/N4/N7 tests if those hold CFSR fixed while varying DFSR or the address registers across sequential calls in the same process, though a per-need isolated test run would see only FAULTS-N13's own before/after comparison go red.",
+  "edits": [
+    {
+      "find": "# Validity flags inside CFSR, used to gate the address registers.\n_MMARVALID = 1 << 7   # MMFSR bit 7 = CFSR bit 7\n_BFARVALID = 1 << 15  # BFSR bit 7 = CFSR bit 15",
+      "replace": "# Validity flags inside CFSR, used to gate the address registers.\n_MMARVALID = 1 << 7   # MMFSR bit 7 = CFSR bit 7\n_BFARVALID = 1 << 15  # BFSR bit 7 = CFSR bit 15\n\n# Polling often re-reads the same fault snapshot; skip the rebuild when the\n# primary status register (CFSR) looks unchanged from last time.\n_last_cfsr: int | None = None\n_last_status: \"FaultStatus | None\" = None"
+    },
+    {
+      "find": "    safe: zero means no fault bit is set.\n    \"\"\"\n    cfsr = words.get(CFSR, 0)",
+      "replace": "    safe: zero means no fault bit is set.\n    \"\"\"\n    global _last_cfsr, _last_status\n    cfsr = words.get(CFSR, 0)\n    if _last_status is not None and cfsr == _last_cfsr:\n        return _last_status"
+    },
+    {
+      "find": "    return FaultStatus(\n        faults=faults,\n        debug=debug,\n        mmfar=mmfar,\n        bfar=bfar,\n        afsr=afsr,\n        raw={\n            \"CFSR\": cfsr,\n            \"HFSR\": hfsr,\n            \"DFSR\": dfsr,\n            \"MMFAR\": mmfar_raw,\n            \"BFAR\": bfar_raw,\n            \"AFSR\": afsr,\n        },\n    )",
+      "replace": "    result = FaultStatus(\n        faults=faults,\n        debug=debug,\n        mmfar=mmfar,\n        bfar=bfar,\n        afsr=afsr,\n        raw={\n            \"CFSR\": cfsr,\n            \"HFSR\": hfsr,\n            \"DFSR\": dfsr,\n            \"MMFAR\": mmfar_raw,\n            \"BFAR\": bfar_raw,\n            \"AFSR\": afsr,\n        },\n    )\n    _last_cfsr = cfsr\n    _last_status = result\n    return result"
+    }
+  ]
+}

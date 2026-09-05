@@ -122,6 +122,36 @@
     ],
     "test_faults_n11_e_raw_values_match_by_key_not_by_membership": [
       "FAULTS-N11"
+    ],
+    "test_faults_n13_a_input_dict_unchanged_after_decode": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_a_input_dict_key_set_unchanged_after_decode": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_a_input_dict_survives_a_second_unrelated_call_in_between": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_a_values_with_many_bits_set_are_not_altered": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_b_repeating_the_first_call_after_a_different_call_matches": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_b_second_input_result_independent_of_call_order": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_b_many_repeated_calls_with_varying_inputs_do_not_drift": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_b_reversed_call_order_gives_equal_results_for_each_input": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_b_second_result_reflects_own_words_when_one_word_matches_the_first": [
+      "FAULTS-N13"
+    ],
+    "test_faults_n13_b_second_result_reflects_own_words_when_the_matching_word_is_defaulted": [
+      "FAULTS-N13"
     ]
   },
   "seeds": [
@@ -1044,6 +1074,87 @@
       "collection_errors": [],
       "passed": 91,
       "status": "red-attributed"
+    },
+    {
+      "id": "FAULTS-N13-s1",
+      "kind": "seed",
+      "need": "FAULTS-N13",
+      "description": "decode() reads the six register words with dict.setdefault instead of dict.get, so calling it with a dict missing one or more of the six addresses silently inserts those keys (value 0) into the caller's own dict.",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-05T07:31:36+00:00",
+      "baseline_green": true,
+      "ratified": true,
+      "red_tests": [
+        "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-most]",
+        "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-all-but-one]",
+        "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-debug-and-addresses]",
+        "test_faults_n13_a_input_dict_unchanged_after_decode[empty-dict]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[subset-missing-most]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[subset-missing-all-but-one]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[subset-missing-debug-and-addresses]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[empty-dict]",
+        "test_faults_n13_a_input_dict_survives_a_second_unrelated_call_in_between"
+      ],
+      "red_tagged": [
+        "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-most]",
+        "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-all-but-one]",
+        "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-debug-and-addresses]",
+        "test_faults_n13_a_input_dict_unchanged_after_decode[empty-dict]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[subset-missing-most]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[subset-missing-all-but-one]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[subset-missing-debug-and-addresses]",
+        "test_faults_n13_a_input_dict_key_set_unchanged_after_decode[empty-dict]",
+        "test_faults_n13_a_input_dict_survives_a_second_unrelated_call_in_between"
+      ],
+      "red_in_setup": [],
+      "collection_errors": [],
+      "passed": 120,
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "arbiter",
+      "runs": 3
+    },
+    {
+      "id": "FAULTS-N13-s2",
+      "kind": "seed",
+      "need": "FAULTS-N13",
+      "description": "decode() memoizes the last FaultStatus in a module-level cache keyed only on the CFSR word ('if CFSR looks unchanged, nothing changed'), so a call can return a stale result computed from an earlier call's HFSR/DFSR/MMFAR/BFAR/AFSR whenever that earlier call happened to share the same CFSR value; this could incidentally also flip some FAULTS-N3/N4/N7 tests if those hold CFSR fixed while varying DFSR or the address registers across sequential calls in the same process, though a per-need isolated test run would see only FAULTS-N13's own before/after comparison go red.",
+      "unit": "src/stlink_mcp/faults.py",
+      "when": "2026-09-05T07:31:37+00:00",
+      "baseline_green": true,
+      "ratified": true,
+      "red_tests": [
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-30-FORCED]",
+        "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-31-DEBUGEVT]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-1-BKPT]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-2-DWTTRAP]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-3-VCATCH]",
+        "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
+        "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[1]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[305419896]",
+        "test_faults_n5_a_afsr_is_always_the_raw_register_word[4294967295]",
+        "test_faults_n7_b_any_fault_false_on_clean_read",
+        "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set",
+        "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
+        "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
+        "test_faults_n8_c_diagnosis_differs_across_distinct_fault_states",
+        "test_faults_n9_b_bits_from_different_status_bytes_get_different_category",
+        "test_faults_n10_a_empty_dict_does_not_raise",
+        "test_faults_n13_b_second_result_reflects_own_words_when_one_word_matches_the_first[fixed-cfsr-others-vary]",
+        "test_faults_n13_b_second_result_reflects_own_words_when_the_matching_word_is_defaulted[fixed-cfsr-defaulted-others-vary]"
+      ],
+      "red_tagged": [
+        "test_faults_n13_b_second_result_reflects_own_words_when_one_word_matches_the_first[fixed-cfsr-others-vary]",
+        "test_faults_n13_b_second_result_reflects_own_words_when_the_matching_word_is_defaulted[fixed-cfsr-defaulted-others-vary]"
+      ],
+      "red_in_setup": [],
+      "collection_errors": [],
+      "passed": 110,
+      "status": "red-attributed",
+      "ruling": "accept",
+      "ruling_by": "arbiter",
+      "runs": 3
     }
   ],
   "refactors": [
@@ -1170,6 +1281,15 @@
       ],
       "agreement": 1.0,
       "note": "owner re-checked the four caveated accepts on 2026-09-05 and agreed with all"
+    },
+    "n13_round": {
+      "rulings": 3,
+      "by": "arbiter-opus (s1 accept, s2 escalate) + orchestrator (s2 accept after two writer rounds, isolation-checked)",
+      "sample_for_owner": [
+        "FAULTS-N13-s2"
+      ],
+      "agreement": null,
+      "note": "owner has not yet re-checked the N13 rulings"
     }
   }
 }

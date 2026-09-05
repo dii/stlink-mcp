@@ -1,7 +1,10 @@
 {
   "unit": "faults",
   "unit_file": "src/stlink_mcp/faults.py",
-  "tests_file": "tests/blind/test_faults.py",
+  "tests_file": [
+    "tests/blind/test_faults.py",
+    "tests/blind/test_faults_n13.py"
+  ],
   "level": "logic",
   "clauses": [
     {
@@ -118,9 +121,10 @@
       "source": "ruling: owner 2026-09-05, intended: FAULTS-O12 (decode may mutate its input or keep state); corroborated by ROADMAP.md Phase 5 ('The decode logic is pure and fully tested offline') and the module docstring ('Pure logic, no hardware')",
       "rank": 1,
       "weak": false,
-      "status": "promoted-untested",
+      "status": "stated",
       "level": "logic",
-      "note": "a writer round for this clause follows: blind tests carrying faults_n13, one seed per violation, arbiter, validate"
+      "note": "a writer round for this clause follows: blind tests carrying faults_n13, one seed per violation, arbiter, validate",
+      "promoted": "2026-09-05 from FAULTS-O12 (owner ruling); tests written 2026-09-05"
     }
   ],
   "observed_not_intended": [

@@ -708,6 +708,33 @@
       "when": "2026-09-05T06:43:53+00:00",
       "by": "human",
       "who": "dawid"
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N13-s1",
+      "ruling": "accept",
+      "when": "2026-09-05T07:20:10+00:00",
+      "by": "arbiter",
+      "reason": "Genuine FAULTS-N13 violation (a), 'the input dict gains a key': the seed replaces the six words.get(ADDR, 0) reads at src/stlink_mcp/faults.py:138-143 with words.setdefault(ADDR, 0), which writes the FAULTS-N10 missing-address default of 0 back into the caller's own dict. The N13 tests catch it by design, not by accident: ledger red_tagged lists 9 cases, all in the (a) family (test_faults_n13_a_input_dict_unchanged_after_decode, test_faults_n13_a_input_dict_key_set_unchanged_after_decode, test_faults_n13_a_input_dict_survives_a_second_unrelated_call_in_between), and they are exactly the four builders that omit addresses (subset-missing-most, subset-missing-all-but-one, subset-missing-debug-and-addresses, empty-dict); the two all-six builders stay green because setdefault inserts nothing when every key is present, which is the seed's shape, not a gap in the tests. tests/blind/test_faults_ | mechanical rule verdict: Would have cleared it (9 reds, 7.7% of the 117-test suite, all confined to FAULTS-N13 and no second clause touched), and that is the correct outcome, because the accept holds on the merits and the catch survives running the case alone.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N13-s2",
+      "ruling": "escalate",
+      "when": "2026-09-05T07:20:10+00:00",
+      "by": "arbiter",
+      "reason": "The seed is genuine: the module-level _last_cfsr/_last_status pair and the early 'if _last_status is not None and cfsr == _last_cfsr: return _last_status' are precisely FAULTS-N13 violation (b), 'a result depends on an earlier call's input'. But the single tagged red is luck, not test design. Reproducing the seed on an isolated /tmp copy gives the ledger's run exactly (18 failed, 99 passed, same names), yet test_faults_n13_b_second_input_result_independent_of_call_order[subset-then-subset] PASSES when run on its own (1 passed) and when run with its sibling for the same pair id (2 passed). It only fails in file order: the preceding parameter case (many-bits-then-clean) ends with decode(_all_six_clean()), leaving the cache keyed on CFSR=0, so the next case's first call y_fresh = decode(_subset_missing_all_but_one()) = decode({AFSR: 0x12345678}) has CFSR absent (defaults to 0), hits that re | mechanical rule verdict: Would have routed it to residue (18 reds spanning FAULTS-N13 plus seven other clauses, far past 'at most one other', even though 18/117 is only 15% and passes the quarter-of-the-suite bound), which is the correct destination but reached for the wrong reason: it trips on the seed's legitimate breadth as a process-lifetime cache, not on the weak-catch problem that is the actual reason a human has to look.",
+      "sampled": false
+    },
+    {
+      "kind": "seed",
+      "item": "FAULTS-N13-s2",
+      "ruling": "accept",
+      "when": "2026-09-05T07:32:04+00:00",
+      "by": "arbiter",
+      "reason": "After the arbiter's escalation and two writer rounds (round 2 still green: the fresh reference was computed before X and the cache corrupted both sides; round 3 takes the reference from the contract, raw equals the input words per FAULTS-N11, and re-primes before any fresh call). Facts: red-attributed, 2 tagged N13 cases (the two pairs that hold CFSR fixed), both FAIL when run alone against a seeded copy (isolation check), red_in_setup empty, 110 of 129 passed. For the owner's sample.",
+      "sampled": false
     }
   ],
   "history": [

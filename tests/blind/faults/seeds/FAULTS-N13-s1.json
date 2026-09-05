@@ -1,0 +1,12 @@
+{
+  "id": "FAULTS-N13-s1",
+  "need": "FAULTS-N13",
+  "kind": "seed",
+  "description": "decode() reads the six register words with dict.setdefault instead of dict.get, so calling it with a dict missing one or more of the six addresses silently inserts those keys (value 0) into the caller's own dict.",
+  "edits": [
+    {
+      "find": "    cfsr = words.get(CFSR, 0)\n    hfsr = words.get(HFSR, 0)\n    dfsr = words.get(DFSR, 0)\n    mmfar_raw = words.get(MMFAR, 0)\n    bfar_raw = words.get(BFAR, 0)\n    afsr = words.get(AFSR, 0)",
+      "replace": "    cfsr = words.setdefault(CFSR, 0)\n    hfsr = words.setdefault(HFSR, 0)\n    dfsr = words.setdefault(DFSR, 0)\n    mmfar_raw = words.setdefault(MMFAR, 0)\n    bfar_raw = words.setdefault(BFAR, 0)\n    afsr = words.setdefault(AFSR, 0)"
+    }
+  ]
+}
