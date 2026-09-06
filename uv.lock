@@ -744,7 +744,6 @@ wheels = [
 
 [[package]]
 name = "stlink-mcp"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

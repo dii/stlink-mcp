@@ -1,6 +1,6 @@
 [project]
 name = "stlink-mcp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "An MCP server for programming and inspecting STM32 targets over ST-LINK, where every tool verifies its own effect before reporting success."
 readme = "README.md"
 license = { text = "MIT" }
@@ -37,7 +37,7 @@ Issues = "https://github.com/dii/stlink-mcp/issues"
 stlink-mcp = "stlink_mcp.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "versioningit"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -70,3 +70,23 @@ dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# The annotated git tag is the only copy of the version (the author's
+# ADR-0030). A build past the last tag reports "<tag>+<commits since the tag>",
+# and an uncommitted tree adds ".dirty"; a checkout with no tag reports 0.0.0+N.
+# Freeze tags under freeze/ are never read as versions.
+[tool.hatch.version]
+source = "versioningit"
+
+[tool.versioningit.vcs]
+method = "git"
+match = ["v[0-9]*"]
+default-tag = "v0.0.0"
+
+[tool.versioningit.tag2version]
+rmprefix = "v"
+
+[tool.versioningit.format]
+distance = "{base_version}+{distance}"
+dirty = "{base_version}+0.dirty"
+distance-dirty = "{base_version}+{distance}.dirty"

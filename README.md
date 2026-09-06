@@ -80,6 +80,19 @@ their databases name several separate SRAM banks; `board_state` names the
 addresses it would not choose between, and a board file settles it. Anything
 else unrecognised falls back to identification and memory reads only.
 
+Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) and are
+read from the git tag; a build past the last tag reports the tag plus the number of
+commits since it, as in `0.1.0+3`. The public API that promise covers is the ten tools
+in the table below, their parameters and result fields, and the `stlink-mcp` command
+line. At 0.y.z any of it may change. Beta is reached when one user outside this project
+reports a run on a board this README does not list as measured, the ten tool signatures
+and result fields are declared stable, and the JTAG and Windows questions are decided.
+Release candidate follows once two known defects are fixed: two tool calls at once can
+give one GDB port to two probes or start two servers on one probe, and `run_firmware`
+discards GDB's own output on the failure path where the cause matters. 1.0.0 is cut
+when every promise in this README has a measurement behind it in
+[docs/findings.md](docs/findings.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 Plans are in [ROADMAP.md](ROADMAP.md). The measurements behind the claims in
 this file are in [docs/findings.md](docs/findings.md).
 
