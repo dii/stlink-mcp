@@ -163,7 +163,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:32+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n10_a_empty_dict_does_not_raise"
       ],
@@ -172,7 +171,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N10-s2",
@@ -182,7 +182,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:34+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n10_a_empty_dict_does_not_raise",
         "test_faults_n10_b_missing_keys_default_to_zero_not_error"
@@ -193,7 +192,8 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N11-s1",
@@ -203,7 +203,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:36+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n11_a_raw_has_one_entry_per_register",
         "test_faults_n11_b_raw_values_match_the_registers_actually_used",
@@ -217,7 +216,8 @@
       ],
       "collection_errors": [],
       "passed": 89,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N11-s2",
@@ -227,7 +227,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:38+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
       ],
@@ -238,7 +237,8 @@
       "passed": 92,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "arbiter"
+      "ruling_by": "arbiter",
+      "accepted": true
     },
     {
       "id": "FAULTS-N11-s3",
@@ -248,7 +248,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:40+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n11_b_raw_values_match_the_registers_actually_used",
         "test_faults_n11_d_raw_values_fit_unsigned_32_bit_range",
@@ -263,7 +262,8 @@
       "passed": 90,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "human"
+      "ruling_by": "human",
+      "accepted": true
     },
     {
       "id": "FAULTS-N11-s4",
@@ -273,7 +273,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:42+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n11_e_raw_values_match_by_key_not_by_membership"
       ],
@@ -284,7 +283,8 @@
       "passed": 92,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "arbiter"
+      "ruling_by": "arbiter",
+      "accepted": true
     },
     {
       "id": "FAULTS-N12-s1",
@@ -294,7 +294,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:44+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n12_a_raw_has_no_key_outside_the_six_cmsis_names",
         "test_faults_n12_b_raw_key_set_is_exactly_the_six_cmsis_names",
@@ -306,7 +305,8 @@
       ],
       "collection_errors": [],
       "passed": 90,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N12-s2",
@@ -316,7 +316,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:46+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n11_a_raw_has_one_entry_per_register",
         "test_faults_n11_b_raw_values_match_the_registers_actually_used",
@@ -328,7 +327,8 @@
       ],
       "collection_errors": [],
       "passed": 89,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N12-s3",
@@ -338,7 +338,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:48+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n11_a_raw_has_one_entry_per_register",
         "test_faults_n11_b_raw_values_match_the_registers_actually_used",
@@ -353,7 +352,8 @@
       "passed": 89,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "arbiter"
+      "ruling_by": "arbiter",
+      "accepted": true
     },
     {
       "id": "FAULTS-N1-s1",
@@ -363,7 +363,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:50+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n1_a_scb_addresses_match_documented_offsets",
         "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
@@ -376,7 +375,8 @@
       "passed": 91,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "human"
+      "ruling_by": "human",
+      "accepted": true
     },
     {
       "id": "FAULTS-N1-s2",
@@ -386,7 +386,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:51+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n1_b_fault_region_base_equals_cfsr",
         "test_faults_n1_d_region_is_the_six_registers_four_bytes_apart_in_order"
@@ -397,7 +396,8 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N1-s3",
@@ -407,7 +407,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:53+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n1_c_fault_region_size_is_24_bytes"
       ],
@@ -416,7 +415,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N2-s1",
@@ -426,7 +426,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:55+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-10-IMPRECISERR]",
         "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
@@ -441,7 +440,8 @@
       ],
       "collection_errors": [],
       "passed": 87,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N2-s2",
@@ -451,7 +451,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:57+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
         "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member"
@@ -461,7 +460,8 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N2-s3",
@@ -471,7 +471,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:14:59+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-0-IACCVIOL]",
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-1-DACCVIOL]",
@@ -545,7 +544,8 @@
       "passed": 51,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "human"
+      "ruling_by": "human",
+      "accepted": true
     },
     {
       "id": "FAULTS-N2-s4",
@@ -555,7 +555,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:02+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-9-PRECISERR]",
         "test_faults_n2_b_independently_set_bits_each_get_their_own_entry",
@@ -569,7 +568,8 @@
       ],
       "collection_errors": [],
       "passed": 89,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N3-s1",
@@ -579,7 +579,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:03+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-0-HALTED]",
         "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-1-BKPT]",
@@ -599,7 +598,8 @@
       ],
       "collection_errors": [],
       "passed": 86,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N3-s2",
@@ -609,7 +609,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:05+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n3_c_cfsr_and_hfsr_bits_never_land_in_debug"
       ],
@@ -618,7 +617,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N3-s3",
@@ -628,7 +628,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:07+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n3_a_single_dfsr_bit_decodes_to_debug_only[DFSR-4-EXTERNAL]",
         "test_faults_n3_b_all_dfsr_bits_together_land_only_in_debug"
@@ -639,7 +638,8 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N4-s1",
@@ -649,7 +649,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:09+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n4_a_address_is_none_when_valid_bit_clear[mmfar]",
         "test_faults_n4_c_valid_bits_are_not_swapped[bfar]",
@@ -662,7 +661,8 @@
       ],
       "collection_errors": [],
       "passed": 89,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N4-s2",
@@ -672,7 +672,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:11+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n4_b_address_present_when_valid_bit_set[bfar]",
         "test_faults_n4_c_valid_bits_are_not_swapped[bfar]",
@@ -684,7 +683,8 @@
       ],
       "collection_errors": [],
       "passed": 90,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N4-s3",
@@ -694,7 +694,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:13+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n4_b_address_present_when_valid_bit_set[mmfar]",
         "test_faults_n4_b_address_present_when_valid_bit_set[bfar]",
@@ -712,7 +711,8 @@
       ],
       "collection_errors": [],
       "passed": 86,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N5-s1",
@@ -722,7 +722,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:15+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[bits-1-30-31]",
         "test_faults_n5_d_no_afsr_bits_decoded_into_faults_or_debug[all-ones]",
@@ -737,7 +736,8 @@
       "passed": 90,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "arbiter"
+      "ruling_by": "arbiter",
+      "accepted": true
     },
     {
       "id": "FAULTS-N5-s2",
@@ -747,7 +747,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:17+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n5_a_afsr_is_always_the_raw_register_word[0]",
         "test_faults_n5_a_afsr_is_always_the_raw_register_word[1]",
@@ -768,7 +767,8 @@
       ],
       "collection_errors": [],
       "passed": 84,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N6-s1",
@@ -778,7 +778,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:19+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
         "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
@@ -795,7 +794,8 @@
       ],
       "collection_errors": [],
       "passed": 85,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N6-s2",
@@ -805,7 +805,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:21+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[CFSR-20-STKOF]",
         "test_faults_n2_c_every_defined_bit_set_at_once_yields_exactly_those_entries",
@@ -824,7 +823,8 @@
       "passed": 85,
       "status": "red-attributed",
       "ruling": "accept",
-      "ruling_by": "human"
+      "ruling_by": "human",
+      "accepted": true
     },
     {
       "id": "FAULTS-N7-s1",
@@ -834,7 +834,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:23+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n7_b_any_fault_false_on_clean_read",
         "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set",
@@ -848,7 +847,8 @@
       ],
       "collection_errors": [],
       "passed": 88,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N7-s2",
@@ -858,7 +858,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:25+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-0-IACCVIOL]",
         "test_faults_n7_a_any_fault_true_for_every_single_fault_bit[CFSR-1-DACCVIOL]",
@@ -909,7 +908,8 @@
       ],
       "collection_errors": [],
       "passed": 71,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N7-s3",
@@ -919,7 +919,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:27+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n7_c_any_fault_false_when_only_debug_bits_are_set"
       ],
@@ -928,7 +927,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N8-s1",
@@ -938,7 +938,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:29+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n8_a_diagnosis_nonempty_on_clean_read"
       ],
@@ -947,7 +946,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N8-s2",
@@ -957,7 +957,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:31+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n8_b_all_single_bit_diagnoses_are_mutually_distinct",
         "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member",
@@ -974,7 +973,8 @@
       ],
       "collection_errors": [],
       "passed": 88,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N8-s3",
@@ -984,7 +984,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:33+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n8_d_known_mmfar_address_appears_in_diagnosis",
         "test_faults_n8_e_known_bfar_address_appears_in_diagnosis"
@@ -995,7 +994,8 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N8-s4",
@@ -1005,7 +1005,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:35+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n8_f_two_bit_diagnosis_differs_from_each_single_bit_member"
       ],
@@ -1014,7 +1013,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N9-s1",
@@ -1024,7 +1024,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:37+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n9_a_bits_in_same_status_byte_share_category"
       ],
@@ -1033,7 +1032,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N9-s2",
@@ -1043,7 +1043,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:39+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n9_b_bits_from_different_status_bytes_get_different_category"
       ],
@@ -1052,7 +1051,8 @@
       ],
       "collection_errors": [],
       "passed": 92,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N9-s3",
@@ -1062,7 +1062,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:41+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [
         "test_faults_n9_a_bits_in_same_status_byte_share_category",
         "test_faults_n9_c_debugevt_categorized_within_hardfault_family"
@@ -1073,7 +1072,8 @@
       ],
       "collection_errors": [],
       "passed": 91,
-      "status": "red-attributed"
+      "status": "red-attributed",
+      "accepted": null
     },
     {
       "id": "FAULTS-N13-s1",
@@ -1083,7 +1083,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-05T07:31:36+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-most]",
         "test_faults_n13_a_input_dict_unchanged_after_decode[subset-missing-all-but-one]",
@@ -1112,7 +1111,8 @@
       "status": "red-attributed",
       "ruling": "accept",
       "ruling_by": "human",
-      "runs": 3
+      "runs": 3,
+      "accepted": true
     },
     {
       "id": "FAULTS-N13-s2",
@@ -1122,7 +1122,6 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-05T07:31:37+00:00",
       "baseline_green": true,
-      "ratified": true,
       "red_tests": [
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-30-FORCED]",
         "test_faults_n2_a_single_bit_decodes_to_exactly_one_entry[HFSR-31-DEBUGEVT]",
@@ -1154,7 +1153,8 @@
       "status": "red-attributed",
       "ruling": "accept",
       "ruling_by": "human",
-      "runs": 3
+      "runs": 3,
+      "accepted": true
     }
   ],
   "refactors": [
@@ -1166,12 +1166,12 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:43+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [],
       "red_tagged": [],
       "collection_errors": [],
       "passed": 93,
-      "status": "green"
+      "status": "green",
+      "accepted": null
     },
     {
       "id": "FAULTS-R2",
@@ -1181,12 +1181,12 @@
       "unit": "src/stlink_mcp/faults.py",
       "when": "2026-09-02T23:15:44+00:00",
       "baseline_green": true,
-      "ratified": null,
       "red_tests": [],
       "red_tagged": [],
       "collection_errors": [],
       "passed": 93,
-      "status": "green"
+      "status": "green",
+      "accepted": null
     }
   ],
   "audit": {
