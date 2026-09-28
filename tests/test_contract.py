@@ -219,9 +219,14 @@ def bench(monkeypatch, tmp_path):
     vt = probe_mod.TargetInfo(connected=True, device_id=_FakeProbe.device_id).quirks.vector_table_addr
     elf = tmp_path / "image.elf"
     elf.write_bytes(minimal_elf32(vt - 0x400, 0x1000))
+    # flash_firmware takes raw binaries only, and checks the file before it
+    # touches the probe, so reaching its body needs a real one.
+    raw = tmp_path / "image.bin"
+    raw.write_bytes(b"\x00" * 16)
 
     state = SimpleNamespace(
         elf=elf,
+        bin=raw,
         markers=(0x34200000, 0x34180841, 2048),
         console_text="",
         console_port="/dev/fake0",
@@ -273,7 +278,14 @@ def bench(monkeypatch, tmp_path):
 class TestEveryToolKeepsTheContract:
     @pytest.mark.parametrize("name", sorted(TOOL_CALLS))
     def test_on_a_working_bench(self, name: str, bench) -> None:
-        assert_contract(call(name, **({"elf_path": str(bench.elf)} if name == "run_firmware" else {})), name)
+        files = {
+            "run_firmware": {"elf_path": str(bench.elf)},
+            "flash_firmware": {"image_path": str(bench.bin)},
+        }
+        out = call(name, **files.get(name, {}))
+        assert_contract(out, name)
+        if name == "flash_firmware":
+            assert out["status"] == result.VERIFIED, "the bench must reach the write"
 
     @pytest.mark.parametrize("name", sorted(TOOL_CALLS))
     def test_with_no_toolchain_installed(self, name: str, monkeypatch) -> None:
@@ -493,6 +505,55 @@ class TestTheWritePathWillNotActOnAnUnmeasuredAddress:
         image.write_bytes(b"\x00" * 16)
         out = server.flash_firmware(image_path=str(image), address=0x08000000)
         assert out["status"] != result.FAILED or "vendor-db" not in out.get("error", "")
+
+
+class TestFlashFirmwareTakesOnlyWhatItCanPlace:
+    """The programmer's `-w <file> <address>` uses the address for a raw binary
+    only, by ST's manual; HEX, S-record and ELF files are written to the
+    addresses inside them. So for those formats the check that the flash base
+    was measured protected nothing, and the `address` in a verified result need
+    not be where the write went."""
+
+    @pytest.fixture
+    def no_connect(self, bench, monkeypatch):
+        def must_not_connect(self, allow_reset=True):
+            raise AssertionError("the probe was touched for a refused image")
+
+        monkeypatch.setattr(_FakeProbe, "identify", must_not_connect)
+        return bench
+
+    @pytest.mark.parametrize("name", ["image.elf", "image.hex", "image.srec", "image"])
+    def test_anything_but_a_bin_is_refused_before_connecting(
+        self, no_connect, tmp_path, name: str
+    ) -> None:
+        path = tmp_path / name
+        path.write_bytes(b":020000040800F2\n")
+        out = call("flash_firmware", image_path=str(path))
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert "raw binary" in out["error"]
+
+    def test_an_elf_named_bin_is_refused(self, no_connect, tmp_path) -> None:
+        from elfgen import minimal_elf32
+        path = tmp_path / "renamed.bin"
+        path.write_bytes(minimal_elf32(0x08000000, 0x100))
+        out = call("flash_firmware", image_path=str(path))
+        assert out["status"] == result.FAILED
+        assert "is an ELF file" in out["error"]
+
+    def test_a_missing_or_empty_image_is_refused(self, no_connect, tmp_path) -> None:
+        assert "No such image" in call(
+            "flash_firmware", image_path=str(tmp_path / "absent.bin"))["error"]
+        empty = tmp_path / "empty.bin"
+        empty.write_bytes(b"")
+        assert "empty" in call("flash_firmware", image_path=str(empty))["error"]
+
+    def test_a_bin_is_written_and_the_result_names_what_was_sent(self, bench) -> None:
+        out = call("flash_firmware", image_path=str(bench.bin))
+        assert out["status"] == result.VERIFIED
+        assert out["image_size_bytes"] == 16
+        assert out["address"] == "0x70000000"  # the fake board is the measured N6
+        assert "NOT read back" in out["verified_by"]
 
 
 class TestResetIsNotClaimedUnlessItWasSeen:

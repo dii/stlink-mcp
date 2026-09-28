@@ -585,13 +585,23 @@ nothing was held.
 def flash_firmware(
     image_path: str, probe_serial: str | None = None, address: int | None = None
 ) -> dict[str, Any]:
-    """Program a signed image into the target's boot memory for standalone boot.
+    """Program a raw binary image (.bin) into boot memory for standalone boot.
 
-Prefer run_firmware while developing: faster, and no signing. Does not sign.
-Refuses to write to a flash base that is not `measured` unless you pass
-`address` yourself, and nothing is read back afterwards; `verified_by` says
-what was and was not checked.
+Prefer run_firmware while developing. Does not sign. Refuses anything but a
+.bin, because the programmer writes HEX, S-record and ELF files to the
+addresses inside them. Refuses a flash base that is not `measured` unless you
+pass `address`. Nothing is read back afterwards; `verified_by` says what was
+and was not checked.
     """
+    # Checked before anything touches the probe, like run_firmware's image
+    # check: a refusal after identify() would already have connected, and
+    # possibly reset, for nothing.
+    image = Path(image_path).expanduser()
+    not_flashable = image_mod.check_flash_image(image)
+    if not_flashable:
+        return failed(not_flashable, image=str(image))
+    image_size = image.stat().st_size
+
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
@@ -652,9 +662,7 @@ what was and was not checked.
         )
 
     try:
-        output = probe.program_flash(
-            str(Path(image_path).expanduser()), target_address, quirks.external_loader
-        )
+        output = probe.program_flash(str(image), target_address, quirks.external_loader)
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc), probe_serial=serial,
                       target_was_reset=probe.target_was_reset)
@@ -667,6 +675,8 @@ what was and was not checked.
         "back and compared, so this confirms the write was accepted, not that "
         "flash holds what you sent",
         probe_serial=serial,
+        image=str(image),
+        image_size_bytes=image_size,
         address=_hex(target_address),
         target_was_reset=probe.target_was_reset,
         signing_required=quirks.requires_signing,

@@ -121,3 +121,42 @@ def check_ram_image(path: Path, vector_table_addr: int) -> str | None:
             "external SDRAM, this tool cannot tell it from flash."
         )
     return None
+
+
+def check_flash_image(path: Path) -> str | None:
+    """None when `path` is a raw binary flash_firmware can place, else why not.
+
+    STM32_Programmer_CLI's `-w <file> <address>` uses the address for a raw
+    binary only, by its manual (UM2237); Intel HEX, S-record and ELF files
+    carry their own addresses and are written there. flash_firmware's check
+    that the flash base was measured, and the address its result reports,
+    describe the write only when that address is the one used, so anything but
+    a .bin is refused. That reading of the manual has not been measured here.
+    The refusal does not depend on it being right, only on it possibly being
+    right, and the cost of it being wrong is a conversion step.
+    """
+    if not path.is_file():
+        return f"No such image: {path}"
+    if path.suffix.lower() != ".bin":
+        return (
+            f"{path.name} is not a raw binary (.bin). The programmer writes a HEX, "
+            "S-record or ELF file to the addresses inside it rather than to the "
+            "address this tool passes, so the check on the flash base and the "
+            "address in the result would not describe the write. Convert it with "
+            "`arm-none-eabi-objcopy -O binary`, which STM32CubeCLT includes, and "
+            "pass the .bin."
+        )
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(4)
+    except OSError as exc:
+        return f"Cannot read {path}: {exc}"
+    if not head:
+        return f"{path.name} is empty, so there is nothing to program."
+    if head == b"\x7fELF":
+        return (
+            f"{path.name} is named .bin but is an ELF file, and the programmer "
+            "would write its headers into flash as data. Convert it with "
+            "`arm-none-eabi-objcopy -O binary` and pass the result."
+        )
+    return None
