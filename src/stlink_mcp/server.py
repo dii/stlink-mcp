@@ -359,15 +359,12 @@ def run_firmware(
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
-Verified by console output from that board's own serial port, captured from
-before the target resumes. `failed` if the GDB batch did not reach its end
-markers, since then the load did not complete and any output is the previous
-image. `unverified` if the load completed but the console stayed silent.
-Refuses, before any load, an ELF not linked for this family's RAM (no loadable
-segment covers the vector table address), because a GDB load writes wherever
-the image says and a flash-linked build would be programmed into flash.
-Resets the target before loading and holds the GDB server afterwards; see
-`release_probe`. Bypasses the boot ROM, so no signing is involved.
+Verified only by console output from that board's serial console: `unverified`
+if it stays silent, `failed` if the load did not complete. Refuses, before any
+load, an image whose vector table is not at the family's RAM address or with a
+segment outside SRAM (0x20000000-0x3FFFFFFF), since a GDB load writes wherever
+the image says. Resets the target first and keeps the GDB server; see
+`release_probe`. No signing.
     """
     try:
         toolchain = _toolchain()

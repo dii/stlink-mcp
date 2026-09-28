@@ -345,6 +345,24 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert "not linked" in r["error"] and "0x08000000" in r["error"]
         assert "vector_table_addr" in r
 
+    def test_a_flash_segment_beside_a_ram_vector_table_is_refused_before_any_load(
+        self, bench, monkeypatch
+    ) -> None:
+        """The same failure for an image the first check let through: its
+        vector table is in RAM, and another segment is linked for flash."""
+        from elfgen import elf32_segments
+
+        def must_not_start(*args, **kwargs):
+            raise AssertionError("a GDB server was started for a refused image")
+
+        vt = probe_mod.TargetInfo(connected=True, device_id=_FakeProbe.device_id).quirks.vector_table_addr
+        bench.elf.write_bytes(elf32_segments((vt, 0x400), (0x70000000, 0x800)))
+        monkeypatch.setattr(server, "acquire_server", must_not_start)
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.FAILED
+        assert "0x70000000" in r["error"]
+
     def test_a_file_that_is_not_an_elf_is_refused(self, bench) -> None:
         bench.elf.write_bytes(b"\x7fELF not really")
         r = call("run_firmware", elf_path=str(bench.elf))
