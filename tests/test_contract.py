@@ -149,6 +149,61 @@ class TestEveryToolIsActuallyCovered:
         assert not stale, f"TOOL_CALLS names tools the server does not register: {sorted(stale)}"
 
 
+class TestOneToolCallAtATime:
+    """The MCP SDK runs each request as its own task and each tool in a worker
+    thread, so an agent's parallel calls really are parallel. The module state
+    here and the probes themselves were written for one call at a time; with
+    the port check slowed, two concurrent allocations gave one GDB port to two
+    probes."""
+
+    @pytest.mark.parametrize("name", sorted(TOOL_CALLS))
+    def test_every_registered_tool_waits_for_the_lock(self, name: str, bench) -> None:
+        """Through the function the SDK itself calls, so a new tool registered
+        without @_serialised fails here rather than racing in use."""
+        import threading
+
+        fn = server.mcp._tool_manager._tools[name].fn
+        files = {"run_firmware": {"elf_path": str(bench.elf)},
+                 "flash_firmware": {"image_path": str(bench.bin)}}
+        args = {**TOOL_CALLS[name], **files.get(name, {})}
+        done = threading.Event()
+        worker = threading.Thread(target=lambda: (fn(**args), done.set()))
+
+        with server._ONE_CALL_AT_A_TIME:
+            worker.start()
+            assert not done.wait(0.2), f"{name} ran while another call held the lock"
+        worker.join(5)
+        assert done.is_set(), f"{name} never ran after the lock was released"
+
+    def test_concurrent_calls_never_overlap(self, bench, monkeypatch) -> None:
+        import threading
+        import time
+
+        active = peak = 0
+        guard = threading.Lock()
+
+        def slow_enumeration(toolchain):
+            nonlocal active, peak
+            with guard:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.05)
+            with guard:
+                active -= 1
+            return [probe_mod.ProbeInfo(serial="AAA1", console_port="/dev/fake0")]
+
+        monkeypatch.setattr(server, "_list_probes", slow_enumeration)
+        threads = [
+            threading.Thread(target=call, args=(name,))
+            for name in ("board_state", "read_memory", "core_registers", "read_fault_status")
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(5)
+        assert peak == 1, f"{peak} tool calls ran at once"
+
+
 class TestNoToolSetsOkByHand:
     def test_the_tool_surface_contains_no_literal_ok(self) -> None:
         """A grep, deliberately.

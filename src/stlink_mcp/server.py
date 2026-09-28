@@ -24,9 +24,12 @@ firmware onto the wrong board is a failure that looks like success.
 
 from __future__ import annotations
 
+import functools
 import os
+import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from mcp.server import MCPServer
 
@@ -58,6 +61,39 @@ from .toolchain import Toolchain, ToolchainError, find_toolchain
 from .vendordb import VendorDbError, seed_from_directory
 
 mcp = MCPServer("stlink-mcp")
+
+#: One tool call at a time, for the whole process.
+#:
+#: The MCP SDK runs each request as its own task and each synchronous tool in a
+#: worker thread, so calls an agent issues together run together. Nothing here
+#: was written for that: the GDB port registry, the held-server cache and the
+#: runner's session table are read and then written with no lock, and the
+#: hardware has the same shape, since two programmer connects to one probe
+#: collide and two readers of one serial port split its bytes between them.
+#: With the port check slowed to widen the window, two concurrent allocations
+#: handed one GDB port to two probes. A call the client cancels also runs on to
+#: completion in its thread, so without this the next call could overlap a call
+#: nobody is waiting for any more.
+#:
+#: The cost is that a long console capture on one board delays a call for
+#: another. That is what the probe forces anyway, and a queue is better than a
+#: race. This is not per-caller state (N9): the probes are shared by every
+#: caller there could be, so the lock belongs to the hardware.
+_ONE_CALL_AT_A_TIME = threading.RLock()
+
+_Tool = TypeVar("_Tool", bound=Callable[..., dict[str, Any]])
+
+
+def _serialised(tool: _Tool) -> _Tool:
+    """Run a tool body under _ONE_CALL_AT_A_TIME. Applied under @mcp.tool() on
+    every tool, and TestOneToolCallAtATime fails for one that lacks it."""
+
+    @functools.wraps(tool)
+    def one_at_a_time(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        with _ONE_CALL_AT_A_TIME:
+            return tool(*args, **kwargs)
+
+    return one_at_a_time  # type: ignore[return-value]
 
 _GDB_PORT_BASE = int(os.environ.get("STLINK_MCP_GDB_PORT", "61234"))
 
@@ -188,6 +224,7 @@ def _gdb_port_for(serial: str | None) -> int:
 
 
 @mcp.tool()
+@_serialised
 def list_probes() -> dict[str, Any]:
     """List every attached ST-LINK with its firmware, board name and serial console.
 
@@ -235,6 +272,7 @@ while other probes are held by a GDB server; those are marked as held.
 
 
 @mcp.tool()
+@_serialised
 def board_state(probe_serial: str | None = None) -> dict[str, Any]:
     """Identify the target, the probe and the target's family.
 
@@ -352,6 +390,7 @@ identity reads fine on a port that cannot halt the core.
 
 
 @mcp.tool()
+@_serialised
 def run_firmware(
     elf_path: str,
     probe_serial: str | None = None,
@@ -585,6 +624,7 @@ def _server_output(gdb_server: Any) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_serialised
 def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
     """Shut down held GDB servers and free their probes; with no serial, all of them.
 
@@ -620,6 +660,7 @@ nothing was held.
 
 
 @mcp.tool()
+@_serialised
 def flash_firmware(
     image_path: str, probe_serial: str | None = None, address: int | None = None
 ) -> dict[str, Any]:
@@ -727,6 +768,7 @@ and was not checked.
 
 
 @mcp.tool()
+@_serialised
 def read_memory(
     address: int, length_bytes: int = 32, probe_serial: str | None = None
 ) -> dict[str, Any]:
@@ -882,6 +924,7 @@ def load_board_config() -> tuple[int, Path | None]:
 
 
 @mcp.tool()
+@_serialised
 def reset_target(probe_serial: str | None = None) -> dict[str, Any]:
     """Reset the target and check that it actually restarted.
 
@@ -1080,6 +1123,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
 
 
 @mcp.tool()
+@_serialised
 def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
     """Read the core registers, halting the core for the read.
 
@@ -1154,6 +1198,7 @@ Perturbing, so never used inside routine checks.
 
 
 @mcp.tool()
+@_serialised
 def read_fault_status(probe_serial: str | None = None) -> dict[str, Any]:
     """Read and decode the Cortex-M fault status registers without halting or
 resetting the target.
@@ -1305,6 +1350,7 @@ registers.
 
 
 @mcp.tool()
+@_serialised
 def capture_console(
     seconds: float = 5.0, probe_serial: str | None = None
 ) -> dict[str, Any]:

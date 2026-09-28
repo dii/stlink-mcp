@@ -87,8 +87,9 @@ in the table below, their parameters and result fields, and the `stlink-mcp` com
 line. At 0.y.z any of it may change. Beta is reached when one user outside this project
 reports a run on a board this README does not list as measured, the ten tool signatures
 and result fields are declared stable, and the JTAG and Windows questions are decided.
-Release candidate follows once one known defect is fixed: two tool calls at once can
-give one GDB port to two probes or start two servers on one probe. 1.0.0 is cut
+Release candidate follows beta. The two defects that gated it are fixed: two tool
+calls at once could give one GDB port to two probes or start two servers on one probe,
+and `run_firmware` discarded GDB's own output on a failed load. 1.0.0 is cut
 when every promise in this README has a measurement behind it in
 [docs/findings.md](docs/findings.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
@@ -183,6 +184,10 @@ firmware onto the wrong board is a failure that looks like success.
 not positional, so pairing probes with `/dev/ttyACM*` by order gets it wrong,
 and `run_firmware` uses each board's own console to verify it. Each board gets
 its own GDB server on its own port.
+
+Tool calls run one at a time, even when an agent issues several together, so a
+long console capture on one board delays a call for another. The probes and the
+server's own bookkeeping cannot be driven in parallel safely.
 
 ## Configuration
 
