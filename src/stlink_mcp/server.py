@@ -236,24 +236,14 @@ while other probes are held by a GDB server; those are marked as held.
 
 @mcp.tool()
 def board_state(probe_serial: str | None = None) -> dict[str, Any]:
-    """Identify the target and the probe, and report what is known about the family.
+    """Identify the target, the probe and the target's family.
 
-Tries every debug access port when the probe is free, because a wrong port and
-an absent target produce the same error. When a GDB server holds the probe it
-answers from what was captured at acquisition and reports `unverified`.
-
-READ `family.provenance` BEFORE TRUSTING `family`. Every address carries a
-label saying where it came from:
-
-  measured     somebody ran it on this part and watched it work
-  vendor-db    read out of STMicroelectronics' device database
-  user-stated  typed into a board config file by whoever runs this server
-  assumed      nobody measured it and no source states it
-
-Only `measured` has been seen to work; `flash_firmware` refuses an unmeasured
-base unless you pass the address. `access_port_warning`, when present, means
-the port in use is a guess, and identity reads correctly on a port that cannot
-halt the core.
+Tries access ports 0 and 1. If a hotplug connect cannot reach the core, or the
+family's recorded port, it retries with a resetting connect and sets
+`target_was_reset`. While a GDB server holds the probe it answers from cache
+and reports `unverified`. Check `family.provenance`: only `measured` values
+have been seen to work. `access_port_warning` means the port is a guess;
+identity reads fine on a port that cannot halt the core.
     """
     try:
         toolchain = _toolchain()
@@ -284,7 +274,9 @@ halt the core.
             "revision": info.revision,
         },
         "access_port": probe.access_port,
-        "connect_mode": probe.connect_mode,
+        # The mode that CONNECTED. When nothing did, naming the default would
+        # read as a hotplug connect that worked.
+        "connect_mode": probe.connect_mode if info.connected else None,
         "target_was_reset": probe.target_was_reset,
         "family": {
             "name": quirks.name,
@@ -396,6 +388,7 @@ Resets the target before loading and holds the GDB server afterwards; see
             return failed(
                 "No target",
                 probe_serial=serial,
+                target_was_reset=probe.target_was_reset,
                 errors=info.errors,
                 hint=explain_connect_failure(info),
             )
@@ -615,9 +608,19 @@ what was and was not checked.
         return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials())
 
     probe = Probe(toolchain, serial=serial)
-    info = probe.identify()
+    try:
+        info = probe.identify()
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), probe_serial=serial,
+                      target_was_reset=probe.target_was_reset)
     if not info.connected:
-        return failed("No target", hint=explain_connect_failure(info))
+        return failed(
+            "No target",
+            probe_serial=serial,
+            target_was_reset=probe.target_was_reset,
+            errors=info.errors,
+            hint=explain_connect_failure(info),
+        )
 
     quirks = info.quirks
     target_address = address if address is not None else quirks.flash_base
@@ -656,7 +659,8 @@ what was and was not checked.
             str(Path(image_path).expanduser()), target_address, quirks.external_loader
         )
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc))
+        return failed(str(exc), probe_serial=serial,
+                      target_was_reset=probe.target_was_reset)
 
     # The evidence names its own weakness deliberately. This is the one tool
     # whose only check is the vendor's own banner, which is exactly the thing
@@ -667,6 +671,7 @@ what was and was not checked.
         "flash holds what you sent",
         probe_serial=serial,
         address=_hex(target_address),
+        target_was_reset=probe.target_was_reset,
         signing_required=quirks.requires_signing,
         detail=output.strip().splitlines()[-3:],
         next_step=(
@@ -1039,6 +1044,7 @@ afterwards: a programmer halt did not outlive its command on the boards
 measured. Reports `target_was_reset` when reaching the core needed a reset.
 Perturbing, so never used inside routine checks.
     """
+    probe: Probe | None = None
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
@@ -1049,10 +1055,24 @@ Perturbing, so never used inside routine checks.
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
         probe = Probe(toolchain, serial=serial)
-        probe.identify()
+        # The connect is checked before the read. It used to be discarded, so a
+        # target nothing could reach surfaced as a bare parse failure from the
+        # register read, without the connect errors, the hint, or the fact that
+        # identify() had pulsed reset trying to reach it.
+        info = probe.identify()
+        if not info.connected:
+            return failed(
+                "Could not reach the core.",
+                probe_serial=serial,
+                target_was_reset=probe.target_was_reset,
+                errors=info.errors,
+                hint=explain_connect_failure(info),
+            )
         regs = probe.core_registers()
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc))
+        return failed(
+            str(exc), target_was_reset=bool(probe and probe.target_was_reset)
+        )
 
     detail: dict[str, Any] = {
         "probe_serial": serial,

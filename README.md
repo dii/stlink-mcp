@@ -130,7 +130,7 @@ uv sync
 
 | tool | what it does | how it verifies |
 | --- | --- | --- |
-| `board_state` | Identifies the target, the probe, and the family's quirks | Tries every access port, since a wrong port and an absent target look identical. Reports `unverified` when a held server means it is answering from cache |
+| `board_state` | Identifies the target, the probe, and the family's quirks | Tries access ports 0 and 1, since a wrong port and an absent target look identical. If no hotplug connect reaches the core it retries with a resetting connect, and reports `target_was_reset` whether or not that connect worked. Reports `unverified` when a held server means it is answering from cache |
 | `run_firmware` | Loads an ELF into RAM and starts it | Refuses, before any load, an image not linked for the family's RAM, since a GDB load writes wherever the image says. Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
 | `flash_firmware` | Programs a signed image into boot memory | The programmer's own report that the download completed. Nothing is read back, and `verified_by` says so |
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port |

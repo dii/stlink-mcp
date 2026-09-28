@@ -809,6 +809,128 @@ class TestAnUnmeasuredAccessPortIsAnnounced:
             )
 
 
+class TestAResettingConnectIsReportedWhetherOrNotItConnects:
+    """N4, through the real identify() rather than _FakeProbe.
+
+    A HWRSTPULSE connect pulses nRST before it asks the debug port to answer;
+    reset_target's "the pulse was issued, but the debug port did not answer"
+    branch rests on exactly that. identify() and _settle_access_port set
+    target_was_reset only when the resetting connect SUCCEEDED, so on an STM32N6
+    whose image had closed AP1, board_state pulsed the board, failed to reach
+    AP1, and reported target_was_reset False. The contract suite could not see
+    it, because every tool test there replaces Probe with a fake that never
+    resets.
+    """
+
+    def _cli(self, monkeypatch, answers: dict[tuple[str, int], int]):
+        """A fake programmer. `answers` maps (connect mode, access port) to the
+        device ID that connect reports; anything absent fails the way a closed
+        port does. Returns the list of connects issued, in order."""
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+
+        issued: list[tuple[str, int]] = []
+
+        def fake_run(argv, timeout=90):
+            ap = next(int(a.split("=")[1]) for a in argv if a.startswith("ap="))
+            mode = next(a.split("=")[1] for a in argv if a.startswith("mode="))
+            issued.append((mode, ap))
+            device = answers.get((mode, ap))
+            body = (f"Device ID   : 0x{device:03X}\n" if device is not None
+                    else "Error: Unable to get core ID\n")
+            return CommandResult(argv, 0, body)
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        return issued
+
+    def _probe(self):
+        from stlink_mcp import probe as pm
+        return pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAA1")
+
+    def test_a_pulse_that_fails_to_reopen_the_family_port_is_still_a_reset(
+        self, monkeypatch
+    ) -> None:
+        """The STM32N6 with AP1 closed by its image: AP0 identifies, AP1 does not
+        answer even to a resetting connect."""
+        issued = self._cli(monkeypatch, {("HOTPLUG", 0): 0x486})
+        probe = self._probe()
+        probe.identify()
+        assert ("HWRSTPULSE", 1) in issued
+        assert probe.degraded_reason
+        assert probe.target_was_reset is True
+
+    def test_a_target_nothing_reaches_was_still_pulsed(self, monkeypatch) -> None:
+        issued = self._cli(monkeypatch, {})
+        probe = self._probe()
+        info = probe.identify()
+        assert not info.connected
+        assert [m for m, _ in issued].count("HWRSTPULSE") == 2
+        assert probe.target_was_reset is True
+
+    def test_allow_reset_false_sends_no_pulse_and_reports_none(self, monkeypatch) -> None:
+        issued = self._cli(monkeypatch, {})
+        probe = self._probe()
+        probe.identify(allow_reset=False)
+        assert all(mode == "HOTPLUG" for mode, _ in issued)
+        assert probe.target_was_reset is False
+
+    def test_a_hotplug_connect_is_not_a_reset(self, monkeypatch) -> None:
+        issued = self._cli(monkeypatch, {("HOTPLUG", 0): 0x450})
+        probe = self._probe()
+        probe.identify()
+        assert issued == [("HOTPLUG", 0)]
+        assert probe.target_was_reset is False
+
+    def test_the_unmeasured_port_check_never_pulses(self, monkeypatch) -> None:
+        """An unknown part reachable only by a resetting connect. The follow-up
+        check of the other port promised a hotplug connect and reused the reset
+        mode instead, pulsing the board a second time."""
+        issued = self._cli(monkeypatch, {("HWRSTPULSE", 0): 0x999})
+        probe = self._probe()
+        assert probe.identify().connected
+        assert [m for m, _ in issued].count("HWRSTPULSE") == 1
+        assert issued[-1] == ("HOTPLUG", 1)
+        assert probe.target_was_reset is True
+
+    def _bench(self, monkeypatch):
+        """The real Probe behind the real tools, with only the CLI faked."""
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(programmer="x"))
+        monkeypatch.setattr(
+            server, "_list_probes", lambda tc: [probe_mod.ProbeInfo(serial="AAA1")]
+        )
+        server._held.clear()
+
+    def test_board_state_says_a_board_it_could_not_reach_was_reset(
+        self, monkeypatch
+    ) -> None:
+        self._cli(monkeypatch, {})
+        self._bench(monkeypatch)
+        out = call("board_state")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert out["target_was_reset"] is True
+        assert out["connect_mode"] is None, "nothing connected, so no mode did"
+
+    def test_board_state_reports_the_n6_pulse(self, monkeypatch) -> None:
+        self._cli(monkeypatch, {("HOTPLUG", 0): 0x486})
+        self._bench(monkeypatch)
+        out = call("board_state")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert out["target_was_reset"] is True
+
+    def test_core_registers_checks_the_connect_and_reports_the_pulse(
+        self, monkeypatch
+    ) -> None:
+        self._cli(monkeypatch, {})
+        self._bench(monkeypatch)
+        out = call("core_registers")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert out["target_was_reset"] is True
+        assert "Most likely causes" in out["hint"]
+
+
 class TestASeededAddressIsDisclosedWhereItIsUsed:
     """RT1 and RT8 from the phase 2 red-team.
 

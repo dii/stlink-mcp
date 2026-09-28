@@ -201,9 +201,15 @@ class Probe:
         stable across replugs."""
         self.connect_mode: str = "HOTPLUG"
         self.target_was_reset: bool = False
-        """True when identification needed a resetting connect, which restarts
+        """True once a resetting connect has been ISSUED, which restarts
         whatever was running. Reported rather than hidden, because for anything
-        inspecting a live program that is a destructive act."""
+        inspecting a live program that is a destructive act.
+
+        Issued, not succeeded. The pulse on nRST goes out before the debug port
+        is asked to answer, which is what reset_target's "the pulse was issued
+        and the port did not answer" branch rests on. This used to be set only
+        when the resetting connect worked, so a board whose port stayed shut was
+        restarted and reported as untouched."""
         self.access_port_provenance: str | None = None
         """Where the access port in use came from, once identify() has run."""
         self.other_ports_that_answered: list[int] = []
@@ -255,11 +261,14 @@ class Probe:
 
         for mode in modes:
             for port in ports:
+                if mode != "HOTPLUG":
+                    # Recorded before the connect, not after it succeeds: the
+                    # pulse restarts the target whether or not the port answers.
+                    self.target_was_reset = True
                 result = run_command(self._connect_args(port, mode), timeout=90)
                 info = parse_target_info(result.stdout)
                 if info.connected:
                     self.connect_mode = mode
-                    self.target_was_reset = mode != "HOTPLUG"
                     # allow_reset is forwarded, not defaulted. Without this a
                     # caller who asked not to disturb a running program still
                     # got one: the scan honoured the flag and the settle step
@@ -309,7 +318,7 @@ class Probe:
             # any other port answers at all, and say plainly that the number in
             # use was never measured.
             if not info.quirks.is_measured("access_port"):
-                self._note_unmeasured_port(answered_on, mode)
+                self._note_unmeasured_port(answered_on)
             return answered_on
 
         attempts = [mode]
@@ -317,10 +326,15 @@ class Probe:
             attempts.append("HWRSTPULSE")
 
         for attempt in attempts:
+            if attempt != "HOTPLUG":
+                # As in identify(): a resetting connect that fails still reset
+                # the target. On an STM32N6 whose image has closed AP1 this
+                # branch pulses the board and then fails, and it used to report
+                # target_was_reset False for a board it had just restarted.
+                self.target_was_reset = True
             result = run_command(self._connect_args(wanted, attempt), timeout=90)
             if parse_target_info(result.stdout).connected:
                 self.connect_mode = attempt
-                self.target_was_reset = attempt != "HOTPLUG"
                 return wanted
 
         self.degraded_reason = (
@@ -331,12 +345,15 @@ class Probe:
         )
         return answered_on
 
-    def _note_unmeasured_port(self, answered_on: int, mode: str) -> None:
+    def _note_unmeasured_port(self, answered_on: int) -> None:
         """Record that the access port in use is a guess, and what else answered.
 
         One extra hotplug connect per alternative port, and only for a part
         whose port was never measured, so a characterised family pays nothing.
         The connect does not reset or halt, so a running program is undisturbed.
+        It is always HOTPLUG. It used to reuse the mode that identified the
+        target, so a part reachable only by a resetting connect was pulsed a
+        second time here, under a docstring promising it would not be.
 
         Another port answering is not proof that it is the right one, and this
         deliberately does not switch to it. It is the single most useful fact
@@ -346,7 +363,7 @@ class Probe:
         for port in (0, 1):
             if port == answered_on:
                 continue
-            result = run_command(self._connect_args(port, mode), timeout=90)
+            result = run_command(self._connect_args(port, "HOTPLUG"), timeout=90)
             if parse_target_info(result.stdout).connected:
                 self.other_ports_that_answered.append(port)
 
