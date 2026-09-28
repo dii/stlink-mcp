@@ -396,3 +396,27 @@ class TestMissingRegisters:
         assert faults.missing_registers({faults.HFSR: 0, faults.BFAR: 0}) == [
             "CFSR", "DFSR", "MMFAR", "AFSR",
         ]
+
+
+class TestTheBlindSuiteSeedsStillApply:
+    """Each seed in tests/blind/faults/seeds injects a defect by finding a piece
+    of faults.py's text and replacing it. If an edit here made that text vanish
+    or appear twice, the seed would silently inject nothing, or the wrong thing,
+    and the blind suite's record of which clauses its tests cover would stop
+    being true. Kept here rather than in tests/blind, which holds only tests
+    written blind."""
+
+    def test_every_seed_finds_its_text_exactly_once(self) -> None:
+        import json
+        from pathlib import Path
+
+        source = Path(faults.__file__).read_text()
+        seeds = Path(__file__).parent / "blind" / "faults" / "seeds"
+        edits = [
+            (path.name, edit["find"])
+            for path in sorted(seeds.glob("*.json"))
+            for edit in json.loads(path.read_text()).get("edits", [])
+        ]
+        assert edits, "no seeds found, so this checks nothing"
+        wrong = [(name, source.count(find)) for name, find in edits if source.count(find) != 1]
+        assert not wrong, f"seed text no longer found exactly once: {wrong}"

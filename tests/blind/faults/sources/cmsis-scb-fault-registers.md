@@ -5,6 +5,14 @@ and core_cm33.h (Armv8-M Mainline, Cortex-M33), fetched 2026-09-03 from
 https://raw.githubusercontent.com/ARM-software/CMSIS_5/master/CMSIS/Core/Include/. Apache-2.0.
 Only the SCB fault-status and fault-address definitions are excerpted below, verbatim.
 
+Both headers carry this notice, retained here as Apache-2.0 section 4(c) asks:
+
+    Copyright (c) 2009-2021 Arm Limited. All rights reserved.
+    SPDX-License-Identifier: Apache-2.0
+
+The licence text is in `LICENSE-Apache-2.0.txt` beside this file. The rest of this
+repository is MIT; this excerpt stays under Apache-2.0.
+
 ## core_cm7.h
 ```c
 __IOM uint32_t CFSR;                   /*!< Offset: 0x028 (R/W)  Configurable Fault Status Register */

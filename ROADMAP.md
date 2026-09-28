@@ -15,11 +15,10 @@ Three decisions set the shape, all taken 2026-08-16:
 - **Breadth before depth.** DONE in phase 2: 2 device IDs measured, 99 more seeded from ST's
   own databases, 4 refused as ambiguous.
 
-This plan was red-teamed before anything was built from it, per ADR-0018, and revised against
-the result. Findings RT1 to RT5 are folded in below; the report is
-`red-team-roadmap-2026-08-16.md`, which is kept locally and not published.
+This plan was red-teamed before anything was built from it, and revised against the result.
+Findings RT1 to RT5 are folded in below.
 
-## Phase 0 - one existing bug that every phase sits on
+## Phase 0 - one existing bug that every phase sits on (DONE)
 
 `find_toolchain` promises "newest first when several are installed" and delivers the oldest.
 `toolchain.py:80` sorts install directories with a plain string sort, so
@@ -33,17 +32,19 @@ fixed first rather than inherited. (RT4)
 | Need | State |
 | --- | --- |
 | N1 verdict and evidence | Done. `result.verified/unverified/failed`, no tool sets `ok`, enforced by a contract test |
-| N2 missing facts refuse rather than guess | Done. Four device IDs with ambiguous SRAM are refused rather than seeded, and the write path refuses an unmeasured base |
-| N3 hidden state is reported | Done: reset, cache, degraded access port, held probe |
-| N4 nothing perturbs silently | Done: `target_was_reset`, `core_registers` documented as halting |
+| N2 missing facts refuse rather than guess | Done. Four device IDs with ambiguous SRAM are refused rather than seeded, and the write path refuses an unmeasured base. Since 2026-09-28 `read_fault_status` refuses cores without fault registers and partial reads, and `read_memory` refuses a short read |
+| N3 hidden state is reported | Done: reset, cache, degraded access port, held probe, including after a failed run, and where a console setting came from |
+| N4 nothing perturbs silently | Done: `target_was_reset`, which since 2026-09-28 is set when a resetting connect is issued whether or not it connects. `core_registers` halts for its read and no longer claims the core stays halted |
 | N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
 | N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault" |
-| N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `probe.py:164`, `-d` in `runner.py:145`. No JTAG |
-| N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals |
+| N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `Probe._connect_args` in `probe.py`, `-d` in `GdbServer.__enter__` in `runner.py`. No JTAG |
+| N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals, and nothing records who asked for an operation. The process-wide lock that runs tool calls one at a time guards the hardware, which every caller shares, so it adds no caller state |
 
-Standing check, currently passing: the MCP SDK is 2.0.0, which is the latest published, and
-`server.py` uses `mcp.server.MCPServer`. Re-verify on every SDK bump rather than assuming.
+Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and
+`pyproject.toml` caps it below 3. On 2026-09-28 the latest published was 2.2.0, and the suite and
+the stdio test in `tests/test_stdio.py` passed against it. Re-verify on every SDK bump rather than
+assuming.
 
 ## Phase 1 - the core verbs, and letting the user describe the board
 
@@ -216,26 +217,31 @@ turns every user with a board into a source of measured data.
   HFSR, DFSR, MMFAR, BFAR, AFSR) without halting or resetting the target, decodes every
   set bit, and reports a plain-English diagnosis with the faulting address when the hardware
   recorded it. When a fault is active the result includes a next step telling the agent how
-  to find the faulting instruction via the exception frame on the stack. The decode logic is
-  pure and fully tested offline (60 tests for every defined bit, every common crash pattern,
-  and every address validity gate). The registers are at fixed Cortex-M addresses and do not
-  vary by family, which is why this was built before JTAG.
+  to find the faulting instruction via the exception frame on the stack, and since 2026-09-28
+  which stack, from EXC_RETURN. The decode logic is pure and tested offline, by the ordinary
+  suite and by the blind suite in `tests/blind/`. The registers are at fixed Cortex-M addresses
+  and do not vary by family, which is why this was built before JTAG. Cores without them,
+  Armv6-M and Armv8-M Baseline, are refused rather than read.
 - **Flash readback verification.** `flash_firmware` trusts the programmer's own "File
   download complete" and says so honestly in `verified_by`. The one operation that writes
   permanently is the one that does not read back and compare, which is an open N1 gap.
+  `STM32_Programmer_CLI -v` reads back and compares after `-w`; its output has to be captured
+  on a board before anything here parses it. `flash_firmware` has no recorded hardware run at
+  all yet, and since 2026-09-28 takes raw binaries only, because the address it checks is the
+  one used only for a .bin.
 - Halt, resume, step and memory writes, if real use asks for them.
 
 ## Phase 6 - reach
 
 - **Attachment ergonomics.** Installing it and pointing an agent client at it should not
-  require reading the source. A generated client config, and a self-check that reports what
-  it found, beats a README snippet.
-- **CI.** All 97 tests run with no hardware attached and should run on every push, along with
-  the assertion that the sdist file list equals `git ls-files`, currently run by hand.
+  require reading the source. The self-check is DONE, `stlink-mcp --check`; a generated client
+  config is not.
+- **CI. DONE** 2026-09-28: the suite on Python 3.11 to 3.13, with no hardware attached, and the
+  check that the sdist file list equals `git ls-files`, run on every push.
 - **Windows.** Executable names and device paths are wrong throughout, and a large share of
   STM32 developers are there.
-- Contributing guide asking for captured `-l` output on any parsing problem, `py.typed`, and
-  a changelog.
+- Contributing guide asking for captured `-l` output on any parsing problem, issue templates,
+  and a changelog: DONE. `py.typed`: not done.
 - OpenOCD or pyOCD as a second backend. This means introducing an abstraction layer that
   deliberately does not exist yet, so it is last and may never be worth it.
 

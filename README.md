@@ -101,8 +101,9 @@ or contribute a board you have measured is in [CONTRIBUTING.md](CONTRIBUTING.md)
 
 * [STM32CubeCLT](https://www.st.com/en/development-tools/stm32cubeclt.html).
   It bundles STM32CubeProgrammer, the GDB server and the Arm toolchain. Found
-  automatically under `/opt/st`, `~/st`, `/usr/local/st` or the macOS default;
-  override with `STLINK_MCP_CLT_ROOT`.
+  automatically in `stm32cubeclt*` directories under `/opt/st`, `~/st` or
+  `/usr/local/st`. Anywhere else, set `STLINK_MCP_CLT_ROOT` to the install
+  directory.
 * Python 3.11 or newer.
 * An ST-LINK, which on most development boards is on the board itself.
 * On Linux, membership of the `dialout` group for the serial console, and ST's
@@ -136,6 +137,12 @@ probes the same way `list_probes` does, which neither halts nor resets them.
 }
 ```
 
+With Claude Code, the same thing is:
+
+```sh
+claude mcp add stlink -- uv --directory /path/to/stlink-mcp run stlink-mcp
+```
+
 ## Tools
 
 | tool | what it does | how it verifies |
@@ -143,10 +150,10 @@ probes the same way `list_probes` does, which neither halts nor resets them.
 | `board_state` | Identifies the target, the probe, and the family's quirks | Tries access ports 0 and 1, since a wrong port and an absent target look identical. If no hotplug connect reaches the core it retries with a resetting connect, and reports `target_was_reset` whether or not that connect worked. Reports `unverified` when a held server means it is answering from cache |
 | `run_firmware` | Loads an ELF into RAM and starts it | Refuses, before any load, an image not linked for the family's RAM or with any loaded segment outside the SRAM region, since a GDB load writes wherever the image says. Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
 | `flash_firmware` | Programs a raw binary (.bin) into boot memory | The programmer's own report that the download completed. Nothing is read back, and `verified_by` says so. Refuses HEX, S-record and ELF files, which the programmer writes to their own addresses rather than the one the tool checked |
-| `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port |
+| `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port. A read that returns fewer words than asked for is `failed`, naming the missing addresses |
 | `core_registers` | Reads the core registers, halting the core for the read | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset. Does not claim the core is still halted afterwards, since a programmer halt does not outlive its command |
 | `read_fault_status` | Reads and decodes the Cortex-M fault registers | The raw registers plus a plain-English diagnosis. Reports the faulting address when the hardware recorded it, and the next step to find the faulting instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers and would read as clean, and refuses a read that did not return all six |
-| `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, and refuses if it cannot resolve one |
+| `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, or the one `STLINK_MCP_CONSOLE` names for it, and refuses if it cannot resolve one |
 | `reset_target` | Resets the target and checks it restarted | Halts at the reset vector and compares the PC against word 1 of the vector table. The reset is the *connect*, because `-rst` then `-halt` loses the race and lands hundreds of bytes into start-up |
 | `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |
 | `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing. Works while other probes are held |
@@ -272,6 +279,30 @@ number: ST's database calls `0x450` `STM32H7xx`, so an STM32H743 and an
 STM32H753 share one entry. Put in values that hold for everything behind the
 ID, and keep anything that varies by board or by image out of it.
 
+## When something does not work
+
+Run `uv run stlink-mcp --check` first. It names what it found and what it did
+not.
+
+* **No STM32CubeCLT install found.** Set `STLINK_MCP_CLT_ROOT` to the directory
+  that contains `STM32CubeProgrammer/bin`.
+* **No ST-LINK probes found.** On Linux the probe needs ST's udev rules, which
+  STM32CubeCLT installs; unplug the probe and plug it in again after installing
+  them. A probe the programmer lists but cannot read usually means a USB
+  problem, and `list_probes` says so.
+* **The serial port cannot be opened.** On Linux the user needs to be in the
+  `dialout` group, and a new group membership takes effect at the next login.
+* **Could not reach the core.** The result's `hint` lists the likely causes. One
+  is another process holding the probe, such as an IDE or a GDB server left by
+  an earlier session. Check by port with `ss -ltnp`, not by process name: Linux
+  truncates process names to fifteen characters, so `pgrep ST-LINK_gdbserver`
+  finds nothing even while one is running.
+* **run_firmware refuses the image.** It has to be linked for RAM; see
+  [The GDB server stays alive between runs](#the-gdb-server-stays-alive-between-runs).
+* **Other tools report the probe as held.** A `run_firmware` left its GDB server
+  holding the probe, and `release_probe` frees it. On an STM32N6 running ST's
+  stock start-up code the board then needs a power cycle before the next run.
+
 ## Limitations
 
 * It does not build your firmware. That is your build system's job.
@@ -282,9 +313,9 @@ ID, and keep anything that varies by board or by image out of it.
 * Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer
   2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q,
   NUCLEO-H743ZI and STM32H753I-EVAL2 boards. Other Linux distributions should
-  work and have not been run. macOS is plausible and untried: the toolchain
-  search and the console device patterns cover it. Windows is not supported:
-  the executable names and device paths are wrong for it throughout.
+  work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to
+  the install there. Windows is not supported: the executable names and device
+  paths are wrong for it throughout.
 * Two device families are verified on hardware, STM32N6 and STM32H7. Parts
   seeded from the vendor database can run firmware; anything unrecognised can
   be identified and read but not run.

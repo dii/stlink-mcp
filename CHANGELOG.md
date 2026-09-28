@@ -8,6 +8,54 @@ git tag; a build past the last tag reports the tag plus the number of commits si
 
 ## [Unreleased]
 
+None of these changes has been run on a board yet. They change what results claim, add
+refusals before anything touches the hardware, and run tool calls one at a time.
+
+### Fixed
+
+- `core_registers` no longer reports `"halted": true` or says the core is still halted; a
+  programmer halt does not outlive its command. It reports `halted_to_read_registers`.
+- `target_was_reset` is set when a resetting connect is issued, whether or not it connects, and
+  rides on the failures of `board_state`, `run_firmware`, `flash_firmware` and
+  `core_registers`. The check of an unmeasured access port no longer sends a second reset pulse.
+- `read_fault_status` refuses Cortex-M0, M0+, M1 and M23 cores, which have no fault status
+  registers, and refuses a partial read; a clean read on an unrecognised core is `unverified`.
+  Its next step names the stack the exception frame is on.
+- `run_firmware` refuses an image with any loaded segment outside the SRAM region, not only one
+  whose vector table is elsewhere, since GDB would program such a segment into flash.
+- `run_firmware` keeps GDB's and the GDB server's output when a load fails, says when a failure
+  leaves the probe held, and returns a result instead of raising when GDB ports run out.
+- Tool calls issued together no longer race for GDB ports, servers or serial ports.
+- An unusable `STLINK_MCP_GDB_PORT` or `STLINK_MCP_CONSOLE_BAUD` stops start-up with one line
+  and exit 2 instead of a traceback.
+- `capture_console` keeps what arrived when the port drops mid-capture.
+- A source tree without git metadata, such as a GitHub ZIP download, installs, as version
+  `0.0.0+unknown`. `CHANGELOG.md` is in the sdist.
+
+### Changed
+
+- `flash_firmware` takes raw binaries (`.bin`) only, and checks the file before touching the
+  probe.
+- `STLINK_MCP_CONSOLE` takes `SERIAL=path` pairs, which win over the probe list; a bare path
+  applies only while one probe is attached. `run_firmware` now honours it, and results report
+  `console_port_source`.
+- `read_memory` and `flash_firmware` take an address as a hex string as well as an integer.
+  `read_memory` requires aligned reads of at most 1024 bytes and fails a short read. Console
+  captures are limited to 60 seconds.
+- `mcp` is capped below 3. `__version__` comes from the installed metadata, and the server
+  reports it in the MCP handshake.
+
+### Added
+
+- `stlink-mcp --check`, `--version` and `--help`.
+- CI for the suite on Python 3.11 to 3.13 and for the sdist contents, and an end-to-end test
+  over stdio.
+- `CONTRIBUTING.md` and issue templates.
+
+### Removed
+
+- The fallback to the first `/dev/ttyACM*` when no probe listing was available.
+
 ## [0.1.0] - 2026-09-06
 
 First tagged version. Alpha: any tool signature or result field may still change.

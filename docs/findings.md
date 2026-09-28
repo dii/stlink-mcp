@@ -214,3 +214,34 @@ The README's comparison with embedded-debugger-mcp rests on its source at commit
   `flash_firmware`, and its result says so.
 
 The comparison is fair only while that is what their code does. Re-read before repeating it.
+
+## Fixes that stopped at one tool (review, 2026-09-28)
+
+A review before sharing read the code and reproduced its findings against a faked
+programmer, with no board attached. Several were a defect already fixed once, surviving in a
+sibling:
+
+- `reset_target` stopped claiming the core was halted on 2026-08-17, and `core_registers`
+  kept returning `"halted": true`.
+- `reset_target` relies on a resetting connect pulsing nRST even when the port then does not
+  answer. `identify()` set `target_was_reset` only when that connect succeeded, so
+  `board_state` could restart an STM32N6 whose AP1 was closed and report it untouched. The
+  tool-level tests replace `Probe` with a fake that never resets, which is why none caught it;
+  the new tests drive the real `identify()` through a fake programmer.
+- RT1's fix refused an image unless a segment covered the RAM vector table. An image with its
+  vector table in RAM and a second segment linked for flash passed, and GDB would have
+  programmed that segment.
+- `STLINK_MCP_CONSOLE` was honoured by one of the two tools that use a console.
+
+Others were new. `read_fault_status` decoded zero as "no fault" on Cortex-M0-class cores,
+which have no fault registers, and on a partial read, and its next step located the exception
+frame on MSP for faults whose frame is on PSP. `flash_firmware` checked an address that the
+programmer uses only for raw binaries. And tool calls, which the MCP SDK runs in parallel
+threads, raced: with the port check slowed to widen the window, two probes were given one GDB
+port.
+
+None of the fixes has been run on a board. They change what results claim, add refusals before
+anything touches the hardware, and run tool calls one at a time. The one change to what is
+sent to a probe is that the check of an unmeasured access port always connects with HOTPLUG,
+where it could reuse HWRSTPULSE.
+
