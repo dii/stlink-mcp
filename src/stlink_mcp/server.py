@@ -267,8 +267,10 @@ def _address(value: int | str, name: str = "address") -> int:
             number = int(value.strip(), 0)
         except ValueError:
             raise ValueError(
-                f"{name} {value!r} is not a number. Write hex with a 0x prefix, as "
-                "in '0x20000000'; a bare string of digits is read as decimal."
+                f"{name} {value!r} is not a number this tool reads. Write hex with "
+                "a 0x prefix, as in '0x20000000'. Digits alone are read as decimal, "
+                "and digits with a leading zero are refused, since they are most "
+                "likely hex without its prefix."
             ) from None
     else:
         number = value
