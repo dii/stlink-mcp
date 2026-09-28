@@ -4,8 +4,13 @@ Pure logic, no hardware. Takes the raw words from the System Control Block
 fault registers and produces a structured interpretation of what happened.
 
 The registers are at fixed addresses in every Cortex-M with configurable
-faults (Armv7-M and Armv8-M). On Armv6-M parts (Cortex-M0) the addresses
-read as zero, which is the correct answer: no configurable faults exist.
+faults: Armv7-M and Armv8-M Mainline. Armv6-M (Cortex-M0, M0+, M1) and Armv8-M
+Baseline (Cortex-M23) do not have them. This file used to say they read as zero
+there, "which is the correct answer", and that was the wrong conclusion even if
+the reading is right: a zero decodes as "no fault active", and those cores take
+every fault as a HardFault that records nothing here, so a core sitting in its
+HardFault handler would be reported clean. `has_fault_registers` lets the tool
+refuse those cores instead.
 
   CFSR   0xE000ED28   Configurable Fault Status (MMFSR + BFSR + UFSR)
   HFSR   0xE000ED2C   HardFault Status
@@ -20,7 +25,9 @@ decode() is the dict that Probe.read_memory returns for that region.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 
 # Fixed addresses in the Cortex-M System Control Block.
@@ -33,6 +40,57 @@ AFSR = 0xE000ED3C
 
 FAULT_REGION_BASE = CFSR
 FAULT_REGION_SIZE = 24  # bytes; 6 words, CFSR through AFSR inclusive
+
+#: Every register decode() reads, under the name `FaultStatus.raw` uses.
+REGISTERS: dict[str, int] = {
+    "CFSR": CFSR, "HFSR": HFSR, "DFSR": DFSR,
+    "MMFAR": MMFAR, "BFAR": BFAR, "AFSR": AFSR,
+}
+
+
+def missing_registers(words: Mapping[int, int]) -> list[str]:
+    """Names of the registers a read did not return, in address order.
+
+    decode() treats an absent word as zero, which keeps it total and is what
+    the blind contract ratified (FAULTS-N10). For the tool it is the wrong
+    reading: zero means "no fault bit set", so a register the read never
+    returned would be reported as a clean one. The tool checks this first and
+    refuses a partial read rather than decode it.
+    """
+    return [name for name, address in REGISTERS.items() if address not in words]
+
+
+# Core names as the programmer prints them after "Device CPU", for example
+# "Cortex-M55" (captured on an STM32N6) and "Cortex-M7". The digit lookahead keeps
+# M3 from matching M33 or M35P, and M1 from matching a later M1x.
+_NO_FAULT_REGISTERS = re.compile(r"Cortex-M(?:0|1|23)(?![0-9])")
+_HAS_FAULT_REGISTERS = re.compile(r"Cortex-M(?:3|4|7|33|35P|52|55|85)(?![0-9])")
+_MAY_BANK_BY_SECURITY = re.compile(r"Cortex-M(?:33|35P|52|55|85)(?![0-9])")
+
+
+def has_fault_registers(cpu: str | None) -> bool | None:
+    """Whether a core of this name has the registers decode() reads.
+
+    False for Armv6-M (Cortex-M0, M0+, M1) and Armv8-M Baseline (Cortex-M23),
+    True for Armv7-M and Armv8-M Mainline, and None for a name that is missing
+    or not recognised here. None is reported as unknown rather than guessed
+    either way, because on a core without the registers a clean-looking read
+    is not evidence of anything.
+    """
+    if not cpu:
+        return None
+    if _NO_FAULT_REGISTERS.search(cpu):
+        return False
+    if _HAS_FAULT_REGISTERS.search(cpu):
+        return True
+    return None
+
+
+def may_bank_by_security(cpu: str | None) -> bool:
+    """Whether this is an Armv8-M Mainline core, which may implement the
+    Security Extension. Where it does, MMFSR, UFSR and MMFAR are banked by
+    security state and one read sees one bank."""
+    return bool(cpu and _MAY_BANK_BY_SECURITY.search(cpu))
 
 # Validity flags inside CFSR, used to gate the address registers.
 _MMARVALID = 1 << 7   # MMFSR bit 7 = CFSR bit 7

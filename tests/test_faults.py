@@ -6,6 +6,8 @@ FaultStatus. A wrong decode is worse than no decode, because it tells an
 agent a definitive wrong reason for a crash.
 """
 
+import pytest
+
 from stlink_mcp import faults
 
 
@@ -356,3 +358,41 @@ class TestEveryDefinedBitDecodesCorrectly:
             assert len(matches) == 1, f"{name} not found for DFSR={dfsr:#x}"
             assert matches[0].category == "Debug"
             assert matches[0].meaning
+
+
+class TestWhichCoresHaveTheRegisters:
+    """The tool refuses a core without the registers, and does not verify a
+    clean read on a core it cannot place, so this classification is what
+    stands between a HardFaulted Cortex-M0+ and "no fault is active"."""
+
+    @pytest.mark.parametrize("cpu", [
+        "Cortex-M3", "Cortex-M4", "Cortex-M7", "Cortex-M33", "Cortex-M35P",
+        "Cortex-M52", "Cortex-M55", "Cortex-M85",
+    ])
+    def test_armv7m_and_armv8m_mainline_have_them(self, cpu: str) -> None:
+        assert faults.has_fault_registers(cpu) is True
+
+    @pytest.mark.parametrize("cpu", ["Cortex-M0", "Cortex-M0+", "Cortex-M1", "Cortex-M23"])
+    def test_armv6m_and_armv8m_baseline_do_not(self, cpu: str) -> None:
+        assert faults.has_fault_registers(cpu) is False
+
+    @pytest.mark.parametrize("cpu", [None, "", "Cortex-A7", "something new"])
+    def test_anything_else_is_unknown_rather_than_guessed(self, cpu) -> None:
+        assert faults.has_fault_registers(cpu) is None
+
+    def test_m3_does_not_match_inside_m33(self) -> None:
+        """The digit lookahead is what keeps these apart."""
+        assert faults.may_bank_by_security("Cortex-M33") is True
+        assert faults.may_bank_by_security("Cortex-M3") is False
+        assert faults.may_bank_by_security("Cortex-M7") is False
+
+
+class TestMissingRegisters:
+    def test_a_full_read_misses_nothing(self) -> None:
+        words = {addr: 0 for addr in range(faults.CFSR, faults.AFSR + 4, 4)}
+        assert faults.missing_registers(words) == []
+
+    def test_absent_words_are_named_in_address_order(self) -> None:
+        assert faults.missing_registers({faults.HFSR: 0, faults.BFAR: 0}) == [
+            "CFSR", "DFSR", "MMFAR", "AFSR",
+        ]

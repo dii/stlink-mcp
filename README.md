@@ -135,7 +135,7 @@ uv sync
 | `flash_firmware` | Programs a signed image into boot memory | The programmer's own report that the download completed. Nothing is read back, and `verified_by` says so |
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port |
 | `core_registers` | Reads the core registers, halting the core for the read | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset. Does not claim the core is still halted afterwards, since a programmer halt does not outlive its command |
-| `read_fault_status` | Reads and decodes the Cortex-M fault registers | The raw registers plus a plain-English diagnosis. Reports the faulting address when the hardware recorded it, and the next step to find the faulting instruction |
+| `read_fault_status` | Reads and decodes the Cortex-M fault registers | The raw registers plus a plain-English diagnosis. Reports the faulting address when the hardware recorded it, and the next step to find the faulting instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers and would read as clean, and refuses a read that did not return all six |
 | `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, and refuses if it cannot resolve one |
 | `reset_target` | Resets the target and checks it restarted | Halts at the reset vector and compares the PC against word 1 of the vector table. The reset is the *connect*, because `-rst` then `-halt` loses the race and lands hundreds of bytes into start-up |
 | `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |

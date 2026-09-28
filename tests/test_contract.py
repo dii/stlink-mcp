@@ -166,6 +166,7 @@ class _FakeProbe:
     """A board that always answers, so the tools' own logic is what is tested."""
 
     device_id = 0x486  # STM32N6, the family the fake board's AP1 answers below
+    cpu: str | None = "Cortex-M55"  # what the captured N6 connect banner reports
 
     # Class-level so a test can patch them; __init__ must not overwrite them.
     access_port_provenance: str | None = "measured"
@@ -179,7 +180,9 @@ class _FakeProbe:
         self.access_port = 1
 
     def identify(self, allow_reset: bool = True) -> probe_mod.TargetInfo:
-        return probe_mod.TargetInfo(connected=True, device_id=self.device_id)
+        return probe_mod.TargetInfo(
+            connected=True, device_id=self.device_id, cpu=self.cpu
+        )
 
     def gdb_access_port(self, info: object) -> int:
         return 1
@@ -1081,6 +1084,88 @@ class TestFaultStatusReportsWhatsActuallyThere:
         assert "CFSR" in raw
         assert "HFSR" in raw
         assert "BFAR" in raw
+
+    @pytest.mark.parametrize("cpu", ["Cortex-M0", "Cortex-M0+", "Cortex-M23"])
+    def test_a_core_without_the_registers_is_refused_before_any_read(
+        self, bench, monkeypatch, cpu: str
+    ) -> None:
+        """Armv6-M and Armv8-M Baseline take every fault as a HardFault and record
+        nothing in this region. Reading it would decode as "no fault active" for
+        a core sitting in its HardFault handler."""
+        def must_not_read(self, address, length_bytes):
+            raise AssertionError("the region was read on a core that lacks it")
+
+        monkeypatch.setattr(_FakeProbe, "cpu", cpu)
+        monkeypatch.setattr(_FakeProbe, "read_memory", must_not_read)
+        out = call("read_fault_status")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert "no configurable fault status registers" in out["error"]
+        assert "XPSR" in out["hint"]
+
+    def test_a_partial_read_is_refused_rather_than_decoded_as_clean(
+        self, bench, monkeypatch
+    ) -> None:
+        """decode() treats an absent word as zero, which is "no fault bit set"."""
+        from stlink_mcp import faults as fm
+
+        monkeypatch.setattr(
+            _FakeProbe, "read_memory",
+            lambda self, address, n: {fm.DFSR: 0, fm.MMFAR: 0, fm.BFAR: 0, fm.AFSR: 0},
+        )
+        out = call("read_fault_status")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert "CFSR, HFSR" in out["error"]
+        assert "any_fault_active" not in out
+
+    def test_a_clean_read_on_an_unrecognised_core_is_not_verified(
+        self, bench, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(_FakeProbe, "cpu", None)
+        out = call("read_fault_status")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert "does not recognise" in out["unverified_because"]
+
+    def test_set_bits_are_evidence_even_on_an_unrecognised_core(
+        self, bench, monkeypatch
+    ) -> None:
+        from stlink_mcp import faults as fm
+
+        def read_with_fault(self, address, length_bytes):
+            words = {address + i * 4: 0 for i in range(length_bytes // 4)}
+            words[fm.CFSR] = 1 << 17  # INVSTATE
+            return words
+
+        monkeypatch.setattr(_FakeProbe, "cpu", None)
+        monkeypatch.setattr(_FakeProbe, "read_memory", read_with_fault)
+        out = call("read_fault_status")
+        assert out["status"] == result.VERIFIED
+        assert out["any_fault_active"] is True
+
+    def test_the_next_step_names_the_stack_the_frame_is_on(
+        self, bench, monkeypatch
+    ) -> None:
+        """Reading the frame at "the SP" is wrong for any fault in RTOS thread
+        code, whose frame is on PSP while a handler's SP is MSP."""
+        from stlink_mcp import faults as fm
+
+        def read_with_fault(self, address, length_bytes):
+            words = {address + i * 4: 0 for i in range(length_bytes // 4)}
+            words[fm.HFSR] = 1 << 30
+            return words
+
+        monkeypatch.setattr(_FakeProbe, "read_memory", read_with_fault)
+        step = call("read_fault_status")["next_step"]
+        assert "PSP" in step and "MSP" in step and "bit 2" in step
+
+    def test_the_security_bank_caveat_appears_only_where_it_can_apply(
+        self, bench, monkeypatch
+    ) -> None:
+        assert "security_state_note" in call("read_fault_status")  # Cortex-M55
+        monkeypatch.setattr(_FakeProbe, "cpu", "Cortex-M7")
+        assert "security_state_note" not in call("read_fault_status")
 
     def test_debug_halt_reason_reported_when_present(
         self, bench, monkeypatch

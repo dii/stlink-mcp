@@ -1115,9 +1115,10 @@ resetting the target.
 
 The registers are sticky until software clears them, so call this after a
 crash, or on a running target to check whether it faulted and recovered. The
-result says whether a fault is active and, when one is, what happened in plain
-English, with the faulting address when the hardware recorded it and the next
-step for finding the faulting instruction.
+result says whether a fault is active, what happened in plain English, the
+faulting address when the hardware recorded it, and how to find the faulting
+instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which lack these
+registers.
     """
     try:
         toolchain = _toolchain()
@@ -1139,16 +1140,50 @@ step for finding the faulting instruction.
                 probe_serial=serial,
                 hint=explain_connect_failure(info),
             )
+        # Refused before any read. These cores take every fault as a HardFault
+        # and record nothing in this region, so a read of it would decode as
+        # "no fault active" for a core sitting in its HardFault handler: the
+        # confidently wrong answer, on a whole class of parts the vendor seed
+        # covers (C0, F0, G0, L0 and more).
+        if faults_mod.has_fault_registers(info.cpu) is False:
+            return failed(
+                f"{info.cpu} has no configurable fault status registers. Armv6-M "
+                "and Armv8-M Baseline cores take every fault as a HardFault and "
+                "record nothing in CFSR, HFSR, MMFAR, BFAR or AFSR, so reading "
+                "them cannot say whether this core faulted.",
+                probe_serial=serial,
+                cpu=info.cpu,
+                hint=(
+                    "core_registers() answers it instead, halting the core for "
+                    "the read: XPSR bits 0-8 read 3 while the core is in its "
+                    "HardFault handler, and 0 in thread mode."
+                ),
+            )
         words = probe.read_memory(
             faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE,
         )
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc))
 
+    # A register the read did not return is not a clean register. decode()
+    # treats an absent word as zero, and zero is "no fault bit set".
+    missing = faults_mod.missing_registers(words)
+    if missing:
+        return failed(
+            f"The read returned {len(faults_mod.REGISTERS) - len(missing)} of the "
+            f"{len(faults_mod.REGISTERS)} fault registers; {', '.join(missing)} "
+            "did not come back. A register that was not read is not reported "
+            "as clean.",
+            probe_serial=serial,
+            words_read={f"0x{a:08X}": f"0x{v:08X}" for a, v in sorted(words.items())},
+        )
+
     status = faults_mod.decode(words)
+    registers_known = faults_mod.has_fault_registers(info.cpu)
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        "cpu": info.cpu,
         "connect_mode": probe.connect_mode,
         "target_was_reset": probe.target_was_reset,
         "any_fault_active": status.any_fault,
@@ -1178,19 +1213,48 @@ step for finding the faulting instruction.
             {"bit": d.name, "meaning": d.meaning} for d in status.debug
         ]
 
+    if faults_mod.may_bank_by_security(info.cpu):
+        detail["security_state_note"] = (
+            "If this core implements the Armv8-M Security Extension (TrustZone), "
+            "MMFSR, UFSR and MMFAR are banked by security state and this read "
+            "sees one bank, so a MemManage fault or UsageFault taken in the "
+            "other security state may not appear here."
+        )
+
     if status.any_fault:
+        # The stack matters. The previous text said to read the frame at "the
+        # SP", which inside a handler is MSP; a fault in thread code under any
+        # RTOS stacks its frame on PSP, so following it gave a confident, wrong
+        # faulting PC. EXC_RETURN in LR says which.
         detail["next_step"] = (
-            "To find WHERE the fault happened: call core_registers() to read "
-            "the PC (halts the core for the read). If the core is in the fault handler, "
-            "the exception frame on the stack holds the faulting PC: read the "
-            "SP from core_registers, then read_memory at that address for 32 "
-            "bytes. Words 0-3 are R0-R3, word 4 is R12, word 5 is LR, word "
-            "6 is the faulting PC, word 7 is xPSR. On Cortex-M with FP, the "
-            "frame may be 26 words if the FP context was active."
+            "To find WHERE it happened, call core_registers(), which halts the "
+            "core for the read. XPSR bits 0-8 give the active exception (3 is "
+            "HardFault, 0 is thread mode). In a handler, LR holds an EXC_RETURN "
+            "value (0xFFxxxxxx) whose bit 2 names the stack holding the "
+            "exception frame: clear is MSP, which is the SP a handler reports; "
+            "set is PSP, the thread stack an RTOS uses, which that SP is not. "
+            "Read 32 bytes at the frame's stack pointer with read_memory: words "
+            "0-3 are R0-R3, 4 is R12, 5 is LR, 6 is the faulting PC, 7 is XPSR. "
+            "If LR bit 4 is clear the frame also holds FP state, 104 bytes in "
+            "all. If LR is not 0xFFxxxxxx the handler has overwritten it, and "
+            "the frame cannot be located this way."
         )
 
     if probe.degraded_reason:
         return unverified(probe.degraded_reason, **detail)
+
+    # Set bits are evidence on any core. A clean read is evidence only on a
+    # core known to have the registers, since elsewhere the region is not fault
+    # status at all.
+    if registers_known is None and not status.any_fault:
+        return unverified(
+            "The registers read clean, but the connect reported the core as "
+            f"{info.cpu or 'nothing'}, which this tool does not recognise as "
+            "having them. On a core without them (Cortex-M0, M0+, M1, M23) this "
+            "region is not fault status, so a clean read there does not show "
+            "that nothing faulted.",
+            **detail,
+        )
 
     return verified("fault status registers read from the target", **detail)
 
