@@ -604,6 +604,67 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         assert "device disconnected" in out["console_error"]
 
 
+class TestAddressesAndSizesAreCheckedAtTheBoundary:
+    """JSON has no hex literals, so an agent had to turn "0x20000000" into
+    536870912 itself, and a slip read or wrote somewhere else. Sizes and
+    durations had no bounds, so one call could flood the agent's context or,
+    with calls serialised, hold up every other tool for as long as it liked."""
+
+    def test_a_hex_string_is_an_address(self, bench) -> None:
+        out = call("read_memory", address="0x20000000", length_bytes=8)
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED
+        assert list(out["words"]) == ["0x20000000", "0x20000004"]
+
+    @pytest.mark.parametrize("address,why", [
+        ("08000000", "0x prefix"), ("0xZZ", "0x prefix"), (-4, "negative"),
+        (0x1_0000_0000, "32-bit"), (0x20000002, "aligned"),
+    ])
+    def test_an_unusable_address_is_refused(self, bench, address, why: str) -> None:
+        out = call("read_memory", address=address)
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert why in out["error"]
+
+    @pytest.mark.parametrize("length", [0, 6, 2048])
+    def test_an_unusable_length_is_refused(self, bench, length: int) -> None:
+        out = call("read_memory", length_bytes=length)
+        assert out["status"] == result.FAILED
+
+    def test_a_short_read_is_not_verified(self, bench, monkeypatch) -> None:
+        """The words that came back are reported; the rest are named as missing
+        rather than left out of a verified dict."""
+        monkeypatch.setattr(
+            _FakeProbe, "read_memory", lambda self, addr, n: {addr: 0x11111111}
+        )
+        out = call("read_memory", address=0x20000000, length_bytes=16)
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert out["words"] == {"0x20000000": "0x11111111"}
+        assert out["missing"] == ["0x20000004", "0x20000008", "0x2000000C"]
+
+    def test_flash_firmware_takes_a_hex_string_as_the_callers_address(
+        self, bench, monkeypatch
+    ) -> None:
+        from stlink_mcp import quirks as quirks_mod
+
+        seeded = quirks_mod.FamilyQuirks(
+            name="STM32F4", access_port=0, flash_base=0x08000000,
+            default_provenance=quirks_mod.VENDOR_DB,
+        )
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: seeded)
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x08000000")
+        assert out["status"] == result.VERIFIED
+        assert out["address"] == "0x08000000"
+
+    @pytest.mark.parametrize("seconds", [0, -1, 61, float("inf")])
+    def test_capture_time_is_bounded(self, bench, seconds: float) -> None:
+        assert call("capture_console", seconds=seconds)["status"] == result.FAILED
+        out = call("run_firmware", elf_path=str(bench.elf), console_seconds=seconds)
+        assert out["status"] == result.FAILED
+        assert "console_seconds" in out["error"]
+
+
 class TestReleaseProbe:
     def test_releasing_nothing_is_not_reported_as_a_release(self) -> None:
         """It returned a hardcoded ok=True regardless of whether a session

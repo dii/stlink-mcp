@@ -250,6 +250,52 @@ def _gdb_port_for(serial: str | None) -> int:
     )
 
 
+def _address(value: int | str, name: str = "address") -> int:
+    """An address from a JSON integer or from a string such as "0x20000000".
+
+    Strings are accepted because JSON has no hex literals. Without them an agent
+    reading an address off a datasheet converts it to decimal in its head, and
+    a slip there reads or writes somewhere else while the result looks fine.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{name} {value!r} is not an address.")
+    if isinstance(value, str):
+        try:
+            number = int(value.strip(), 0)
+        except ValueError:
+            raise ValueError(
+                f"{name} {value!r} is not a number. Write hex with a 0x prefix, as "
+                "in '0x20000000'; a bare string of digits is read as decimal."
+            ) from None
+    else:
+        number = value
+    if number < 0:
+        raise ValueError(f"{name} {number} is negative.")
+    if number > 0xFFFFFFFF:
+        raise ValueError(f"{name} 0x{number:X} is beyond the 32-bit address space.")
+    return number
+
+
+#: The most read_memory returns in one call. A result goes into the calling
+#: agent's context whole, and a thousand-word dump there buries the few words
+#: anyone needed; several reads are cheap.
+_MAX_READ_BYTES = 1024
+
+#: The longest console capture. Tool calls run one at a time, so a capture
+#: holds up every other call, on every board, until it ends.
+_MAX_CAPTURE_SECONDS = 60.0
+
+
+def _capture_seconds_problem(seconds: float, name: str) -> str | None:
+    if 0 < seconds <= _MAX_CAPTURE_SECONDS:
+        return None
+    return (
+        f"{name} is {seconds}. Give more than 0 and at most "
+        f"{_MAX_CAPTURE_SECONDS:g}: tool calls run one at a time, so a capture "
+        "holds up every other call until it ends."
+    )
+
+
 @mcp.tool()
 @_serialised
 def list_probes() -> dict[str, Any]:
@@ -439,6 +485,9 @@ segment outside SRAM (0x20000000-0x3FFFFFFF), since a GDB load writes wherever
 the image says. Resets the target first and keeps the GDB server; see
 `release_probe`. No signing.
     """
+    too_long = _capture_seconds_problem(console_seconds, "console_seconds")
+    if too_long:
+        return failed(too_long)
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
@@ -701,15 +750,15 @@ nothing was held.
 @mcp.tool()
 @_serialised
 def flash_firmware(
-    image_path: str, probe_serial: str | None = None, address: int | None = None
+    image_path: str, probe_serial: str | None = None, address: int | str | None = None
 ) -> dict[str, Any]:
     """Program a raw binary image (.bin) into boot memory for standalone boot.
 
 Prefer run_firmware while developing. Does not sign. Refuses anything but a
 .bin, because the programmer writes HEX, S-record and ELF files to the
 addresses inside them. Refuses a flash base that is not `measured` unless you
-pass `address`. Nothing is read back afterwards; `verified_by` says what was
-and was not checked.
+pass `address`, an integer or a hex string such as "0x08000000". Nothing is
+read back afterwards; `verified_by` says what was and was not checked.
     """
     # Checked before anything touches the probe, like run_firmware's image
     # check: a refusal after identify() would already have connected, and
@@ -719,6 +768,10 @@ and was not checked.
     if not_flashable:
         return failed(not_flashable, image=str(image))
     image_size = image.stat().st_size
+    try:
+        explicit = None if address is None else _address(address)
+    except ValueError as exc:
+        return failed(str(exc), image=str(image))
 
     try:
         toolchain = _toolchain()
@@ -748,7 +801,7 @@ and was not checked.
         )
 
     quirks = info.quirks
-    target_address = address if address is not None else quirks.flash_base
+    target_address = explicit if explicit is not None else quirks.flash_base
     if target_address is None:
         return failed(
             f"No flash base recorded for {quirks.name}; pass address explicitly."
@@ -766,7 +819,7 @@ and was not checked.
     #
     # An explicit `address` is a different matter and is allowed: the caller has
     # said where to write, so it is their claim rather than the table's guess.
-    if address is None and not quirks.is_measured("flash_base"):
+    if explicit is None and not quirks.is_measured("flash_base"):
         return failed(
             f"The flash base for {quirks.name} is "
             f"{quirks.provenance_of('flash_base')}, not measured on hardware, and "
@@ -809,15 +862,32 @@ and was not checked.
 @mcp.tool()
 @_serialised
 def read_memory(
-    address: int, length_bytes: int = 32, probe_serial: str | None = None
+    address: int | str, length_bytes: int = 32, probe_serial: str | None = None
 ) -> dict[str, Any]:
     """Read target memory as 32-bit words without halting or resetting the target.
 
-Connects hotplug-only. On a part whose running firmware has closed the debug
-access port, reopening it would need a reset, which destroys the state you are
-reading; this refuses instead and says why. Cannot reach a probe held by a GDB
-server until `release_probe`.
+`address` is an integer or a hex string such as "0x20000000", 4-byte aligned;
+`length_bytes` is a multiple of 4, at most 1024. Connects hotplug-only: where
+running firmware has closed the debug port, reopening it would need a reset,
+which destroys the state being read, so this refuses instead. Cannot reach a
+probe held by a GDB server until `release_probe`.
     """
+    try:
+        start = _address(address)
+    except ValueError as exc:
+        return failed(str(exc))
+    if start % 4:
+        return failed(f"address 0x{start:08X} is not 4-byte aligned; this reads 32-bit words.")
+    if length_bytes <= 0 or length_bytes % 4:
+        return failed(f"length_bytes is {length_bytes}; give a positive multiple of 4.")
+    if length_bytes > _MAX_READ_BYTES:
+        return failed(
+            f"length_bytes is {length_bytes}; at most {_MAX_READ_BYTES} per call, "
+            "so one read cannot flood the result. Read in pieces."
+        )
+    if start + length_bytes > 1 << 32:
+        return failed(f"A {length_bytes}-byte read at 0x{start:08X} runs past the end of the address space.")
+
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
@@ -837,16 +907,29 @@ server until `release_probe`.
                 probe_serial=serial,
                 hint=explain_connect_failure(info),
             )
-        words = probe.read_memory(address, length_bytes)
+        words = probe.read_memory(start, length_bytes)
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc))
 
+    # Only the words asked for, and all of them. A read that came back short
+    # used to be verified with whatever it held, and the absent words were
+    # simply not in the dict, which an agent summarising the result can miss.
+    wanted = range(start, start + length_bytes, 4)
+    missing = [a for a in wanted if a not in words]
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "connect_mode": probe.connect_mode,
         "target_was_reset": probe.target_was_reset,
-        "words": {f"0x{a:08X}": f"0x{v:08X}" for a, v in sorted(words.items())},
+        "words": {f"0x{a:08X}": f"0x{words[a]:08X}" for a in wanted if a in words},
     }
+    if missing:
+        return failed(
+            f"The read returned {len(wanted) - len(missing)} of the {len(wanted)} "
+            "words asked for. The ones in `words` were read; the ones in "
+            "`missing` were not, and are not zero.",
+            missing=[f"0x{a:08X}" for a in missing],
+            **detail,
+        )
     if probe.degraded_reason:
         return unverified(probe.degraded_reason, **detail)
 
@@ -1398,8 +1481,11 @@ def capture_console(
 The port is the one the probe list maps to this probe's serial, or the one
 STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*, which with two
 boards attached is the wrong one about half the time. Refuses when it cannot
-resolve a port for that probe.
+resolve a port for that probe. At most 60 seconds.
     """
+    too_long = _capture_seconds_problem(seconds, "seconds")
+    if too_long:
+        return failed(too_long)
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
