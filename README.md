@@ -94,7 +94,8 @@ when every promise in this README has a measurement behind it in
 [docs/findings.md](docs/findings.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 Plans are in [ROADMAP.md](ROADMAP.md). The measurements behind the claims in
-this file are in [docs/findings.md](docs/findings.md).
+this file are in [docs/findings.md](docs/findings.md). How to report a problem
+or contribute a board you have measured is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Requirements
 

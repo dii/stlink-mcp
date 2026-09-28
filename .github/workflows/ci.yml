@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest on Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      # Full history with tags: the version comes from the git tag, and a
+      # shallow checkout would build as 0.0.0+N.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      # --frozen installs exactly what uv.lock says. --locked would also fail
+      # whenever a newer uv would write the lock differently, which is not a
+      # defect in this project.
+      - run: uv sync --frozen --python ${{ matrix.python }}
+      # No hardware here: the tests that need an STM32CubeCLT install skip.
+      - run: uv run --frozen pytest -q
+
+  sdist:
+    name: sdist holds exactly what git tracks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv build --sdist --out-dir dist
+      # The sdist is built from an include list, so a file git never tracked
+      # cannot be published (docs/findings.md, "The packaging tool publishes
+      # what git hides"). This catches the other direction too: a tracked file
+      # the list forgot, as CHANGELOG.md once was. GitHub's own configuration
+      # under .github/ is the one tracked thing an sdist has no use for.
+      - name: Compare the sdist with git ls-files
+        run: |
+          tar -tzf dist/*.tar.gz | sed 's|^[^/]*/||' | grep -v '/$' | grep -v '^$' \
+            | grep -vx PKG-INFO | sort > sdist-files.txt
+          git ls-files | grep -v '^\.github/' | sort > tracked-files.txt
+          diff tracked-files.txt sdist-files.txt

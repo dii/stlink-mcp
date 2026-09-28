@@ -61,6 +61,7 @@ include = [
     "AGENTS.md",
     "CHANGELOG.md",
     "CLAUDE.md",
+    "CONTRIBUTING.md",
     "GEMINI.md",
     "LICENSE",
     "README.md",
