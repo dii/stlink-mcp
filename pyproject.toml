@@ -23,8 +23,11 @@ classifiers = [
     "Topic :: Software Development :: Embedded Systems",
 ]
 
+# mcp is capped below the next major version. server.py is written against the
+# 2.x MCPServer API, which was itself a rename from 1.x's FastMCP, and the
+# roadmap's standing check is to re-verify on every SDK bump rather than assume.
 dependencies = [
-    "mcp>=2.0.0",
+    "mcp>=2.0.0,<3",
     "pyserial>=3.5",
 ]
 
@@ -56,6 +59,7 @@ include = [
     "tools",
     "docs",
     "AGENTS.md",
+    "CHANGELOG.md",
     "CLAUDE.md",
     "GEMINI.md",
     "LICENSE",
@@ -71,12 +75,21 @@ dev = ["pytest>=8"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# The annotated git tag is the only copy of the version (the author's
-# ADR-0030). A build past the last tag reports "<tag>+<commits since the tag>",
-# and an uncommitted tree adds ".dirty"; a checkout with no tag reports 0.0.0+N.
-# Freeze tags under freeze/ are never read as versions.
+# The annotated git tag is the only copy of the version. A build past the last
+# tag reports "<tag>+<commits since the tag>", and an uncommitted tree adds
+# ".dirty"; a checkout with no tag reports 0.0.0+N. Freeze tags under freeze/
+# are never read as versions.
+#
+# A tree with no git metadata at all, which is what GitHub's "Download ZIP" and
+# `git archive` produce, builds as 0.0.0+unknown rather than failing to install:
+# without default-version versioningit raised NotSdistError there, and
+# `uv sync` stopped before the README's first step had finished. "unknown" is
+# the honest answer, since nothing in such a tree says which commit it is.
 [tool.hatch.version]
 source = "versioningit"
+
+[tool.versioningit]
+default-version = "0.0.0+unknown"
 
 [tool.versioningit.vcs]
 method = "git"

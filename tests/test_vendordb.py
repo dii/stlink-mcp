@@ -10,6 +10,7 @@ serial came back as uninitialised memory.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -248,12 +249,28 @@ class TestNothingIsDroppedSilently:
         return d / name
 
     def test_an_unreadable_file_is_reported_and_not_fatal(self, tmp_path) -> None:
+        """Any OSError, not only ET.ParseError, must be caught per file.
+
+        Made unreadable with a directory where the file should be, because that
+        fails for every user. The mode-000 version below is skipped as root,
+        who can read the file anyway, and CI containers commonly run as root:
+        that test failed there while the code under test was right."""
+        self._db(tmp_path, "STM32_Prog_DB_0x77A.xml", "0x77A", ["0x20000000"])
+        (tmp_path / "STM32_Prog_DB_0x77B.xml").mkdir()
+        r = seed_from_directory(tmp_path)
+        assert 0x77A in r.entries, "the readable file must still be seeded"
+        assert "STM32_Prog_DB_0x77B.xml" in r.unreadable
+        assert "Error" in r.unreadable["STM32_Prog_DB_0x77B.xml"]
+
+    @pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        reason="root reads a file whatever its mode, so it cannot be made unreadable",
+    )
+    def test_a_file_without_read_permission_is_reported(self, tmp_path) -> None:
         """It raised PermissionError, which is an OSError and not an ET.ParseError,
         so the narrower catch let it escape load_vendor_seed - which catches only
         ToolchainError and VendorDbError - and out of main(), killing the server
         with a traceback. Directly against load_vendor_seed's own promise."""
-        import os
-
         self._db(tmp_path, "STM32_Prog_DB_0x77A.xml", "0x77A", ["0x20000000"])
         bad = self._db(tmp_path, "STM32_Prog_DB_0x77B.xml", "0x77B", ["0x20000000"])
         os.chmod(bad, 0o000)

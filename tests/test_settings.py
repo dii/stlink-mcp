@@ -81,7 +81,7 @@ class TestStartUpRefusesAnUnusableSetting:
         monkeypatch.setenv(settings.GDB_PORT, "6123x")
         monkeypatch.setattr(entry, "_install_signal_handlers", lambda: None)
         with pytest.raises(SystemExit) as stopped:
-            entry.main()
+            entry.main([])
         assert stopped.value.code == 2
         err = capsys.readouterr().err.strip()
         assert err.count("\n") == 0 and settings.GDB_PORT in err

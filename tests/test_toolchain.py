@@ -71,3 +71,39 @@ class TestNewestInstallWins:
         runs on one machine."""
         names = ["stm32cubeclt_1.22.0", "stm32cubeclt_1.22.0-beta"]
         assert _order(names) == _order(list(reversed(names)))
+
+
+class TestTheNotFoundMessageNamesWhereItLooked:
+    def test_every_searched_place_is_named_when_none_exists(self, monkeypatch) -> None:
+        """It fell back to "/opt/st, ~/st" when no base directory existed,
+        leaving out two of the places the README says are searched."""
+        import pytest
+
+        from stlink_mcp import toolchain
+
+        monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
+        monkeypatch.setattr(toolchain, "_candidate_roots", lambda: [])
+        with pytest.raises(toolchain.ToolchainError) as raised:
+            toolchain.find_toolchain()
+        message = str(raised.value)
+        for place in ("/opt/st", "~/st", "/usr/local/st", "/Applications"):
+            assert place in message
+
+    def test_a_wrong_root_setting_says_what_is_missing(self, monkeypatch, tmp_path) -> None:
+        import pytest
+
+        from stlink_mcp import toolchain
+
+        monkeypatch.setenv("STLINK_MCP_CLT_ROOT", str(tmp_path))
+        with pytest.raises(toolchain.ToolchainError, match="STM32_Programmer_CLI under it"):
+            toolchain.find_toolchain()
+
+    def test_a_missing_home_does_not_stop_the_search(self, monkeypatch) -> None:
+        from stlink_mcp import toolchain
+
+        def no_home(self):
+            raise RuntimeError("Could not determine home directory.")
+
+        monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
+        monkeypatch.setattr(toolchain.Path, "expanduser", no_home)
+        assert isinstance(toolchain._candidate_roots(), list)

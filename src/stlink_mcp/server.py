@@ -34,6 +34,7 @@ from typing import Any, TypeVar
 
 from mcp.server import MCPServer
 
+from . import __version__
 from . import console as console_mod
 from . import faults as faults_mod
 from . import image as image_mod
@@ -62,7 +63,9 @@ from .runner import (
 from .toolchain import Toolchain, ToolchainError, find_toolchain
 from .vendordb import VendorDbError, seed_from_directory
 
-mcp = MCPServer("stlink-mcp")
+# The version goes into the initialize handshake, so a client log or a bug
+# report shows which build answered.
+mcp = MCPServer("stlink-mcp", version=__version__)
 
 #: One tool call at a time, for the whole process.
 #:

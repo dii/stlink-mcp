@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import signal
 import sys
 
-from . import settings
+from . import __version__, settings
+from . import server as server_mod
 from .quirks import BoardConfigError
 from .runner import release_all_servers
-from .server import load_board_config, load_vendor_seed, mcp
+from .toolchain import ToolchainError
 
 
 def _release_and_exit(signum: int, _frame: object) -> None:
@@ -47,7 +49,87 @@ def _install_signal_handlers() -> None:
             pass
 
 
-def main() -> None:
+def _parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="stlink-mcp",
+        description=(
+            "An MCP server for STM32 targets over ST-LINK. It speaks MCP on stdin "
+            "and stdout and is meant to be started by an MCP client; README.md "
+            "has the client configuration."
+        ),
+        epilog=(
+            "Settings are environment variables: STLINK_MCP_CLT_ROOT, "
+            "STLINK_MCP_BOARDS, STLINK_MCP_CONSOLE, STLINK_MCP_CONSOLE_BAUD, "
+            "STLINK_MCP_GDB_PORT and STLINK_MCP_NO_VENDOR_SEED."
+        ),
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--check", action="store_true",
+        help=(
+            "report the settings, toolchain, vendor database, board file and "
+            "attached probes this server would use, then exit"
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def _check() -> int:
+    """`stlink-mcp --check`: what the server would use, without starting it.
+
+    Exit status 0 when it would start with a toolchain, 1 when no usable
+    STM32CubeCLT or probe listing was found, 2 for a setting or board file the
+    server would refuse. It lists probes with the programmer's `-l`, which
+    neither halts nor resets anything and works while other probes are held.
+    """
+    print(f"stlink-mcp {__version__}")
+    try:
+        settings.check()
+    except settings.SettingError as exc:
+        print(f"settings: {exc}")
+        return 2
+    print("settings: usable")
+
+    try:
+        toolchain = server_mod._toolchain()
+    except ToolchainError as exc:
+        print(f"toolchain: {exc}")
+        return 1
+    print(f"toolchain: {toolchain.root}")
+    print(f"vendor database: {server_mod.load_vendor_seed()}")
+
+    try:
+        count, path = server_mod.load_board_config()
+    except BoardConfigError as exc:
+        print(f"board file: {exc}")
+        return 2
+    print(f"board file: {path}, {count} board(s)" if path else "board file: none")
+
+    listing = server_mod.list_probes()
+    if listing["status"] != "verified":
+        print(f"probes: {listing.get('error')}")
+        return 1
+    print(f"probes: {listing['count']} attached")
+    for probe in listing["probes"]:
+        console = probe["console_port"] or "no console mapped"
+        if probe["console_port"]:
+            console += f" ({probe['console_port_source']})"
+        print(
+            f"  {probe['serial']}  {probe['board'] or 'unknown board'}  "
+            f"firmware {probe['firmware'] or 'unknown'}  console {console}"
+        )
+        if probe.get("console_note"):
+            print(f"    {probe['console_note']}")
+    if listing.get("unreadable_note"):
+        print(f"  {listing['unreadable_note']}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
+    arguments = _parse_arguments(argv)
+    if arguments.check:
+        raise SystemExit(_check())
+
     _install_signal_handlers()
 
     # Settings first, and the same way a bad board file is handled: one line on
@@ -69,10 +151,10 @@ def main() -> None:
     # Printed unconditionally. The previous version gated this on a non-zero
     # count, which is how a database format change that silently lost all 99
     # device IDs became indistinguishable from a machine with no toolchain.
-    print(f"stlink-mcp: {load_vendor_seed()}", file=sys.stderr)
+    print(f"stlink-mcp: {server_mod.load_vendor_seed()}", file=sys.stderr)
 
     try:
-        count, path = load_board_config()
+        count, path = server_mod.load_board_config()
     except BoardConfigError as exc:
         print(f"stlink-mcp: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
@@ -80,7 +162,7 @@ def main() -> None:
         print(f"stlink-mcp: loaded {count} user-described board(s) from {path}",
               file=sys.stderr)
 
-    mcp.run()
+    server_mod.mcp.run()
 
 
 if __name__ == "__main__":

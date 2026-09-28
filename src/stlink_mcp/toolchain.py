@@ -91,19 +91,33 @@ def _version_key(path: Path) -> tuple[tuple[int, ...], str]:
     return (tuple(int(n) for n in re.findall(r"\d+", path.name)), path.name)
 
 
+_CLT_ROOT_ENV = "STLINK_MCP_CLT_ROOT"
+
+#: Where an install is looked for, as stm32cubeclt* directories inside each.
+#: "~" is expanded when searched; a machine with no home directory skips it.
+_SEARCH_BASES = ("/opt/st", "~/st", "/usr/local/st")
+
+#: A macOS location, searched as-is. Not tried on a Mac by this project.
+_MAC_ROOT = Path("/Applications/STMicroelectronics/STM32CubeCLT")
+
+
 def _candidate_roots() -> list[Path]:
-    env = os.environ.get("STLINK_MCP_CLT_ROOT")
+    env = os.environ.get(_CLT_ROOT_ENV)
     if env:
-        return [Path(env)]
+        return [Path(env).expanduser()]
 
     roots: list[Path] = []
-    for base in (Path("/opt/st"), Path.home() / "st", Path("/usr/local/st")):
+    for name in _SEARCH_BASES:
+        try:
+            base = Path(name).expanduser()
+        except RuntimeError:
+            # No home directory to expand "~" against, which some minimal
+            # container launches produce. The other places are still searched.
+            continue
         if base.is_dir():
             roots.extend(sorted(base.glob("stm32cubeclt*"), key=_version_key, reverse=True))
-    # macOS default
-    mac = Path("/Applications/STMicroelectronics/STM32CubeCLT")
-    if mac.is_dir():
-        roots.append(mac)
+    if _MAC_ROOT.is_dir():
+        roots.append(_MAC_ROOT)
     return roots
 
 
@@ -115,10 +129,22 @@ def find_toolchain() -> Toolchain:
         if tc.programmer.exists():
             return tc
 
+    env = os.environ.get(_CLT_ROOT_ENV)
+    if env:
+        raise ToolchainError(
+            f"{_CLT_ROOT_ENV} is {env}, and there is no "
+            "STM32CubeProgrammer/bin/STM32_Programmer_CLI under it. Point it at "
+            "the STM32CubeCLT install directory itself."
+        )
+    # Every place searched is named, not only the ones that existed. The
+    # previous message fell back to "/opt/st, ~/st" when none existed, which
+    # left out two of the four places the README says are searched.
+    found = ", ".join(str(c) for c in candidates)
     raise ToolchainError(
-        "No STM32CubeCLT install found. Looked in: "
-        + (", ".join(str(c) for c in candidates) if candidates else "/opt/st, ~/st")
-        + ". Set STLINK_MCP_CLT_ROOT to the install directory."
+        "No STM32CubeCLT install found. Looked for stm32cubeclt* directories in "
+        f"{', '.join(_SEARCH_BASES)}, and at {_MAC_ROOT}"
+        + (f"; found {found}, none with STM32_Programmer_CLI" if found else "")
+        + f". Set {_CLT_ROOT_ENV} to the install directory."
     )
 
 
@@ -155,6 +181,8 @@ def run_command(argv: list[str], timeout: float = 120.0) -> CommandResult:
         ) from exc
     except FileNotFoundError as exc:
         raise ToolchainError(f"Not found: {argv[0]}") from exc
+    except PermissionError as exc:
+        raise ToolchainError(f"Not executable by this user: {argv[0]}") from exc
 
     return CommandResult(
         argv=argv,

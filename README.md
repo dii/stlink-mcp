@@ -109,9 +109,18 @@ this file are in [docs/findings.md](docs/findings.md).
 
 ## Install
 
+With [uv](https://docs.astral.sh/uv/) installed:
+
 ```sh
+git clone https://github.com/dii/stlink-mcp
+cd stlink-mcp
 uv sync
+uv run stlink-mcp --check
 ```
+
+`--check` reports the toolchain it found, the vendor database, any board file
+and the probes attached, then exits, without starting the server. It lists
+probes the same way `list_probes` does, which neither halts nor resets them.
 
 ## Use it from an MCP client
 
