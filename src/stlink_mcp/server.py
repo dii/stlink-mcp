@@ -1031,11 +1031,13 @@ target stopped, use the GDB server that run_firmware keeps alive.
 
 @mcp.tool()
 def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
-    """Read the core registers. This HALTS the core.
+    """Read the core registers, halting the core for the read.
 
 The direct way to find out what a program is doing, and what settles "did it
-start" when there is no console. Reports `target_was_reset` when reaching the
-core needed a reset. Perturbing, so never used inside routine checks.
+start" when there is no console. Does not claim the core is still halted
+afterwards: a programmer halt did not outlive its command on the boards
+measured. Reports `target_was_reset` when reaching the core needed a reset.
+Perturbing, so never used inside routine checks.
     """
     try:
         toolchain = _toolchain()
@@ -1054,14 +1056,25 @@ core needed a reset. Perturbing, so never used inside routine checks.
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
-        "halted": True,
+        # What was DONE, not a claim about the core now. This used to be
+        # `"halted": True` beside "The core is now halted", the same unobserved
+        # claim reset_target dropped on 2026-08-17 after two H7 boards showed a
+        # programmer halt does not outlive the command that made it
+        # (docs/findings.md, "A halt does not survive the invocation").
+        "halted_to_read_registers": True,
         "connect_mode": probe.connect_mode,
         # Reported, not hidden. Reaching the family's access port on a part that
         # closes it can need a resetting connect, and a reset restarts the very
         # program being inspected. A caller cannot allow for that if it is not told.
         "target_was_reset": probe.target_was_reset,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
-        "note": "The core is now halted. Resume it by running firmware again.",
+        "note": (
+            "The core was halted to read these registers. Whether it is still "
+            "halted is not claimed: a halt made through the programmer did not "
+            "outlive the command on the boards measured, and nothing here can "
+            "observe it. To hold a target stopped, use the GDB server that "
+            "run_firmware keeps alive."
+        ),
     }
     if probe.target_was_reset:
         detail["reset_note"] = (
@@ -1148,7 +1161,7 @@ step for finding the faulting instruction.
     if status.any_fault:
         detail["next_step"] = (
             "To find WHERE the fault happened: call core_registers() to read "
-            "the PC (halts the core). If the core is in the fault handler, "
+            "the PC (halts the core for the read). If the core is in the fault handler, "
             "the exception frame on the stack holds the faulting PC: read the "
             "SP from core_registers, then read_memory at that address for 32 "
             "bytes. Words 0-3 are R0-R3, word 4 is R12, word 5 is LR, word "

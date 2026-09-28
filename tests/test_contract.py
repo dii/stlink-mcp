@@ -678,6 +678,25 @@ class TestResetTargetTellsTheTruthAboutTheCore:
             assert out.get("hint"), f"no hint on the branch for pc={pc}"
 
 
+class TestCoreRegistersDoesNotClaimTheCoreStaysHalted:
+    """The same defect reset_target had, left behind in a sibling tool.
+
+    On 2026-08-17 two H7 boards showed that a halt made through the programmer
+    does not outlive the command that made it, and reset_target stopped
+    reporting `core_halted`. core_registers went on returning `"halted": true`
+    and "The core is now halted", so an agent was told the core was stopped
+    while, on the boards measured, it had already resumed.
+    """
+
+    def test_no_field_or_note_claims_the_core_is_halted_now(self, bench) -> None:
+        out = call("core_registers")
+        assert_contract(out)
+        assert "halted" not in out
+        assert out["halted_to_read_registers"] is True
+        assert "now halted" not in out["note"]
+        assert "not claimed" in out["note"]
+
+
 class TestReleaseCoreChecksItsOwnEffect:
     def test_it_raises_when_the_programmer_does_not_confirm(self, monkeypatch) -> None:
         """run_command does not raise on a nonzero exit or an error banner, so
