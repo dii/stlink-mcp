@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 import sys
 
+from . import settings
 from .quirks import BoardConfigError
 from .runner import release_all_servers
 from .server import load_board_config, load_vendor_seed, mcp
@@ -48,6 +49,15 @@ def _install_signal_handlers() -> None:
 
 def main() -> None:
     _install_signal_handlers()
+
+    # Settings first, and the same way a bad board file is handled: one line on
+    # stderr and exit 2. Two of them used to be parsed at import time, so a typo
+    # in the GDB port killed the process with a traceback before this ran.
+    try:
+        settings.check()
+    except settings.SettingError as exc:
+        print(f"stlink-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
     # Board config is loaded here, before the server accepts anything, and a bad
     # file stops the process. That is deliberate. A user who wrote a board file

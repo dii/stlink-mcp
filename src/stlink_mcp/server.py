@@ -24,6 +24,7 @@ firmware onto the wrong board is a failure that looks like success.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import os
 import threading
@@ -37,6 +38,7 @@ from . import console as console_mod
 from . import faults as faults_mod
 from . import image as image_mod
 from . import quirks as quirks_mod
+from . import settings
 from .result import failed, unverified, verified
 from .probe import (
     Probe,
@@ -95,14 +97,13 @@ def _serialised(tool: _Tool) -> _Tool:
 
     return one_at_a_time  # type: ignore[return-value]
 
-_GDB_PORT_BASE = int(os.environ.get("STLINK_MCP_GDB_PORT", "61234"))
 
 # One GDB server instance opens TWO ports: the one given with -p, and -p + 1 for
 # SWO. Measured, not assumed: `ss -ltnp` against a running server shows both.
 # With a stride of 1, the second board's GDB port lands exactly on the first
 # board's SWO port, which is how a four-board rig fails on its second load.
+# The base port and the console baud rate are settings.py's, read when used.
 _GDB_PORT_STRIDE = 4
-_CONSOLE_BAUD = int(os.environ.get("STLINK_MCP_CONSOLE_BAUD", "115200"))
 
 # Cached per probe while its GDB server is held. Re-identifying would mean
 # running STM32_Programmer_CLI, which cannot reach a probe the server has.
@@ -157,6 +158,7 @@ def _resolve_probe(
     if not attached:
         return None, None, "No ST-LINK probes found."
 
+    chosen: ProbeInfo | None = None
     if probe_serial is None:
         if len(attached) > 1:
             listing = ", ".join(p.serial for p in attached)
@@ -166,14 +168,38 @@ def _resolve_probe(
                 "is not stable across replugs and using the wrong board is a "
                 "failure that looks like success."
             )
-        return attached[0].serial, attached[0], None
+        chosen = attached[0]
+    else:
+        chosen = next((p for p in attached if p.serial == probe_serial), None)
+        if chosen is None:
+            listing = ", ".join(p.serial for p in attached)
+            return None, None, f"No probe with serial {probe_serial}. Attached: {listing}"
 
-    for info in attached:
-        if info.serial == probe_serial:
-            return info.serial, info, None
+    try:
+        return chosen.serial, _with_console(chosen, len(attached)), None
+    except settings.SettingError as exc:
+        return None, None, str(exc)
 
-    listing = ", ".join(p.serial for p in attached)
-    return None, None, f"No probe with serial {probe_serial}. Attached: {listing}"
+
+def _with_console(info: ProbeInfo, attached: int) -> ProbeInfo:
+    """The probe with STLINK_MCP_CONSOLE applied, recording where its console
+    came from. Every tool that uses a console reaches it through here, so the
+    setting means the same thing in all of them."""
+    device, note = settings.console_for(info.serial, attached)
+    if device:
+        info = dataclasses.replace(
+            info, console_port=device, console_source=settings.CONSOLE
+        )
+    if note:
+        info = dataclasses.replace(info, console_note=note)
+    return info
+
+
+def _console_evidence(probe_info: ProbeInfo | None) -> str:
+    """Which port a console observation came from, for the evidence string."""
+    if probe_info is not None and probe_info.console_source == settings.CONSOLE:
+        return f"the serial port {settings.CONSOLE} assigns to this probe"
+    return "this board's own port"
 
 
 # Assigned on first use and never reassigned, so a probe keeps its port for the
@@ -204,8 +230,9 @@ def _gdb_port_for(serial: str | None) -> int:
         return _gdb_ports[serial]
 
     taken = set(_gdb_ports.values())
-    port = _GDB_PORT_BASE
-    ceiling = _GDB_PORT_BASE + _GDB_PORT_STRIDE * 64
+    base = settings.gdb_port_base()
+    port = base
+    ceiling = base + _GDB_PORT_STRIDE * 64
     while port < ceiling:
         if (
             port not in taken
@@ -217,7 +244,7 @@ def _gdb_port_for(serial: str | None) -> int:
         port += _GDB_PORT_STRIDE
 
     raise RunError(
-        f"No free GDB port pair between {_GDB_PORT_BASE} and {ceiling}. Something "
+        f"No free GDB port pair between {base} and {ceiling}. Something "
         "is holding a great many of them: `ss -ltnp` will say what. "
         "STLINK_MCP_GDB_PORT moves the base."
     )
@@ -238,7 +265,12 @@ while other probes are held by a GDB server; those are marked as held.
         return failed(str(exc))
 
     held = set(held_serials())
-    probes, unreadable = list_probes_with_unreadable(toolchain)
+    try:
+        probes, unreadable = list_probes_with_unreadable(toolchain)
+        # Listed as the tools will use them, so a console setting shows here.
+        probes = [_with_console(p, len(probes)) for p in probes]
+    except (ToolchainError, settings.SettingError) as exc:
+        return failed(str(exc))
     detail: dict[str, Any] = {}
     if unreadable:
         detail["unreadable_entries"] = unreadable
@@ -259,6 +291,8 @@ while other probes are held by a GDB server; those are marked as held.
                 "firmware": p.firmware,
                 "board": p.board,
                 "console_port": p.console_port,
+                "console_port_source": p.console_source,
+                **({"console_note": p.console_note} if p.console_note else {}),
                 # 0 means the probe answered but could not reach a target, which
                 # is what a closed debug port looks like from out here.
                 "access_ports": p.access_ports,
@@ -464,7 +498,7 @@ the image says. Resets the target first and keeps the GDB server; see
             vector_table_provenance=layout_provenance,
         )
     # This board's own console, not whichever ttyACM* happens to be first.
-    port = probe_info.console_port if probe_info else console_mod.find_console_port()
+    port = probe_info.console_port if probe_info else None
     console_error: str | None = None
     gdb_server = None
     gdb_output = ""
@@ -481,7 +515,7 @@ the image says. Resets the target first and keeps the GDB server; see
         _held[serial] = (probe, info, probe_info)
 
         if port:
-            with console_mod.ConsoleCapture(port, _CONSOLE_BAUD) as cap:
+            with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
                 sp, pc, size, gdb_output = load_and_run(
                     toolchain, elf, quirks.vector_table_addr,
                     probe.gdb_access_port(info), gdb_port
@@ -503,7 +537,8 @@ the image says. Resets the target first and keeps the GDB server; see
                 probe.gdb_access_port(info), gdb_port
             )
             text = ""
-    except (RunError, ToolchainError, console_mod.ConsoleError) as exc:
+    except (RunError, ToolchainError, console_mod.ConsoleError,
+            settings.SettingError) as exc:
         # Say whether the server started for this run is left holding the
         # probe. It used to be a bare error, and the next read_memory then
         # failed with "held" for a reason the agent had not been told.
@@ -516,6 +551,9 @@ the image says. Resets the target first and keeps the GDB server; see
         "probe_serial": serial,
         **_held_disclosure(serial),
         "console_port": port,
+        "console_port_source": probe_info.console_source if probe_info else None,
+        **({"console_note": probe_info.console_note}
+           if probe_info and probe_info.console_note else {}),
         "load_address": _hex(quirks.vector_table_addr),
         "load_address_provenance": layout_provenance,
         "image_initial_sp": _hex(sp),
@@ -574,8 +612,8 @@ the image says. Resets the target first and keeps the GDB server; see
         detail["console_error"] = console_error
         if text.strip():
             return verified(
-                "partial console output from this board's own port, before the "
-                "capture was interrupted",
+                f"partial console output from {_console_evidence(probe_info)}, "
+                "before the capture was interrupted",
                 **detail,
             )
         return unverified(
@@ -587,7 +625,8 @@ the image says. Resets the target first and keeps the GDB server; see
     if not port:
         return unverified(
             "No serial console is mapped to this probe, so nothing observed "
-            "whether the image started. The load itself completed.",
+            "whether the image started. The load itself completed. Name one with "
+            f"{settings.CONSOLE}=<probe serial>=<device path>.",
             **detail,
         )
 
@@ -600,7 +639,7 @@ the image says. Resets the target first and keeps the GDB server; see
             **detail,
         )
 
-    return verified("console output from this board's own port", **detail)
+    return verified(f"console output from {_console_evidence(probe_info)}", **detail)
 
 
 def _held_disclosure(serial: str | None) -> dict[str, Any]:
@@ -1356,9 +1395,10 @@ def capture_console(
 ) -> dict[str, Any]:
     """Capture what a target prints on its serial console for a number of seconds.
 
-The port is resolved from the probe's serial, never by taking the first
-/dev/ttyACM*, which with two boards attached is the wrong one about half the
-time. Refuses when it cannot resolve a port for that probe.
+The port is the one the probe list maps to this probe's serial, or the one
+STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*, which with two
+boards attached is the wrong one about half the time. Refuses when it cannot
+resolve a port for that probe.
     """
     try:
         toolchain = _toolchain()
@@ -1371,29 +1411,53 @@ time. Refuses when it cannot resolve a port for that probe.
 
     port = probe_info.console_port if probe_info else None
     if port is None:
-        port = os.environ.get("STLINK_MCP_CONSOLE")
-    if port is None:
         return failed(
             f"No serial console is mapped to probe {serial}: the probe list's "
-            "UART section did not name a port for it. Set STLINK_MCP_CONSOLE to "
-            "the device path if you know it. This does not fall back to the "
-            "first /dev/ttyACM*, because that path belongs to whichever board "
-            "enumerated first, not to this one.",
+            "UART section did not name a port for it. Name one with "
+            f"{settings.CONSOLE}=<probe serial>=<device path>. This does not fall "
+            "back to the first /dev/ttyACM*, because that path belongs to "
+            "whichever board enumerated first, not to this one.",
             probe_serial=serial,
+            **({"console_note": probe_info.console_note}
+               if probe_info and probe_info.console_note else {}),
         )
 
+    capture_error: str | None = None
     try:
-        text = console_mod.capture(port, seconds, _CONSOLE_BAUD)
-    except console_mod.ConsoleError as exc:
+        with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
+            try:
+                text = cap.collect(seconds)
+            except Exception as exc:  # noqa: BLE001
+                # A USB replug mid-capture raises SerialException, an OSError
+                # rather than a ConsoleError, and used to escape the tool. Keep
+                # what arrived, as run_firmware does, and say it was cut short.
+                text, capture_error = cap.text, str(exc)
+    except (console_mod.ConsoleError, settings.SettingError) as exc:
         return failed(str(exc), probe_serial=serial, port=port)
 
-    return verified(
-        "serial console read from the port mapped to this probe's serial",
-        probe_serial=serial,
-        port=port,
-        seconds=seconds,
-        output=text,
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        "port": port,
+        "port_source": probe_info.console_source if probe_info else None,
+        "seconds": seconds,
+        "output": text,
+    }
+    source = (
+        f"the port {settings.CONSOLE} assigns to this probe"
+        if probe_info and probe_info.console_source == settings.CONSOLE
+        else "the port mapped to this probe's serial"
     )
+    if capture_error is not None:
+        detail["console_error"] = capture_error
+        if text.strip():
+            return verified(
+                f"partial serial console read from {source}, before the capture "
+                "was interrupted",
+                **detail,
+            )
+        return failed(f"The console could not be read: {capture_error}", **detail)
+
+    return verified(f"serial console read from {source}", **detail)
 
 
 def _hex(value: int | None) -> str | None:

@@ -196,9 +196,12 @@ server's own bookkeeping cannot be driven in parallel safely.
 | `STLINK_MCP_BOARDS` | TOML file describing boards this project has not characterised. Defaults to `~/.config/stlink-mcp/boards.toml` if it exists |
 | `STLINK_MCP_NO_VENDOR_SEED` | Set to anything to run on measured and user-stated data only, with no seeding from ST's device databases |
 | `STLINK_MCP_CLT_ROOT` | STM32CubeCLT install directory |
-| `STLINK_MCP_CONSOLE` | Serial device, if the guess is wrong |
+| `STLINK_MCP_CONSOLE` | Serial console per probe, for a board whose console is not the probe's own, such as a USB serial adapter: `SERIAL=/dev/ttyUSB0`, comma-separated for several. It wins over the probe list's mapping. A bare device path is used only while a single probe is attached |
 | `STLINK_MCP_CONSOLE_BAUD` | Console baud rate, default 115200 |
-| `STLINK_MCP_GDB_PORT` | GDB server port, default 61234 |
+| `STLINK_MCP_GDB_PORT` | First GDB server port, default 61234. Each probe takes a pair of ports, four apart |
+
+A setting that cannot be used stops the server at start-up with a one-line
+message, the same way a bad board file does.
 
 ## Where addresses come from
 

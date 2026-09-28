@@ -8,8 +8,6 @@ first-class part of the tool surface rather than a convenience.
 
 from __future__ import annotations
 
-import glob
-import os
 import time
 
 import serial
@@ -19,21 +17,11 @@ class ConsoleError(RuntimeError):
     pass
 
 
-def find_console_port() -> str | None:
-    """Guess the probe's virtual COM port.
-
-    Deliberately returns None rather than raising: a target with no console is a
-    normal situation, not an error.
-    """
-    override = os.environ.get("STLINK_MCP_CONSOLE")
-    if override:
-        return override
-
-    for pattern in ("/dev/ttyACM*", "/dev/tty.usbmodem*", "/dev/ttyUSB*"):
-        matches = sorted(glob.glob(pattern))
-        if matches:
-            return matches[0]
-    return None
+# There was a find_console_port() here, which returned STLINK_MCP_CONSOLE or else
+# the first /dev/ttyACM* on the machine. run_firmware fell back to it whenever it
+# had no probe listing, which is the guess docs/findings.md records as the wrong
+# board about half the time with two attached. The console now comes only from
+# the probe list or from STLINK_MCP_CONSOLE naming the probe (settings.py).
 
 
 class ConsoleCapture:
@@ -85,7 +73,7 @@ class ConsoleCapture:
         return self._buffer.decode("utf-8", errors="replace")
 
 
-def capture(port: str, seconds: float, baud: int = 115200) -> str:
-    """One-shot capture, for when there is nothing to run alongside it."""
-    with ConsoleCapture(port, baud) as cap:
-        return cap.collect(seconds)
+# There was a one-shot capture() here. capture_console used it, and an unplug
+# mid-capture escaped it as a SerialException with everything already read lost.
+# capture_console now drives ConsoleCapture itself, as run_firmware does, so it
+# keeps what arrived, and nothing else called this.

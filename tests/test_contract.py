@@ -312,7 +312,11 @@ def bench(monkeypatch, tmp_path):
             return self._buffer
 
     def _attached(tc: object) -> list[probe_mod.ProbeInfo]:
-        return [probe_mod.ProbeInfo(serial="AAA1", console_port=state.console_port)]
+        # As parse_probe_list builds it: a mapped console is labelled as such.
+        return [probe_mod.ProbeInfo(
+            serial="AAA1", console_port=state.console_port,
+            console_source="probe list" if state.console_port else None,
+        )]
 
     monkeypatch.setattr(server, "_toolchain", lambda: object())
     monkeypatch.setattr(server, "_list_probes", _attached)
@@ -533,6 +537,71 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert "stack_pointer" not in r and "program_counter" not in r
         assert r["image_initial_sp"] == "0x34200000"
         assert "not a reading of where the core is" in r["image_note"]
+
+
+class TestTheConsoleSettingMeansOneThingEverywhere:
+    """STLINK_MCP_CONSOLE was consulted by capture_console only when the probe
+    list mapped no console, and never by run_firmware, so a board wired to a
+    separate USB serial adapter could not get a verified run. The README said it
+    was for when the guess is wrong, and it could not override a guess at all."""
+
+    CONSOLE = "STLINK_MCP_CONSOLE"
+
+    def test_run_firmware_verifies_on_the_port_the_setting_names(
+        self, bench, monkeypatch
+    ) -> None:
+        bench.console_port = None
+        bench.console_text = "hello from a board with a USB serial adapter\n"
+        monkeypatch.setenv(self.CONSOLE, "AAA1=/dev/ttyUSB7")
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED
+        assert out["console_port"] == "/dev/ttyUSB7"
+        assert out["console_port_source"] == self.CONSOLE
+        assert self.CONSOLE in out["verified_by"]
+
+    def test_the_setting_overrides_the_probe_list(self, bench, monkeypatch) -> None:
+        bench.console_text = "up\n"
+        monkeypatch.setenv(self.CONSOLE, "AAA1=/dev/ttyUSB7")
+        assert call("run_firmware", elf_path=str(bench.elf))["console_port"] == "/dev/ttyUSB7"
+
+    def test_the_probe_lists_own_mapping_is_named_as_such(self, bench, monkeypatch) -> None:
+        bench.console_text = "up\n"
+        monkeypatch.delenv(self.CONSOLE, raising=False)
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert out["console_port_source"] == "probe list"
+        assert "own port" in out["verified_by"]
+
+    def test_a_bare_path_is_not_applied_across_two_probes(self, bench, monkeypatch) -> None:
+        bench.console_port = None
+        monkeypatch.setattr(server, "_list_probes", lambda tc: [
+            probe_mod.ProbeInfo(serial="AAA1"), probe_mod.ProbeInfo(serial="BBB2"),
+        ])
+        monkeypatch.setenv(self.CONSOLE, "/dev/ttyUSB7")
+        out = call("capture_console", probe_serial="AAA1")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert "applied to none" in out["console_note"]
+
+    def test_list_probes_shows_the_console_the_tools_will_use(
+        self, bench, monkeypatch
+    ) -> None:
+        monkeypatch.setenv(self.CONSOLE, "AAA1=/dev/ttyUSB7")
+        probe = call("list_probes")["probes"][0]
+        assert probe["console_port"] == "/dev/ttyUSB7"
+        assert probe["console_port_source"] == self.CONSOLE
+
+    def test_capture_console_keeps_what_arrived_before_an_unplug(self, bench) -> None:
+        """A SerialException mid-capture used to escape the tool with the text
+        already read thrown away."""
+        bench.console_text = "boot ok\n"
+        bench.console_raises = "device disconnected"
+        out = call("capture_console")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED
+        assert "partial" in out["verified_by"]
+        assert out["output"] == "boot ok\n"
+        assert "device disconnected" in out["console_error"]
 
 
 class TestReleaseProbe:

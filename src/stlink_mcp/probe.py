@@ -530,6 +530,11 @@ class ProbeInfo:
     Worth keeping because it separates "no board" from "board that will not
     answer", which the connect error message alone does not.
     """
+    console_source: str | None = None
+    """Where console_port came from: "probe list" for the programmer's own
+    UART mapping, or the setting that overrode it. None with no console."""
+    console_note: str | None = None
+    """Why a console setting was not applied to this probe, when it was not."""
 
 
 def _field(block: str, label: str) -> str | None:
@@ -658,6 +663,7 @@ def parse_probe_list(output: str) -> list[ProbeInfo]:
             board=_field(block, "Board Name"),
             console_port=consoles.get(serial),
             access_ports=int(ports) if ports and ports.isdigit() else None,
+            console_source="probe list" if serial in consoles else None,
         ))
 
     return entries
