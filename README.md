@@ -87,9 +87,8 @@ in the table below, their parameters and result fields, and the `stlink-mcp` com
 line. At 0.y.z any of it may change. Beta is reached when one user outside this project
 reports a run on a board this README does not list as measured, the ten tool signatures
 and result fields are declared stable, and the JTAG and Windows questions are decided.
-Release candidate follows once two known defects are fixed: two tool calls at once can
-give one GDB port to two probes or start two servers on one probe, and `run_firmware`
-discards GDB's own output on the failure path where the cause matters. 1.0.0 is cut
+Release candidate follows once one known defect is fixed: two tool calls at once can
+give one GDB port to two probes or start two servers on one probe. 1.0.0 is cut
 when every promise in this README has a measurement behind it in
 [docs/findings.md](docs/findings.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 

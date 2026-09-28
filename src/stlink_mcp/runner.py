@@ -409,10 +409,15 @@ def load_and_run(
                 return int(line.split("=", 1)[1].strip(), 16)
         return None
 
+    # Informational only, so a line GDB words differently yields None rather
+    # than a ValueError that would escape run_firmware with the server held.
     load_size = None
     for line in output.splitlines():
         if line.startswith("Start address") and "load size" in line:
-            load_size = int(line.rsplit("load size", 1)[1].strip().rstrip(","))
+            try:
+                load_size = int(line.rsplit("load size", 1)[1].strip().rstrip(","))
+            except ValueError:
+                load_size = None
 
     return _grab("STLINK_MCP_SP="), _grab("STLINK_MCP_PC="), load_size, output
 

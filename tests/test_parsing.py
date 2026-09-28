@@ -118,3 +118,22 @@ class TestCoreRegisters:
 
     def test_absent_registers_yield_nothing(self) -> None:
         assert parse_core_registers("Error: cannot halt") == {}
+
+
+class TestLoadAndRunOutput:
+    """load_size is informational. A line GDB words differently must not raise,
+    because the exception would escape run_firmware with its server held."""
+
+    def test_an_unparseable_load_size_is_none_not_an_error(self, monkeypatch, tmp_path) -> None:
+        from types import SimpleNamespace
+
+        from stlink_mcp import runner
+        from stlink_mcp.toolchain import CommandResult
+
+        out = ("Start address 0x24000299, load size many\n"
+               "STLINK_MCP_SP=0x24080000\nSTLINK_MCP_PC=0x24000298\n")
+        monkeypatch.setattr(runner, "run_command", lambda argv, timeout=180: CommandResult(argv, 0, out))
+        elf = tmp_path / "x.elf"
+        elf.write_bytes(b"\x7fELF")
+        sp, pc, size, _ = runner.load_and_run(SimpleNamespace(gdb="gdb"), elf, 0x24000000, 0)
+        assert (sp, pc, size) == (0x24080000, 0x24000298, None)

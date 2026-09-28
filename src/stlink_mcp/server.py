@@ -426,18 +426,24 @@ the image says. Resets the target first and keeps the GDB server; see
         )
     # This board's own console, not whichever ttyACM* happens to be first.
     port = probe_info.console_port if probe_info else console_mod.find_console_port()
-    gdb_port = _gdb_port_for(serial)
     console_error: str | None = None
+    gdb_server = None
+    gdb_output = ""
 
     try:
+        # Inside the try: running out of ports raises RunError, which used to
+        # escape the tool as an unhandled exception instead of a result.
+        gdb_port = _gdb_port_for(serial)
         # Family's port, not the one the programmer settled on: see
         # Probe.gdb_access_port for why those differ.
-        acquire_server(toolchain, probe.gdb_access_port(info), gdb_port, serial=serial)
+        gdb_server = acquire_server(
+            toolchain, probe.gdb_access_port(info), gdb_port, serial=serial
+        )
         _held[serial] = (probe, info, probe_info)
 
         if port:
             with console_mod.ConsoleCapture(port, _CONSOLE_BAUD) as cap:
-                sp, pc, size, _ = load_and_run(
+                sp, pc, size, gdb_output = load_and_run(
                     toolchain, elf, quirks.vector_table_addr,
                     probe.gdb_access_port(info), gdb_port
                 )
@@ -453,16 +459,23 @@ the image says. Resets the target first and keeps the GDB server; see
                     text = cap.text
                     console_error = str(exc)
         else:
-            sp, pc, size, _ = load_and_run(
+            sp, pc, size, gdb_output = load_and_run(
                 toolchain, elf, quirks.vector_table_addr,
                 probe.gdb_access_port(info), gdb_port
             )
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError) as exc:
-        return failed(str(exc), probe_serial=serial)
+        # Say whether the server started for this run is left holding the
+        # probe. It used to be a bare error, and the next read_memory then
+        # failed with "held" for a reason the agent had not been told.
+        return failed(
+            str(exc), probe_serial=serial,
+            **_held_disclosure(serial), **_server_output(gdb_server),
+        )
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        **_held_disclosure(serial),
         "console_port": port,
         "load_address": _hex(quirks.vector_table_addr),
         "load_address_provenance": layout_provenance,
@@ -506,10 +519,15 @@ the image says. Resets the target first and keeps the GDB server; see
     # This matters most when it looks best: the previous image is still resident
     # and still printing, so the console is busy while nothing was loaded.
     if sp is None or pc is None:
+        # GDB's own output is where the cause is, and it used to be dropped
+        # here, the one path where it matters. Kept as a tail, since a batch
+        # that failed early is short and one that ran long is mostly noise.
         return failed(
             "The GDB batch did not reach its end markers, so the load did not "
             "complete. Any console output here is the PREVIOUS image still "
-            "running, not the one just requested.",
+            "running, not the one just requested. gdb_output says why.",
+            gdb_output=gdb_output.strip().splitlines()[-20:],
+            **_server_output(gdb_server),
             **detail,
         )
 
@@ -544,6 +562,26 @@ the image says. Resets the target first and keeps the GDB server; see
         )
 
     return verified("console output from this board's own port", **detail)
+
+
+def _held_disclosure(serial: str | None) -> dict[str, Any]:
+    """Whether this server now holds the probe, for N3: the agent cannot see it."""
+    held = server_is_held(serial)
+    disclosure: dict[str, Any] = {"gdb_server_held": held}
+    if held:
+        disclosure["gdb_server_note"] = (
+            "The GDB server started for run_firmware is holding this probe, so "
+            "read_memory, core_registers, reset_target, read_fault_status and "
+            "flash_firmware cannot reach it until release_probe()."
+        )
+    return disclosure
+
+
+def _server_output(gdb_server: Any) -> dict[str, Any]:
+    """The GDB server's last lines, when a server was started, for diagnosis."""
+    if gdb_server is None:
+        return {}
+    return {"gdb_server_output": gdb_server.recent_output(20)}
 
 
 @mcp.tool()

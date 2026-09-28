@@ -228,6 +228,7 @@ def bench(monkeypatch, tmp_path):
         elf=elf,
         bin=raw,
         markers=(0x34200000, 0x34180841, 2048),
+        gdb_output="",
         console_text="",
         console_port="/dev/fake0",
         console_raises=None,
@@ -265,7 +266,9 @@ def bench(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(server, "Probe", _FakeProbe)
     monkeypatch.setattr(server, "acquire_server", lambda *a, **k: None)
-    monkeypatch.setattr(server, "load_and_run", lambda *a, **k: (*state.markers, ""))
+    monkeypatch.setattr(
+        server, "load_and_run", lambda *a, **k: (*state.markers, state.gdb_output)
+    )
     monkeypatch.setattr(server.console_mod, "ConsoleCapture", _FakeCapture)
 
     server._held.clear()
@@ -329,6 +332,54 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert_contract(r)
         assert r["status"] == result.FAILED
         assert "previous" in r["error"].lower()
+
+    def test_a_failed_load_keeps_what_gdb_and_the_server_said(
+        self, bench, monkeypatch
+    ) -> None:
+        """GDB's output was discarded on exactly the path where it holds the
+        cause, which the README listed as a known defect."""
+        bench.markers = (None, None, None)
+        bench.gdb_output = "Loading section .isr_vector\nError finishing flash operation\n"
+        monkeypatch.setattr(
+            server, "acquire_server",
+            lambda *a, **k: SimpleNamespace(recent_output=lambda n: ["Target halted"]),
+        )
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.FAILED
+        assert "Error finishing flash operation" in r["gdb_output"]
+        assert r["gdb_server_output"] == ["Target halted"]
+
+    def test_a_failure_after_the_server_started_says_the_probe_is_held(
+        self, bench, monkeypatch
+    ) -> None:
+        """N3. The server outlives a failed load by design, and the next
+        read_memory then refused with "held" for a reason nobody had said."""
+        from stlink_mcp.runner import RunError
+
+        def gdb_times_out(*args, **kwargs):
+            raise RunError("arm-none-eabi-gdb did not finish within 180s")
+
+        monkeypatch.setattr(server, "load_and_run", gdb_times_out)
+        monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.FAILED
+        assert r["gdb_server_held"] is True
+        assert "release_probe" in r["gdb_server_note"]
+
+    def test_running_out_of_gdb_ports_is_a_result_not_an_exception(
+        self, bench, monkeypatch
+    ) -> None:
+        from stlink_mcp.runner import RunError
+
+        def no_ports(serial):
+            raise RunError("No free GDB port pair")
+
+        monkeypatch.setattr(server, "_gdb_port_for", no_ports)
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert "No free GDB port pair" in r["error"]
 
     def test_a_silent_target_is_unverified_rather_than_a_run(self, bench) -> None:
         bench.console_text = ""
