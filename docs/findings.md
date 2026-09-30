@@ -245,3 +245,25 @@ anything touches the hardware, and run tool calls one at a time. The one change 
 sent to a probe is that the check of an unmeasured access port always connects with HOTPLUG,
 where it could reuse HWRSTPULSE.
 
+## First hardware run of the 2026-09-28 changes (2026-10-01)
+
+Run on the NUCLEO-H743ZI through its on-board STLINK-V3E (firmware V3J7M2) and through an ST-LINK/V2 (V2J38S7) wired to its CN5 connector with an Olimex ARM-JTAG-20-10 adapter, and on a NUCLEO-N657X0-Q (STLINK-V3, V3J15M6), with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0). Every call went to the server over stdio, as a client makes it. The images were written for the run: an H7 RAM image that prints numbered lines on USART3 and counts in AXI SRAM, a variant that executes an undefined instruction after four lines, the same counter for the N6 with no console, and a flash-linked `.bin`.
+
+What held:
+
+- `list_probes` and `--check` read the first ST-LINK/V2 listing captured for this project: no board name, no console, firmware and serial parsed.
+- `board_state` identified all three probes with a hotplug connect and no reset. With three attached and no serial given, it refused and named them.
+- `run_firmware` verified the H7 image by its console through both probes. Through the V2, which has no serial port, the console came from `STLINK_MCP_CONSOLE` as a `SERIAL=path` pair, and the result named that source. A bare path with three probes attached was applied to none, and every result said why. The N6 image, which prints nothing, was `unverified`, and its counter advanced between two reads.
+- `core_registers` reported `halted_to_read_registers` and made no claim about the core afterwards.
+- `read_fault_status` decoded an undefined instruction escalated to a hard fault on both parts, CFSR 0x00010000 and HFSR 0x40000000. Following its next step, LR read 0xFFFFFFF9 and word 6 of the frame at MSP was the address of the `udf`, on the H7 and on the N6. The N6 result carried the TrustZone note. A first read on the N6 said no fault was active; it had simply come before the image reached the fault, and a later read decoded it.
+- The refusals came back before anything was sent to a probe: an ELF to `flash_firmware`, a misaligned address, a hex address without its prefix, a 2048-byte read, a zero-second capture. A flash-linked ELF to `run_firmware` costs one hotplug connect first, to learn the family's vector table address.
+- `flash_firmware` ran on hardware for the first time: a 371-byte `.bin` to the H7 at its measured flash base. Its result said the write was accepted and not read back. A readback of all 93 words with `read_memory` matched the file, and `reset_target` then halted at the new image's reset handler. The board's own flash was saved first and written back afterwards.
+- A hotplug JTAG connect through the V2 reported `JTAG freq : 9000 KHz`, device 0x450, with no reset. This is the observation the planned `interface` parameter will check against.
+- Where an image stalled before printing (the first H7 image, whose USART3 did not start on two runs and did on a third, after the board's own firmware had run; the cause is in the image and was not found), `run_firmware` returned `unverified` and the counter read showed it stuck.
+
+What did not hold:
+
+- **`run_firmware` can be verified by the previous image's output.** The STLINK-V3E keeps what the target prints while no program has its serial port open, up to about 6.8 KB, and delivers it the next time the port is opened. It keeps the oldest bytes and drops the rest once full. An H7 image that prints nothing, loaded after one that printed, came back `verified: console output from this board's own port` on nine lines of the previous image; its own counter showed it running. `capture_console` returns the same backlog as if it arrived during the window: a 1.5-second capture returned about 3.5 seconds of output, and a capture after flashing returned 6,793 bytes of the old image before the new image's third line, with its first two lines lost. None of this shows on the N6 runs, whose images print nothing.
+- The fault next step finds the frame at the stack pointer the handler reports, which holds only while the handler has pushed nothing. With the H7 flash firmware's own HardFault handler running (VTOR still at flash, which `run_firmware` does not set), the frame was not at MSP.
+
+Observed and not explained: calls that list probes while a GDB server held one took 11 to 14 seconds, against 1.3 to 1.5 seconds otherwise, and a few calls just after a release did too. Calls on the N6 took about 4.6 seconds against 1.45 on the H7. `board_state` reports the V2's board as `--`, the connect banner's text, where `list_probes` reports none.
