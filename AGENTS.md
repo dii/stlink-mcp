@@ -123,7 +123,8 @@ labelled. Every field has a provenance, one of `measured`, `vendor-db`, `user-st
 `assumed`, and `DEFAULT` is the worked example: its access port 0 is `assumed`, because it is
 a fact about the STM32 range and not about any part. What the label changes is behaviour, not
 presentation. `flash_firmware` refuses a base it did not get from a measurement or from the
-caller, because that write persists and there is no readback to catch a wrong address.
+caller, because that write persists, and the readback afterwards confirms what was written,
+not that it went to the right place.
 
 Every entry carries `notes`, and that field is the point rather than decoration: it is what
 stops the next person rediscovering the quirk the hard way.

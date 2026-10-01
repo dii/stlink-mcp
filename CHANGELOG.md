@@ -37,6 +37,9 @@ what was run and what it showed.
 
 ### Changed
 
+- `flash_firmware` reads the written range back and compares it with the image. Only an
+  identical readback is `verified`; a difference is `failed` with the first differing address,
+  and a readback that fails is `unverified`.
 - `flash_firmware` takes raw binaries (`.bin`) only, and checks the file before touching the
   probe.
 - `STLINK_MCP_CONSOLE` takes `SERIAL=path` pairs, which win over the probe list; a bare path

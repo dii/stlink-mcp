@@ -795,8 +795,8 @@ def flash_firmware(
 Prefer run_firmware while developing. Does not sign. Refuses anything but a
 .bin, because the programmer writes HEX, S-record and ELF files to the
 addresses inside them. Refuses a flash base that is not `measured` unless you
-pass `address`, an integer or a hex string such as "0x08000000". Nothing is
-read back afterwards; `verified_by` says what was and was not checked.
+pass `address`, an integer or a hex string such as "0x08000000". Verified only
+when the written range, read back afterwards, matches the image byte for byte.
     """
     # Checked before anything touches the probe, like run_firmware's image
     # check: a refusal after identify() would already have connected, and
@@ -876,24 +876,51 @@ read back afterwards; `verified_by` says what was and was not checked.
         return failed(str(exc), probe_serial=serial,
                       target_was_reset=probe.target_was_reset)
 
-    # The evidence names its own weakness deliberately. This is the one tool
-    # whose only check is the vendor's own banner, which is exactly the thing
-    # the README's opening example shows cannot be trusted on its own.
-    return verified(
-        "the programmer reported the download completed. The image was NOT read "
-        "back and compared, so this confirms the write was accepted, not that "
-        "flash holds what you sent",
-        probe_serial=serial,
-        image=str(image),
-        image_size_bytes=image_size,
-        address=_hex(target_address),
-        target_was_reset=probe.target_was_reset,
-        signing_required=quirks.requires_signing,
-        detail=output.strip().splitlines()[-3:],
-        next_step=(
+    written: dict[str, Any] = {
+        "probe_serial": serial,
+        "image": str(image),
+        "image_size_bytes": image_size,
+        "address": _hex(target_address),
+        "target_was_reset": probe.target_was_reset,
+        "signing_required": quirks.requires_signing,
+        "detail": output.strip().splitlines()[-3:],
+        "next_step": (
             "This does not start the image. Set the board's boot configuration to "
             "boot from flash and reset it."
         ),
+    }
+
+    # The programmer's "File download complete" is the vendor's own banner,
+    # which the README's opening example shows cannot be trusted on its own, and
+    # this is the one tool whose write persists. So flash is read back and
+    # compared with the image, and only a byte-for-byte match is verified.
+    try:
+        readback = probe.read_back(target_address, image_size, quirks.external_loader)
+    except Exception as exc:  # noqa: BLE001
+        return unverified(
+            "The programmer reported the write complete, but reading the range "
+            f"back failed, so nothing checked what flash holds: {exc}",
+            **written,
+        )
+    expected = image.read_bytes()
+    if readback != expected:
+        differing = [i for i, (a, b) in enumerate(zip(expected, readback)) if a != b]
+        first = differing[0]
+        return failed(
+            f"Flash does not hold the image. Read back after the write, "
+            f"{len(differing)} of {image_size} bytes differ, the first at "
+            f"0x{target_address + first:08X}: the image has 0x{expected[first]:02X}, "
+            f"flash has 0x{readback[first]:02X}. The programmer reported the write "
+            "complete. A protected or failing sector, or a write that did not "
+            "erase first, would look like this.",
+            first_difference=_hex(target_address + first),
+            differing_bytes=len(differing),
+            **written,
+        )
+    return verified(
+        f"read back {image_size} bytes from {_hex(target_address)} after the write "
+        "and compared them with the image: identical",
+        **written,
     )
 
 

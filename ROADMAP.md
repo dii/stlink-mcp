@@ -114,7 +114,8 @@ Two consequences of that channel, both found by the red-team:
 **And say plainly what the policy does NOT cover.** Act-then-observe is written for the RAM
 path, where an observation exists and a wrong guess is undone by a reset. It is not a licence
 for the write path. `flash_firmware` keeps its current behaviour until Phase 5 gives it a
-readback, and the seeding below does not change what it will write to. (RT7)
+readback, and the seeding below does not change what it will write to. (RT7) It has had a
+readback since 2026-10-01, and the refusal stays: a readback cannot tell a wrong address.
 
 ## Phase 2 - seed from the vendor database (DONE)
 
@@ -222,13 +223,10 @@ turns every user with a board into a source of measured data.
   suite and by the blind suite in `tests/blind/`. The registers are at fixed Cortex-M addresses
   and do not vary by family, which is why this was built before JTAG. Cores without them,
   Armv6-M and Armv8-M Baseline, are refused rather than read.
-- **Flash readback verification.** `flash_firmware` trusts the programmer's own "File
-  download complete" and says so honestly in `verified_by`. The one operation that writes
-  permanently is the one that does not read back and compare, which is an open N1 gap.
-  `STM32_Programmer_CLI -v` reads back and compares after `-w`; its output has to be captured
-  on a board before anything here parses it. `flash_firmware` has no recorded hardware run at
-  all yet, and since 2026-09-28 takes raw binaries only, because the address it checks is the
-  one used only for a .bin.
+- **Flash readback verification. DONE** 2026-10-01. `flash_firmware` reads the written range
+  back with the programmer's upload and compares it with the image itself, rather than parsing
+  `-v`'s banner, and only an identical readback is `verified`. First run on hardware the same
+  day, an H7 at 0x08000000. The N6 path through the external loader has not been run.
 - Halt, resume, step and memory writes, if real use asks for them.
 
 ## Phase 6 - reach

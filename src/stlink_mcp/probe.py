@@ -9,7 +9,9 @@ answer.
 from __future__ import annotations
 
 import re
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .quirks import FamilyQuirks, for_device_id
 from .toolchain import Toolchain, run_command
@@ -492,6 +494,32 @@ class Probe:
         if "File download complete" not in result.stdout:
             raise ProbeError(f"Programming failed:\n{result.stdout.strip()}")
         return result.stdout
+
+    def read_back(
+        self, address: int, size: int, external_loader: str | None = None
+    ) -> bytes:
+        """Read `size` bytes at `address` into memory, with the programmer's upload.
+
+        The bytes are the evidence, not the programmer's banner: what comes back
+        is compared with the image by the caller, so a write the programmer
+        reported complete is checked against what flash actually holds. Uses a
+        hotplug connect in the mode identify() settled on, so it neither resets
+        nor halts anything identify() did not.
+        """
+        with tempfile.TemporaryDirectory(prefix="stlink-mcp-") as scratch:
+            out = Path(scratch) / "readback.bin"
+            argv = self._connect_args(self.access_port, self.connect_mode)
+            if external_loader:
+                argv += ["-el", str(self.toolchain.external_loader(external_loader))]
+            argv += ["-u", f"0x{address:08X}", str(size), str(out)]
+            result = run_command(argv, timeout=300)
+            data = out.read_bytes() if out.is_file() else b""
+        if len(data) != size:
+            raise ProbeError(
+                f"Reading {size} bytes back from 0x{address:08X} returned "
+                f"{len(data)}. Output was:\n{result.stdout.strip()[-1500:]}"
+            )
+        return data
 
 
 # ---------------------------------------------------------------------------

@@ -67,7 +67,7 @@ memory writes.
 
 Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp)
 if you need breakpoints, single-stepping, RTT, a J-Link or DAPLink probe, a
-target that is not an STM32, a readback check after flashing, or Windows.
+target that is not an STM32, or Windows.
 [Related projects](#related-projects) has the comparison.
 
 ## Status
@@ -149,7 +149,7 @@ claude mcp add stlink -- uv --directory /path/to/stlink-mcp run stlink-mcp
 | --- | --- | --- |
 | `board_state` | Identifies the target, the probe, and the family's quirks | Tries access ports 0 and 1, since a wrong port and an absent target look identical. If no hotplug connect reaches the core it retries with a resetting connect, and reports `target_was_reset` whether or not that connect worked. Reports `unverified` when a held server means it is answering from cache |
 | `run_firmware` | Loads an ELF into RAM and starts it | Refuses, before any load, an image not linked for the family's RAM or with any loaded segment outside the SRAM region, since a GDB load writes wherever the image says. Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
-| `flash_firmware` | Programs a raw binary (.bin) into boot memory | The programmer's own report that the download completed. Nothing is read back, and `verified_by` says so. Refuses HEX, S-record and ELF files, which the programmer writes to their own addresses rather than the one the tool checked |
+| `flash_firmware` | Programs a raw binary (.bin) into boot memory | Reads the written range back and compares it with the image. Only an identical readback is `verified`; a difference is `failed`, naming the first differing address. Refuses HEX, S-record and ELF files, which the programmer writes to their own addresses rather than the one the tool checked |
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port. A read that returns fewer words than asked for is `failed`, naming the missing addresses |
 | `core_registers` | Reads the core registers, halting the core for the read | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset. Does not claim the core is still halted afterwards, since a programmer halt does not outlive its command |
 | `read_fault_status` | Reads and decodes the Cortex-M fault registers | The raw registers plus a plain-English diagnosis. Reports the faulting address when the hardware recorded it, and the next step to find the faulting instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers and would read as clean, and refuses a read that did not return all six |
@@ -234,8 +234,8 @@ beside the value:
 
 Only `measured` means the value has been seen to work, and the label changes
 behaviour. `flash_firmware` refuses to write to a base that is not measured
-unless you name the address yourself, because that write persists and nothing
-is read back. `run_firmware` will load to a `vendor-db` address, because a
+unless you name the address yourself, because that write persists, and reading
+it back afterwards confirms what was written, not that it went to the right place. `run_firmware` will load to a `vendor-db` address, because a
 wrong one is undone by a reset, and the result still says the address was not
 measured. A measured entry always beats a seeded one: the databases can report
 a vector table address as the RAM base, and they do not carry the access port
@@ -354,8 +354,7 @@ nothing else, a result nobody watched says `unverified`, and no tool can set
 `ok` on its own. Every part-specific address carries a provenance that changes
 what the tool will do, the STM32N6 behaviour in the findings was measured on
 the board, and the tests were seeded and shown to fail. What this project
-lacks against the three: building, memory writes, breakpoints, JTAG, RTT, and
-a readback after flashing. It was built before its author had looked for any
+lacks against the three: building, memory writes, breakpoints, JTAG and RTT. It was built before its author had looked for any
 of them; the field was searched on 2026-09-02, three weeks in, which is the
 wrong order and is recorded as such in the findings.
 

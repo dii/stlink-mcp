@@ -249,8 +249,18 @@ class _FakeProbe:
     def core_registers(self) -> dict[str, int]:
         return {"PC": 0x34180D3C}
 
+    # What a readback returns: None for exactly what was written, bytes for
+    # something else, a string to raise with. Class-level so a test can set it.
+    readback: bytes | str | None = None
+
     def program_flash(self, image: str, address: int, loader: object) -> str:
+        self._written = Path(image).read_bytes()
         return "File download complete\n"
+
+    def read_back(self, address: int, size: int, loader: object) -> bytes:
+        if isinstance(self.readback, str):
+            raise probe_mod.ProbeError(self.readback)
+        return (self._written if self.readback is None else self.readback)[:size]
 
     # Reset behaviour is class-level so a test can set the halted PC to each of
     # the three shapes real hardware produces: landed on the vector, landed
@@ -834,7 +844,7 @@ class TestFlashFirmwareTakesOnlyWhatItCanPlace:
         assert out["status"] == result.VERIFIED
         assert out["image_size_bytes"] == 16
         assert out["address"] == "0x70000000"  # the fake board is the measured N6
-        assert "NOT read back" in out["verified_by"]
+        assert "compared them with the image: identical" in out["verified_by"]
 
 
 class TestResetIsNotClaimedUnlessItWasSeen:
@@ -1544,3 +1554,72 @@ class TestFaultStatusReportsWhatsActuallyThere:
         assert out["any_fault_active"] is False
         reasons = out["debug_halt_reason"]
         assert any(r["bit"] == "BKPT" for r in reasons)
+
+
+class TestFlashIsReadBackBeforeItIsVerified:
+    """The one tool whose write persists used to verify on the programmer's own
+    "File download complete", the vendor banner the README's first example shows
+    cannot be trusted. It now reads the range back and compares it."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_readback(self):
+        yield
+        _FakeProbe.readback = None
+
+    def test_an_identical_readback_is_what_verifies(self, bench) -> None:
+        bench.bin.write_bytes(bytes(range(16)))
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED
+        assert "read back 16 bytes" in out["verified_by"]
+
+    def test_flash_that_differs_from_the_image_fails_and_says_where(self, bench) -> None:
+        bench.bin.write_bytes(bytes(range(16)))
+        flash = bytearray(range(16)); flash[5] = 0xFF
+        _FakeProbe.readback = bytes(flash)
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert out["first_difference"] == "0x70000005"
+        assert out["differing_bytes"] == 1
+        assert "0x05" in out["error"] and "0xFF" in out["error"]
+
+    def test_a_readback_that_fails_is_not_success(self, bench) -> None:
+        _FakeProbe.readback = "Error: failed to read the requested memory content"
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert "failed to read" in out["unverified_because"]
+
+
+class TestReadBackUsesTheProgrammersUpload:
+    def _probe(self, monkeypatch, write: bytes | None):
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+        seen = {}
+
+        def fake_run(argv, timeout=90):
+            seen["argv"] = argv
+            if write is not None:
+                Path(argv[-1]).write_bytes(write)
+            return CommandResult(argv, 0, "Data read successfully\n")
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        return pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAA"), seen
+
+    def test_it_returns_what_the_upload_wrote(self, monkeypatch) -> None:
+        p, seen = self._probe(monkeypatch, b"\x01\x02\x03\x04")
+        assert p.read_back(0x08000000, 4) == b"\x01\x02\x03\x04"
+        assert seen["argv"][-4:-1] == ["-u", "0x08000000", "4"]
+
+    def test_a_short_upload_is_an_error_not_a_shorter_image(self, monkeypatch) -> None:
+        from stlink_mcp import probe as pm
+        p, _ = self._probe(monkeypatch, b"\x01\x02")
+        with pytest.raises(pm.ProbeError, match="returned 2"):
+            p.read_back(0x08000000, 4)
+
+    def test_no_file_at_all_is_an_error(self, monkeypatch) -> None:
+        from stlink_mcp import probe as pm
+        p, _ = self._probe(monkeypatch, None)
+        with pytest.raises(pm.ProbeError, match="returned 0"):
+            p.read_back(0x08000000, 4)
