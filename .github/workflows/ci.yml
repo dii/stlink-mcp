@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       # --frozen installs exactly what uv.lock says. --locked would also fail
       # whenever a newer uv would write the lock differently, which is not a
       # defect in this project.
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv build --sdist --out-dir dist
       # The sdist is built from an include list, so a file git never tracked
       # cannot be published (docs/findings.md, "The packaging tool publishes
