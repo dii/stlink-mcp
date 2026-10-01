@@ -191,10 +191,20 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     """
     if info.connected:
         return ""
+    if any("Old ST-LINK firmware" in e for e in info.errors):
+        return (
+            "The probe's firmware is too old for this STM32CubeProgrammer, which "
+            "refuses to use it. STLinkUpgrade, in the STM32CubeCLT install, updates "
+            "it: select the probe, Open in update mode, Upgrade."
+        )
     if any("Serial number not found" in e for e in info.errors):
         return (
-            "No probe with that serial is attached; the programmer said so. "
-            "list_probes shows the attached probes and their serials."
+            "The programmer could not select a probe with that serial. Either none "
+            "is attached, or its firmware is too old for this programmer: an "
+            "ST-LINK/V2 on V2J16S4 was listed by list_probes and still could not be "
+            "selected until it was upgraded (2026-10-01). list_probes shows the "
+            "attached probes with their firmware; STLinkUpgrade, in the STM32CubeCLT "
+            "install, updates an old one."
         )
     hints = []
     if interface == JTAG:

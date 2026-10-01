@@ -131,3 +131,25 @@ class TestAServerThatNeverListensSaysWhy:
         tc = SimpleNamespace(gdb_server="srv", programmer_bin_dir="bin")
         with pytest.raises(runner.RunError, match="firmware update available"):
             runner.GdbServer(tc, 0, 61300, serial="AAAA0001").__enter__()
+
+
+class TestAnOldProbeIsNotCalledAbsent:
+    """Captured 2026-10-01: an ST-LINK/V2 on V2J16S4 was listed by -l, then a
+    connect naming its serial said "Serial number not found", and one by index
+    said its firmware was too old. The hint used to say no such probe was
+    attached."""
+
+    def test_by_serial_the_hint_names_old_firmware_as_a_cause(self) -> None:
+        info = pm.parse_target_info(_banner("connect_v2_old_firmware_by_serial.txt"))
+        hint = pm.explain_connect_failure(info)
+        assert not info.connected
+        assert "too old" in hint and "STLinkUpgrade" in hint and "list_probes" in hint
+
+    def test_by_index_the_hint_says_upgrade(self) -> None:
+        info = pm.parse_target_info(_banner("connect_v2_old_firmware_by_index.txt"))
+        assert "too old" in pm.explain_connect_failure(info)
+
+    def test_the_f407_through_the_upgraded_v2(self) -> None:
+        info = pm.parse_target_info(_banner("connect_v2_f407.txt"))
+        assert info.connected and info.device_id == 0x413 and info.cpu == "Cortex-M4"
+        assert info.board is None and (info.interface, info.interface_khz) == ("swd", 4000)

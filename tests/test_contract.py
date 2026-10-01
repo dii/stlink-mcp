@@ -1446,6 +1446,15 @@ class TestASeededAddressIsDisclosedWhereItIsUsed:
         note = call("run_firmware", elf_path=str(seeded_bench.elf))["load_address_note"]
         assert "confirmed layout" in note or "confirmed" in note
 
+    def test_an_unverified_run_is_not_called_verified_in_the_note(self, seeded_bench) -> None:
+        """Measured 2026-10-01 on an STM32F407 with no console: the run was
+        unverified and its note said "The run itself IS verified"."""
+        seeded_bench.console_text = ""
+        out = call("run_firmware", elf_path=str(seeded_bench.elf))
+        assert out["status"] == result.UNVERIFIED
+        assert "IS verified" not in out["load_address_note"]
+        assert "says nothing about it" in out["load_address_note"]
+
     def test_a_measured_part_carries_no_such_note(self, bench) -> None:
         """The fake board is the measured STM32N6, so the caveat must be absent
         rather than always-on noise."""

@@ -4,6 +4,11 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Fixed
+
+- `run_firmware` no longer tells an unverified run on an unmeasured address that "the run itself IS verified"; the note now claims nothing about the run. Found on the first seeded part run on a board, an STM32F407.
+- A connect that fails with "Serial number not found" no longer says the probe is absent: an ST-LINK/V2 too old for STM32CubeProgrammer fails the same way, and the hint now names STLinkUpgrade.
+
 ## [0.3.0] - 2026-10-01
 
 Run on an STM32H7 and an STM32N6 board on 2026-10-01: `tools/hwcheck` passed 33 of 33 checks with `--jtag` and `--flash`. docs/findings.md has what was run and what each README promise rests on.

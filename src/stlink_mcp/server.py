@@ -945,14 +945,17 @@ the image says. Resets the target first and keeps the GDB server; see
     }
 
     if layout_provenance != quirks_mod.MEASURED:
+        # Written before the verdict is known, so it claims nothing about the
+        # run itself. It used to say "The run itself IS verified" on every run,
+        # and on 2026-10-01 an STM32F407 run with no console, unverified, carried
+        # that sentence: the first seeded part ever run on a board.
         detail["load_address_note"] = (
             f"The address this image was loaded to is {layout_provenance}, not "
-            f"measured on hardware. The run itself IS verified, by this board's own "
-            "console output, so the image did start. What is not established is that "
-            f"{_hex(quirks.vector_table_addr)} is the right place for this part in "
-            "general: a working run is good evidence for it and not a measurement of "
-            "it. Do not record it as a confirmed layout on the strength of this "
-            "result alone."
+            "measured on hardware. A run verified by its console is good evidence "
+            f"that {_hex(quirks.vector_table_addr)} is the right place for this "
+            "part, and not a measurement of it; a run nothing verified says nothing "
+            "about it either way. Do not record it as a confirmed layout on the "
+            "strength of this result alone."
         )
 
     if quirks.debug_closes_on_run:

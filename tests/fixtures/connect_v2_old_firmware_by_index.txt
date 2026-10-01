@@ -1,0 +1,6 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+Error: Old ST-LINK firmware version. Upgrade ST-LINK firmware
+Error: Old ST-LINK firmware!Please upgrade it.
