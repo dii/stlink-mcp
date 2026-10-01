@@ -263,6 +263,10 @@ class GdbServer:
 # server attached to the wrong board and load firmware onto it while reporting
 # success.
 _sessions: dict[str | None, GdbServer] = {}
+
+#: Guards _sessions. Tool calls on different probes run at the same time, and
+#: each of these reads the registry and then writes it.
+_REGISTRY = threading.RLock()
 _atexit_registered = False
 
 
@@ -275,11 +279,12 @@ def prune_dead_servers() -> list[str | None]:
     the previous image simply carries on running and printing. That combination
     reads as a working board.
     """
-    dead = [serial for serial, server in _sessions.items() if not server.is_alive()]
-    for serial in dead:
-        _sessions[serial].__exit__()
-        _sessions.pop(serial, None)
-    return dead
+    with _REGISTRY:
+        dead = [serial for serial, server in _sessions.items() if not server.is_alive()]
+        for serial in dead:
+            _sessions[serial].__exit__()
+            _sessions.pop(serial, None)
+        return dead
 
 
 def acquire_server(
@@ -291,44 +296,44 @@ def acquire_server(
 ) -> GdbServer:
     """The live server for one probe, starting it if needed."""
     global _atexit_registered
+    with _REGISTRY:
+        prune_dead_servers()
 
-    prune_dead_servers()
+        existing = _sessions.get(serial)
+        if existing is not None:
+            if existing.interface != interface:
+                raise RunError(
+                    f"The GDB server holding this probe uses {existing.interface.upper()}, "
+                    f"and this call asked for {interface.upper()}. Reusing it would run "
+                    "over the interface you did not ask for. Call release_probe() first, "
+                    "or pass the interface the server uses."
+                )
+            return existing
 
-    existing = _sessions.get(serial)
-    if existing is not None:
-        if existing.interface != interface:
+        # A held server must not outlive this process. If it does it keeps holding
+        # the probe, and every later tool fails with a bare "Device connect error"
+        # naming neither the cause nor the orphan. Found the hard way immediately
+        # after introducing the held server.
+        #
+        # atexit covers a normal exit and SIGINT, and nothing else: CPython installs
+        # no SIGTERM handler, so `kill` and any supervisor bypass this entirely.
+        # __main__ installs handlers for SIGTERM and SIGHUP to close that gap.
+        # SIGKILL is not coverable by anything in-process, so an orphan is still
+        # possible and port_is_taken below is what surfaces it.
+        if not _atexit_registered:
+            atexit.register(release_all_servers)
+            _atexit_registered = True
+
+        if any(existing.port == port for existing in _sessions.values()):
             raise RunError(
-                f"The GDB server holding this probe uses {existing.interface.upper()}, "
-                f"and this call asked for {interface.upper()}. Reusing it would run "
-                "over the interface you did not ask for. Call release_probe() first, "
-                "or pass the interface the server uses."
+                f"Port {port} is already used by a server for another probe. "
+                "Give each board its own GDB port."
             )
-        return existing
 
-    # A held server must not outlive this process. If it does it keeps holding
-    # the probe, and every later tool fails with a bare "Device connect error"
-    # naming neither the cause nor the orphan. Found the hard way immediately
-    # after introducing the held server.
-    #
-    # atexit covers a normal exit and SIGINT, and nothing else: CPython installs
-    # no SIGTERM handler, so `kill` and any supervisor bypass this entirely.
-    # __main__ installs handlers for SIGTERM and SIGHUP to close that gap.
-    # SIGKILL is not coverable by anything in-process, so an orphan is still
-    # possible and port_is_taken below is what surfaces it.
-    if not _atexit_registered:
-        atexit.register(release_all_servers)
-        _atexit_registered = True
-
-    if any(existing.port == port for existing in _sessions.values()):
-        raise RunError(
-            f"Port {port} is already used by a server for another probe. "
-            "Give each board its own GDB port."
-        )
-
-    server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface)
-    server.__enter__()
-    _sessions[serial] = server
-    return server
+        server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface)
+        server.__enter__()
+        _sessions[serial] = server
+        return server
 
 
 def server_is_held(serial: str | None = None) -> bool:
@@ -340,15 +345,17 @@ def server_is_held(serial: str | None = None) -> bool:
     blocked every read with "a GDB server is holding the probe" while no longer
     holding anything.
     """
-    prune_dead_servers()
-    if serial is None:
-        return bool(_sessions)
-    return serial in _sessions
+    with _REGISTRY:
+        prune_dead_servers()
+        if serial is None:
+            return bool(_sessions)
+        return serial in _sessions
 
 
 def held_serials() -> list[str | None]:
-    prune_dead_servers()
-    return list(_sessions)
+    with _REGISTRY:
+        prune_dead_servers()
+        return list(_sessions)
 
 
 def release_server(serial: str | None = None) -> bool:
@@ -358,22 +365,24 @@ def release_server(serial: str | None = None) -> bool:
     the board is power cycled, so it is never done implicitly. See quirks.py:
     that is caused by the image, not by the part, and is removable.
     """
-    if serial is None:
-        return release_all_servers()
-    server = _sessions.pop(serial, None)
-    if server is None:
-        return False
-    server.__exit__()
-    return True
+    with _REGISTRY:
+        if serial is None:
+            return release_all_servers()
+        server = _sessions.pop(serial, None)
+        if server is None:
+            return False
+        server.__exit__()
+        return True
 
 
 def release_all_servers() -> bool:
-    released = False
-    for server in list(_sessions.values()):
-        server.__exit__()
-        released = True
-    _sessions.clear()
-    return released
+    with _REGISTRY:
+        released = False
+        for server in list(_sessions.values()):
+            server.__exit__()
+            released = True
+        _sessions.clear()
+        return released
 
 
 _GDB_SCRIPT = """\

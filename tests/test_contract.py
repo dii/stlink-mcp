@@ -18,6 +18,7 @@ surface, and they must hold on a machine with no STM32 attached at all.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -150,59 +151,121 @@ class TestEveryToolIsActuallyCovered:
         assert not stale, f"TOOL_CALLS names tools the server does not register: {sorted(stale)}"
 
 
-class TestOneToolCallAtATime:
+class TestToolCallsShareOnlyWhatTheyMust:
     """The MCP SDK runs each request as its own task and each tool in a worker
-    thread, so an agent's parallel calls really are parallel. The module state
-    here and the probes themselves were written for one call at a time; with
-    the port check slowed, two concurrent allocations gave one GDB port to two
-    probes."""
+    thread, so an agent's parallel calls really are parallel. Measured
+    2026-10-01: commands on two probes at once ran clean, and a probe listing
+    beside them broke some. So calls on different probes run together, calls on
+    one probe queue, and anything that lists runs alone."""
 
     @pytest.mark.parametrize("name", sorted(TOOL_CALLS))
-    def test_every_registered_tool_waits_for_the_lock(self, name: str, bench) -> None:
+    def test_every_registered_tool_waits_while_the_gate_is_held(self, name: str, bench) -> None:
         """Through the function the SDK itself calls, so a new tool registered
-        without @_serialised fails here rather than racing in use."""
+        without @_serialised fails here rather than racing in use. Called both
+        with and without a serial, which take the two sides of the gate."""
         import threading
 
         fn = server.mcp._tool_manager._tools[name].fn
         files = {"run_firmware": {"elf_path": str(bench.elf)},
                  "flash_firmware": {"image_path": str(bench.bin)}}
-        args = {**TOOL_CALLS[name], **files.get(name, {})}
-        done = threading.Event()
-        worker = threading.Thread(target=lambda: (fn(**args), done.set()))
+        variants = [{**TOOL_CALLS[name], **files.get(name, {})}]
+        if "probe_serial" in inspect.signature(fn).parameters:
+            variants.append({**variants[0], "probe_serial": "AAAA0001"})
+        for args in variants:
+            done = threading.Event()
+            worker = threading.Thread(target=lambda: (fn(**args), done.set()))
+            with server._GATE.exclusive():
+                worker.start()
+                assert not done.wait(0.2), f"{name}({args}) ran while the gate was held"
+            worker.join(5)
+            assert done.is_set(), f"{name}({args}) never ran after the gate was released"
 
-        with server._ONE_CALL_AT_A_TIME:
-            worker.start()
-            assert not done.wait(0.2), f"{name} ran while another call held the lock"
-        worker.join(5)
-        assert done.is_set(), f"{name} never ran after the lock was released"
-
-    def test_concurrent_calls_never_overlap(self, bench, monkeypatch) -> None:
+    def _overlap(self, monkeypatch, calls: list[tuple[str, dict]]) -> int:
+        """The most of these calls that were inside a probe read at once."""
         import threading
         import time
 
         active = peak = 0
         guard = threading.Lock()
+        real = _FakeProbe.read_memory
 
-        def slow_enumeration(toolchain):
+        def slow_read(self, address, length_bytes):
             nonlocal active, peak
             with guard:
                 active += 1
                 peak = max(peak, active)
-            time.sleep(0.05)
+            time.sleep(0.15)
             with guard:
                 active -= 1
-            return [probe_mod.ProbeInfo(serial="AAA1", console_port="/dev/fake0")]
+            return real(self, address, length_bytes)
 
-        monkeypatch.setattr(server, "_list_probes", slow_enumeration)
-        threads = [
-            threading.Thread(target=call, args=(name,))
-            for name in ("board_state", "read_memory", "core_registers", "read_fault_status")
-        ]
+        monkeypatch.setattr(_FakeProbe, "read_memory", slow_read)
+        threads = [threading.Thread(target=call, args=(n,), kwargs=k) for n, k in calls]
         for t in threads:
             t.start()
         for t in threads:
             t.join(5)
-        assert peak == 1, f"{peak} tool calls ran at once"
+        return peak
+
+    def test_calls_on_different_probes_run_together(self, bench, monkeypatch) -> None:
+        peak = self._overlap(monkeypatch, [
+            ("read_memory", {"probe_serial": "AAAA0001"}),
+            ("read_memory", {"probe_serial": "BBBB0002"}),
+        ])
+        assert peak == 2
+
+    def test_calls_on_one_probe_queue(self, bench, monkeypatch) -> None:
+        peak = self._overlap(monkeypatch, [
+            ("read_memory", {"probe_serial": "AAAA0001"}),
+            ("read_memory", {"probe_serial": "aaaa0001"}),
+            ("read_fault_status", {"probe_serial": "AAAA0001"}),
+        ])
+        assert peak == 1
+
+    def test_a_call_that_lists_runs_alone(self, bench, monkeypatch) -> None:
+        peak = self._overlap(monkeypatch, [
+            ("read_memory", {"probe_serial": "AAAA0001"}),
+            ("read_memory", {}),  # no serial: it has to list the probes
+            ("read_memory", {"probe_serial": "BBBB0002"}),
+        ])
+        assert peak <= 2
+        # And the listing call itself never shared the gate:
+        assert not server._GATE.held_exclusively_here()
+
+    def test_listing_outside_the_exclusive_side_is_refused(self, bench) -> None:
+        with server._GATE.shared():
+            with pytest.raises(RuntimeError, match="exclusive side"):
+                server._resolve_probe(object(), None)
+
+
+class TestANamedProbeIsTheOneThatAnswers:
+    """The programmer ignores an sn= it cannot parse as hex and connects to the
+    first probe it finds (measured 2026-10-01: sn=NONE and sn=X answered from an
+    ST-LINK/V2). With no listing in front of a named probe, that would read the
+    wrong board and report it."""
+
+    def test_a_banner_from_another_probe_is_refused(self, monkeypatch) -> None:
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+        banner = "ST-LINK SN  : 53FF75065177485736340687\nDevice ID   : 0x450\n"
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 0, banner))
+        p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="0054003D3137511139383538")
+        with pytest.raises(pm.ProbeError, match="answered from probe 53FF75065177485736340687"):
+            p.identify(allow_reset=False)
+
+    def test_the_same_serial_in_another_case_is_the_same_probe(self, monkeypatch) -> None:
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+        banner = "ST-LINK SN  : 0054003D3137511139383538\nDevice ID   : 0x450\n"
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 0, banner))
+        p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="0054003d3137511139383538")
+        assert p.identify(allow_reset=False).connected
+
+    @pytest.mark.parametrize("serial", ["NONE", "X", "0054003D-31"])
+    def test_a_serial_that_is_not_hex_is_refused_before_any_connect(self, serial, bench) -> None:
+        out = call("read_memory", probe_serial=serial)
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "not a probe serial" in out["error"]
 
 
 class TestNoToolSetsOkByHand:
@@ -350,6 +413,9 @@ def bench(monkeypatch, tmp_path):
         server, "load_and_run", lambda *a, **k: (*state.markers, state.gdb_output)
     )
     monkeypatch.setattr(server.console_mod, "ConsoleCapture", _FakeCapture)
+    # As on a machine without udev's port names, so a test takes the same path
+    # here as in CI; the udev path has tests of its own.
+    monkeypatch.setattr(server, "_BY_ID_DIR", tmp_path / "no-by-id")
 
     server._held.clear()
     server._gdb_ports.clear()
@@ -1760,3 +1826,88 @@ class TestLocateFaultFollowsTheFrame:
         monkeypatch.setattr(_FakeProbe, "identify", resetting)
         out = call("locate_fault")
         assert out["status"] == result.FAILED and "restarted" in out["error"]
+
+
+class TestTheLastSettledPortIsTriedFirst:
+    """On an STM32N6 AP0 answers identity and AP1 is the port that works, so a
+    scan from AP0 costs an extra connect, 1.1 s there, on every call."""
+
+    def _probe(self, monkeypatch, try_first):
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+        tried: list[int] = []
+
+        def fake_run(argv, timeout=90):
+            tried.append(next(int(a.split("=")[1]) for a in argv if a.startswith("ap=")))
+            return CommandResult(argv, 0, "Device ID   : 0x486\nDevice CPU  : Cortex-M55\n")
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAAA0001", try_first=try_first)
+        return p, tried
+
+    def test_with_no_hint_the_scan_starts_at_ap0_and_settles_on_ap1(self, monkeypatch) -> None:
+        p, tried = self._probe(monkeypatch, None)
+        p.identify()
+        assert tried == [0, 1] and p.access_port == 1
+
+    def test_with_ap1_first_one_connect_identifies(self, monkeypatch) -> None:
+        p, tried = self._probe(monkeypatch, 1)
+        p.identify()
+        assert tried == [1] and p.access_port == 1
+
+    def test_a_wrong_hint_still_settles_on_the_familys_port(self, monkeypatch) -> None:
+        p, tried = self._probe(monkeypatch, 0)
+        p.identify()
+        assert p.access_port == 1
+
+
+class TestTheConsoleIsFoundByTheProbesSerial:
+    """On Linux udev names each serial port after its USB serial number, which
+    for an ST-LINK is the serial the programmer reports, so a named probe's
+    console needs no listing (checked on two STLINK-V3s, 2026-10-01)."""
+
+    SERIAL = "0054003D3137511139383538"
+
+    def _by_id(self, tmp_path, monkeypatch, names):
+        d = tmp_path / "by-id"
+        d.mkdir()
+        for name in names:
+            (d / name).symlink_to("/dev/ttyACM9")
+        monkeypatch.setattr(server, "_BY_ID_DIR", d)
+        return d
+
+    def test_the_port_named_after_the_probe_is_the_console(self, bench, tmp_path, monkeypatch) -> None:
+        d = self._by_id(tmp_path, monkeypatch, [
+            f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if02",
+            "usb-STMicroelectronics_STLINK-V3_003C002C3335510535383531-if01",
+        ])
+        def no_listing(tc):
+            raise AssertionError("a named probe's console must not need a listing")
+        monkeypatch.setattr(server, "_list_probes", no_listing)
+        bench.console_text = "tick 0\n"
+        out = call("capture_console", probe_serial=self.SERIAL)
+        assert_contract(out)
+        assert out["port"] == str(d / f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if02")
+        assert out["port_source"] == "udev serial name"
+
+    def test_a_probe_with_no_port_has_no_console(self, bench, tmp_path, monkeypatch) -> None:
+        self._by_id(tmp_path, monkeypatch, ["usb-STMicroelectronics_STLINK-V3_003C002C3335510535383531-if01"])
+        out = call("capture_console", probe_serial="53FF75065177485736340687")
+        assert out["status"] == result.FAILED
+        assert "No serial console was found" in out["error"]
+
+    def test_two_ports_for_one_probe_are_not_chosen_between(self, bench, tmp_path, monkeypatch) -> None:
+        self._by_id(tmp_path, monkeypatch, [
+            f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if02",
+            f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if05",
+        ])
+        out = call("capture_console", probe_serial=self.SERIAL)
+        assert out["status"] == result.FAILED
+        assert "Several serial ports" in out["console_note"]
+
+    def test_a_pair_setting_still_wins(self, bench, tmp_path, monkeypatch) -> None:
+        self._by_id(tmp_path, monkeypatch, [f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if02"])
+        monkeypatch.setenv("STLINK_MCP_CONSOLE", f"{self.SERIAL}=/dev/ttyUSB3")
+        bench.console_text = "tick 0\n"
+        out = call("capture_console", probe_serial=self.SERIAL)
+        assert out["port"] == "/dev/ttyUSB3" and out["port_source"] == "STLINK_MCP_CONSOLE"

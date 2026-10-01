@@ -104,6 +104,12 @@ def console_for(serial: str, attached: int) -> tuple[str | None, str | None]:
     )
 
 
+def console_is_bare_path() -> bool:
+    """Whether STLINK_MCP_CONSOLE is a single device path rather than pairs."""
+    bare, _ = _parse_console(os.environ.get(CONSOLE, ""))
+    return bare is not None
+
+
 def check() -> None:
     """Raise SettingError for the first setting that cannot be used."""
     gdb_port_base()

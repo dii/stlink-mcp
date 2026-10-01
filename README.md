@@ -179,7 +179,8 @@ faults during start-up.
 
 While the server holds a probe, `read_memory`, `core_registers` and
 `flash_firmware` cannot reach that probe until you call `release_probe`. Other
-probes are unaffected, and so is enumeration.
+probes are unaffected. Listing the probes slows to about 11 seconds while one
+is held, which is one reason a call that names its probe does not list them.
 
 `run_firmware` is the one to use while developing: faster than flashing, and
 an image placed in RAM by the debugger bypasses the boot ROM, so no signing is
@@ -200,12 +201,16 @@ firmware onto the wrong board is a failure that looks like success.
 
 `list_probes` reports which serial port belongs to which probe. That mapping is
 not positional, so pairing probes with `/dev/ttyACM*` by order gets it wrong,
-and `run_firmware` uses each board's own console to verify it. Each board gets
-its own GDB server on its own port.
+and `run_firmware` uses each board's own console to verify it. On Linux a tool
+given a `probe_serial` finds that port by the serial in `/dev/serial/by-id`,
+where udev names each port after its probe, and reports that path, which stays
+the same across a replug. Each board gets its own GDB server on its own port.
 
-Tool calls run one at a time, even when an agent issues several together, so a
-long console capture on one board delays a call for another. The probes and the
-server's own bookkeeping cannot be driven in parallel safely.
+Calls on different probes run at the same time, and calls on one probe wait for
+each other. A call that has to list the probes, `list_probes` or any call
+without a `probe_serial`, waits until no probe is in use and runs alone,
+because listing beside a command on another probe broke some of those
+commands. With several boards attached, name the probe in every call.
 
 ### SWD or JTAG
 

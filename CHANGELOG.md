@@ -37,6 +37,10 @@ what was run and what it showed.
 
 ### Changed
 
+- Tool calls on different probes run at the same time; calls on one probe wait for each other, and a
+  call that lists the probes runs alone. A call that names its probe no longer lists them, and finds
+  its console by the probe's serial in `/dev/serial/by-id` on Linux. `probe_serial` must be hex
+  digits, and every answer is checked to come from the probe named.
 - `flash_firmware` reads the written range back and compares it with the image. Only an
   identical readback is `verified`; a difference is `failed` with the first differing address,
   and a readback that fails is `unverified`.

@@ -64,7 +64,8 @@ class TestTheProbeConnectsOverTheInterfaceItWasGiven:
     def test_a_jtag_failure_says_the_probe_may_not_do_jtag(self, monkeypatch) -> None:
         refused = _banner("connect_v3e_jtag_refused.txt")
         monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 1, refused))
-        probe = self._probe(interface="jtag")
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"),
+                         serial="0054003D3137511139383538", interface="jtag")
         info = probe.identify(allow_reset=False)
         hint = pm.explain_connect_failure(info, probe.interface)
         assert "may not do JTAG" in hint.split("\n  - ")[1], "it is the first likely cause"

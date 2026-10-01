@@ -24,11 +24,14 @@ firmware onto the wrong board is a failure that looks like success.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
+import inspect
 import os
+import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -67,42 +70,155 @@ from .vendordb import VendorDbError, seed_from_directory
 # report shows which build answered.
 mcp = MCPServer("stlink-mcp", version=__version__)
 
-#: One tool call at a time, for the whole process.
-#:
-#: The MCP SDK runs each request as its own task and each synchronous tool in a
-#: worker thread, so calls an agent issues together run together. Nothing here
-#: was written for that: the GDB port registry, the held-server cache and the
-#: runner's session table are read and then written with no lock, and the
-#: hardware has the same shape, since two programmer connects to one probe
-#: collide and two readers of one serial port split its bytes between them.
-#: With the port check slowed to widen the window, two concurrent allocations
-#: handed one GDB port to two probes. A call the client cancels also runs on to
-#: completion in its thread, so without this the next call could overlap a call
-#: nobody is waiting for any more.
-#:
-#: The cost is that a long console capture on one board delays a call for
-#: another. That is what the probe forces anyway, and a queue is better than a
-#: race. This is not per-caller state (N9): the probes are shared by every
-#: caller there could be, so the lock belongs to the hardware.
-_ONE_CALL_AT_A_TIME = threading.RLock()
-
-_Tool = TypeVar("_Tool", bound=Callable[..., dict[str, Any]])
-
 #: The debug interface a tool connects over (N8). A parameter, not an
 #: assumption: SWD by default, since every probe that does JTAG also does SWD.
 Interface = Literal["swd", "jtag"]
 
 
+class _Gate:
+    """Shared for calls on one named probe, exclusive for anything that lists.
+
+    Measured 2026-10-01 with three probes attached: programmer commands on two
+    different probes at once ran without a failure (89 reads), while listing
+    probes (`STM32_Programmer_CLI -l`) beside them broke 2 of 148 reads on
+    another probe, one of them with the identity read back as nonsense. So a
+    call that names its probe runs beside calls on other probes, and anything
+    that lists waits until no probe is in use and holds the rest off.
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._shared = 0
+        self._exclusive: threading.Thread | None = None
+        self._depth = 0
+
+    @contextlib.contextmanager
+    def shared(self) -> Iterator[None]:
+        me = threading.current_thread()
+        with self._cond:
+            nested = self._exclusive is me  # already exclusive in this thread
+            if nested:
+                self._depth += 1
+            else:
+                while self._exclusive is not None:
+                    self._cond.wait()
+                self._shared += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                if nested:
+                    self._depth -= 1
+                else:
+                    self._shared -= 1
+                self._cond.notify_all()
+
+    @contextlib.contextmanager
+    def exclusive(self) -> Iterator[None]:
+        me = threading.current_thread()
+        with self._cond:
+            if self._exclusive is me:
+                self._depth += 1
+            else:
+                while self._exclusive is not None or self._shared:
+                    self._cond.wait()
+                self._exclusive = me
+                self._depth = 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._depth -= 1
+                if self._depth == 0:
+                    self._exclusive = None
+                self._cond.notify_all()
+
+    def held_exclusively_here(self) -> bool:
+        return self._exclusive is threading.current_thread()
+
+
+#: The MCP SDK runs each request as its own task and each synchronous tool in a
+#: worker thread, so calls an agent issues together run together. Calls on
+#: different probes may; calls on one probe queue behind each other, since two
+#: programmer connects to one probe collide and two readers of one serial port
+#: split its bytes; and a call that has to list the probes runs alone. A call
+#: the client cancels still runs to completion in its thread, holding its locks
+#: until it does. This is not per-caller state (N9): the probes are shared by
+#: every caller there could be, so the locks belong to the hardware.
+_GATE = _Gate()
+_PROBE_LOCKS: dict[str, threading.RLock] = {}
+
+#: Guards the server's own bookkeeping (GDB ports, held identities), which
+#: calls on different probes touch at the same time.
+_STATE = threading.RLock()
+
+#: The tools that need a probe's serial console, and so its port.
+_CONSOLE_TOOLS = frozenset({"board_state", "run_firmware", "capture_console"})
+
+#: Where udev names each USB serial port after its device's serial number, as
+#: usb-STMicroelectronics_STLINK-V3_<serial>-if02. Linux only.
+_BY_ID_DIR = Path("/dev/serial/by-id")
+
+_Tool = TypeVar("_Tool", bound=Callable[..., dict[str, Any]])
+
+
+#: The access port each probe settled on last, so the next connect tries it
+#: first (Probe.try_first). An order, not an answer: nothing is reported from it.
+_SETTLED_PORTS: dict[str, int] = {}
+
+
+def _settled_port(serial: str | None) -> int | None:
+    with _STATE:
+        return _SETTLED_PORTS.get((serial or "").upper())
+
+
+def _remember_port(serial: str | None, probe: Probe, info: TargetInfo) -> None:
+    if serial and info.connected and not probe.degraded_reason:
+        with _STATE:
+            _SETTLED_PORTS[serial.upper()] = probe.access_port
+
+
+def _probe_lock(serial: str) -> threading.RLock:
+    with _STATE:
+        return _PROBE_LOCKS.setdefault(serial.upper(), threading.RLock())
+
+
+def _listing_needed(probe_serial: str | None, console: bool) -> bool:
+    """Whether resolving this probe has to list every probe.
+
+    Not when the caller named the probe and the tool needs no console: the
+    connect itself says when no such probe is attached. A tool that needs the
+    console finds the port by the probe's serial in udev's names where those
+    exist and no bare console path is set; a bare path applies only while one
+    probe is attached, and that takes a count."""
+    if probe_serial is None:
+        return True
+    if not console:
+        return False
+    return not _BY_ID_DIR.is_dir() or settings.console_is_bare_path()
+
+
 def _serialised(tool: _Tool) -> _Tool:
-    """Run a tool body under _ONE_CALL_AT_A_TIME. Applied under @mcp.tool() on
-    every tool, and TestOneToolCallAtATime fails for one that lacks it."""
+    """Run a tool body under the gate and its probe's lock. Applied under
+    @mcp.tool() on every tool, and TestToolCallsShareOnlyWhatTheyMust fails for
+    one that lacks it."""
+    signature = inspect.signature(tool)
+    takes_serial = "probe_serial" in signature.parameters
+    console = tool.__name__ in _CONSOLE_TOOLS
 
     @functools.wraps(tool)
-    def one_at_a_time(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        with _ONE_CALL_AT_A_TIME:
+    def gated(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        serial = (
+            signature.bind_partial(*args, **kwargs).arguments.get("probe_serial")
+            if takes_serial else None
+        )
+        if serial is None or _listing_needed(serial, console):
+            with _GATE.exclusive():
+                return tool(*args, **kwargs)
+        with _GATE.shared(), _probe_lock(serial):
             return tool(*args, **kwargs)
 
-    return one_at_a_time  # type: ignore[return-value]
+    return gated  # type: ignore[return-value]
 
 
 # One GDB server instance opens TWO ports: the one given with -p, and -p + 1 for
@@ -125,10 +241,11 @@ def _cached_for(serial: str | None):
     identity of a board nobody is holding keeps being served from memory long
     after it stopped being true.
     """
-    if serial in _held and server_is_held(serial):
-        return _held[serial]
-    _held.pop(serial, None)
-    return None
+    with _STATE:
+        if serial in _held and server_is_held(serial):
+            return _held[serial]
+        _held.pop(serial, None)
+        return None
 
 
 _HELD_MESSAGE = (
@@ -149,18 +266,49 @@ def _toolchain() -> Toolchain:
 
 
 def _resolve_probe(
-    toolchain: Toolchain, probe_serial: str | None
+    toolchain: Toolchain, probe_serial: str | None, *, console: bool = False
 ) -> tuple[str | None, ProbeInfo | None, str | None]:
     """Pick which probe to talk to. Returns (serial, info, error).
 
-    Enumeration is run even when a server is held. This used to be skipped in
-    favour of a cache, on the belief that a held server blocks the programmer
-    CLI outright. Measured 2026-08-15 with five probes attached and a server
-    held: `STM32_Programmer_CLI -l` listed all five in 1.5 seconds, the same as
-    with nothing held. What a held server actually blocks is a CONNECT to the
-    probe it holds, which is a much narrower thing and is checked per probe by
-    the tools that need it.
+    A named probe is not looked up in a listing unless the tool needs its
+    console and udev's names cannot give it (_listing_needed): the connect
+    says when no such probe is attached, and listing has two costs measured on
+    2026-10-01. It took 11.3 seconds while a GDB server held another probe,
+    against 1.36 seconds otherwise, which was every slow call seen that day;
+    and run beside a command on another probe it broke 2 of 148 of them. (On
+    2026-08-15, with five probes and a server held, it took 1.5 seconds; what
+    differs between the two days is not established.) A listing therefore runs
+    only under the gate's exclusive side, and this checks that it does.
     """
+    if not _listing_needed(probe_serial, console):
+        assert probe_serial is not None
+        # The programmer ignores an sn= it cannot read as hex and connects to
+        # the first probe instead (Probe._run), so refuse such a serial here.
+        if not _SERIAL_SHAPE.fullmatch(probe_serial):
+            return None, None, (
+                f"probe_serial {probe_serial!r} is not a probe serial: those are hex "
+                "digits, as list_probes shows them."
+            )
+        info = ProbeInfo(serial=probe_serial)
+        if console:
+            port, note = _udev_console(probe_serial)
+            info = dataclasses.replace(
+                info, console_port=port,
+                console_source=_UDEV if port else None, console_note=note,
+            )
+        try:
+            # STLINK_MCP_CONSOLE pairs still win. The count matters only to a
+            # bare path, which never reaches here (_listing_needed).
+            return probe_serial, _with_console(info, 1), None
+        except settings.SettingError as exc:
+            return None, None, str(exc)
+
+    if not _GATE.held_exclusively_here():
+        raise RuntimeError(
+            "Listing probes outside the gate's exclusive side, where it can break "
+            "a command running on another probe. _listing_needed and _serialised "
+            "disagree about this call."
+        )
     attached = _list_probes(toolchain)
     if not attached:
         return None, None, "No ST-LINK probes found."
@@ -186,6 +334,36 @@ def _resolve_probe(
         return chosen.serial, _with_console(chosen, len(attached)), None
     except settings.SettingError as exc:
         return None, None, str(exc)
+
+
+_SERIAL_SHAPE = re.compile(r"[0-9A-Fa-f]{8,32}")
+
+#: console_source for a port found by the probe's serial in udev's names.
+_UDEV = "udev serial name"
+
+
+def _udev_console(serial: str) -> tuple[str | None, str | None]:
+    """(port, note): the serial port udev names after this probe, if exactly one.
+
+    The name carries the USB serial number, which for an ST-LINK is the serial
+    the programmer reports (checked 2026-10-01 on an STLINK-V3E and an N6
+    board's STLINK-V3), and it survives a replug that renumbers /dev/ttyACM*.
+    The by-id path itself is returned, for that reason. A probe with no serial
+    port, such as an ST-LINK/V2, has no entry."""
+    wanted = f"_{serial.upper()}-IF"
+    try:
+        matches = sorted(p for p in _BY_ID_DIR.iterdir() if wanted in p.name.upper())
+    except OSError:
+        return None, None
+    if len(matches) == 1:
+        return str(matches[0]), None
+    if len(matches) > 1:
+        names = ", ".join(m.name for m in matches)
+        return None, (
+            f"Several serial ports carry probe {serial}'s serial ({names}), so none "
+            f"was chosen. Name one with {settings.CONSOLE}=<probe serial>=<device path>."
+        )
+    return None, None
 
 
 def _with_console(info: ProbeInfo, attached: int) -> ProbeInfo:
@@ -233,6 +411,11 @@ def _gdb_port_for(serial: str | None) -> int:
     nothing to do with the board. Both ports of the pair are checked, since a
     server opens -p and -p+1.
     """
+    with _STATE:
+        return _allocate_gdb_port(serial)
+
+
+def _allocate_gdb_port(serial: str | None) -> int:
     if serial in _gdb_ports:
         return _gdb_ports[serial]
 
@@ -379,7 +562,7 @@ identity reads fine on a port that cannot halt the core.
     except ToolchainError as exc:
         return failed(str(exc))
 
-    serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
+    serial, probe_info, error = _resolve_probe(toolchain, probe_serial, console=True)
     if error:
         return failed(error)
 
@@ -388,8 +571,9 @@ identity reads fine on a port that cannot halt the core.
     if entry is not None:
         probe, info, probe_info = entry
     else:
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify()
+        _remember_port(serial, probe, info)
 
     quirks = info.quirks
     state: dict[str, Any] = {
@@ -506,7 +690,7 @@ the image says. Resets the target first and keeps the GDB server; see
     except ToolchainError as exc:
         return failed(str(exc))
 
-    serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
+    serial, probe_info, error = _resolve_probe(toolchain, probe_serial, console=True)
     if error:
         return failed(error)
 
@@ -514,8 +698,9 @@ the image says. Resets the target first and keeps the GDB server; see
     if entry is not None:
         probe, info, probe_info = entry
     else:
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify()
+        _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
                 "No target",
@@ -577,7 +762,8 @@ the image says. Resets the target first and keeps the GDB server; see
             toolchain, probe.gdb_access_port(info), gdb_port, serial=serial,
             interface=interface,
         )
-        _held[serial] = (probe, info, probe_info)
+        with _STATE:
+            _held[serial] = (probe, info, probe_info)
 
         if port:
             with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
@@ -770,12 +956,14 @@ after a run. Never done implicitly: on an STM32N6 running a stock FSBL image,
 releasing is a one-way door until the board is power cycled. `unverified` if
 nothing was held.
     """
-    affected = [probe_serial] if probe_serial is not None else list(_held)
-    quirks = [_held[s][1].quirks for s in affected if s in _held]
+    with _STATE:
+        affected = [probe_serial] if probe_serial is not None else list(_held)
+        quirks = [_held[s][1].quirks for s in affected if s in _held]
 
     released = release_server(probe_serial)
-    for s in affected:
-        _held.pop(s, None)
+    with _STATE:
+        for s in affected:
+            _held.pop(s, None)
 
     detail: dict[str, Any] = {"released": released, "probes": affected}
     if released and any(q.debug_closes_on_run for q in quirks):
@@ -837,9 +1025,10 @@ when the written range, read back afterwards, matches the image byte for byte.
     if server_is_held(serial):
         return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials())
 
-    probe = Probe(toolchain, serial=serial, interface=interface)
+    probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
     try:
         info = probe.identify()
+        _remember_port(serial, probe, info)
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc), probe_serial=serial,
                       target_was_reset=probe.target_was_reset)
@@ -981,8 +1170,9 @@ probe held by a GDB server until `release_probe`.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify(allow_reset=False)
+        _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
                 "Could not reach the core without resetting it, and this tool "
@@ -1154,11 +1344,12 @@ target stopped, use the GDB server that run_firmware keeps alive.
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
 
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         # allow_reset=False deliberately: identification must not reset the
         # target before this tool has decided to, or the thing being verified
         # has already happened once, unobserved.
         info = probe.identify(allow_reset=False)
+        _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
                 "Cannot reach the target to reset it.",
@@ -1357,12 +1548,13 @@ Perturbing, so never used inside routine checks.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         # The connect is checked before the read. It used to be discarded, so a
         # target nothing could reach surfaced as a bare parse failure from the
         # register read, without the connect errors, the hint, or the fact that
         # identify() had pulsed reset trying to reach it.
         info = probe.identify()
+        _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
                 "Could not reach the core.",
@@ -1437,8 +1629,9 @@ registers.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify(allow_reset=False)
+        _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
                 "Could not reach the core without resetting it. Reading the "
@@ -1601,8 +1794,9 @@ frame.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial, interface=interface)
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify()
+        _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
                 "Could not reach the core.",
@@ -1778,15 +1972,16 @@ before the port opened comes back apart, in `console_buffered`.
     except ToolchainError as exc:
         return failed(str(exc))
 
-    serial, probe_info, error = _resolve_probe(toolchain, probe_serial)
+    serial, probe_info, error = _resolve_probe(toolchain, probe_serial, console=True)
     if error:
         return failed(error)
 
     port = probe_info.console_port if probe_info else None
     if port is None:
         return failed(
-            f"No serial console is mapped to probe {serial}: the probe list's "
-            "UART section did not name a port for it. Name one with "
+            f"No serial console was found for probe {serial}: neither the probe "
+            "list nor udev's port names give one. If the serial is wrong, "
+            "list_probes shows the attached probes. Otherwise name one with "
             f"{settings.CONSOLE}=<probe serial>=<device path>. This does not fall "
             "back to the first /dev/ttyACM*, because that path belongs to "
             "whichever board enumerated first, not to this one.",

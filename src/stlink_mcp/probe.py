@@ -52,6 +52,8 @@ class TargetInfo:
         return for_device_id(self.device_id)
 
 
+_BANNER_SERIAL = re.compile(r"^ST-LINK SN\s*:\s*(\S+)", re.M)
+
 # "SWD freq    : 8000 KHz" or "JTAG freq   : 9000 KHz", captured from both.
 _INTERFACE_CLOCK = re.compile(r"^(SWD|JTAG) freq\s*:\s*(\d+)\s*KHz", re.M)
 
@@ -184,6 +186,11 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     """
     if info.connected:
         return ""
+    if any("Serial number not found" in e for e in info.errors):
+        return (
+            "No probe with that serial is attached; the programmer said so. "
+            "list_probes shows the attached probes and their serials."
+        )
     hints = []
     if interface == JTAG:
         hints.append(
@@ -224,12 +231,18 @@ class Probe:
         access_port: int | None = None,
         serial: str | None = None,
         interface: str = SWD,
+        try_first: int | None = None,
     ) -> None:
         if interface not in INTERFACES:
             raise ValueError(f"interface {interface!r} is not one of {', '.join(INTERFACES)}")
         self.interface = interface
         """SWD or JTAG, for every connect this probe makes. A parameter (N8):
         the wiring decides, and nothing here may assume one."""
+        self._try_first = try_first
+        """The access port to scan first, usually the one this probe settled on
+        last time. Only the order changes: the same ports are scanned. On an
+        STM32N6 it saves a connect per call, 1.1 s (measured 2026-10-01),
+        because AP1 answers first instead of AP0 and then AP1."""
         self.toolchain = toolchain
         self._access_port = access_port
         self.serial = serial
@@ -262,6 +275,24 @@ class Probe:
         not an exception instead of both.
         """
 
+    def _run(self, argv: list[str], timeout: float = 90):
+        """Run the programmer, and refuse an answer from a probe nobody asked for.
+
+        STM32_Programmer_CLI ignores an `sn=` it cannot parse as hex and
+        connects to the first probe it finds: sn=NONE and sn=X both answered
+        from an ST-LINK/V2 on 2026-10-01, while sn=123 got "Serial number not
+        found". So the banner's own serial is compared with the one asked for,
+        on every call that names one."""
+        result = run_command(argv, timeout=timeout)
+        if self.serial:
+            match = _BANNER_SERIAL.search(result.stdout)
+            if match and match.group(1).upper() != self.serial.upper():
+                raise ProbeError(
+                    f"Asked for probe {self.serial}, and the programmer answered from "
+                    f"probe {match.group(1)}. Nothing from that answer is used."
+                )
+        return result
+
     def _connect_args(self, access_port: int, mode: str = "HOTPLUG") -> list[str]:
         argv = [
             str(self.toolchain.programmer),
@@ -287,7 +318,12 @@ class Probe:
         So once the family is known, its recorded access port wins over whichever
         port happened to answer first.
         """
-        ports = [self._access_port] if self._access_port is not None else [0, 1]
+        if self._access_port is not None:
+            ports = [self._access_port]
+        elif self._try_first in (0, 1):
+            ports = [self._try_first, 1 - self._try_first]
+        else:
+            ports = [0, 1]
         last = TargetInfo(connected=False)
 
         # HOTPLUG first: it does not disturb a running program, so state can be
@@ -302,7 +338,7 @@ class Probe:
                     # Recorded before the connect, not after it succeeds: the
                     # pulse restarts the target whether or not the port answers.
                     self.target_was_reset = True
-                result = run_command(self._connect_args(port, mode), timeout=90)
+                result = self._run(self._connect_args(port, mode), timeout=90)
                 info = parse_target_info(result.stdout)
                 if info.connected:
                     self.connect_mode = mode
@@ -369,7 +405,7 @@ class Probe:
                 # branch pulses the board and then fails, and it used to report
                 # target_was_reset False for a board it had just restarted.
                 self.target_was_reset = True
-            result = run_command(self._connect_args(wanted, attempt), timeout=90)
+            result = self._run(self._connect_args(wanted, attempt), timeout=90)
             if parse_target_info(result.stdout).connected:
                 self.connect_mode = attempt
                 return wanted
@@ -400,7 +436,7 @@ class Probe:
         for port in (0, 1):
             if port == answered_on:
                 continue
-            result = run_command(self._connect_args(port, "HOTPLUG"), timeout=90)
+            result = self._run(self._connect_args(port, "HOTPLUG"), timeout=90)
             if parse_target_info(result.stdout).connected:
                 self.other_ports_that_answered.append(port)
 
@@ -439,7 +475,7 @@ class Probe:
             f"0x{address:08X}",
             str(length_bytes),
         ]
-        result = run_command(argv, timeout=90)
+        result = self._run(argv, timeout=90)
         words = parse_memory(result.stdout)
         if not words:
             raise ProbeError(
@@ -455,7 +491,7 @@ class Probe:
         as part of a routine 'did it run' check.
         """
         argv = self._connect_args(self.access_port, self.connect_mode) + ["-coreReg"]
-        result = run_command(argv, timeout=90)
+        result = self._run(argv, timeout=90)
         regs = parse_core_registers(result.stdout)
         if "PC" not in regs:
             raise ProbeError(
@@ -487,7 +523,7 @@ class Probe:
         STM32N6, on a healthy board, so HWRSTPULSE is the one that generalises.
         """
         argv = self._connect_args(access_port, "HWRSTPULSE") + ["-halt", "-coreReg"]
-        result = run_command(argv, timeout=90)
+        result = self._run(argv, timeout=90)
         regs = parse_core_registers(result.stdout)
         return regs.get("PC"), result.stdout
 
@@ -510,7 +546,7 @@ class Probe:
         on 2026-08-16 immediately after a HWRSTPULSE connect and `-halt`.
         """
         argv = self._connect_args(access_port, "HOTPLUG") + ["-run"]
-        result = run_command(argv, timeout=90)
+        result = self._run(argv, timeout=90)
         if "Core run" not in result.stdout:
             raise ProbeError(
                 "Asked the core to resume and the programmer did not confirm it. "
@@ -525,7 +561,7 @@ class Probe:
         if external_loader:
             argv += ["-el", str(self.toolchain.external_loader(external_loader))]
         argv += ["-w", image, f"0x{address:08X}"]
-        result = run_command(argv, timeout=300)
+        result = self._run(argv, timeout=300)
         if "File download complete" not in result.stdout:
             raise ProbeError(f"Programming failed:\n{result.stdout.strip()}")
         return result.stdout
@@ -547,7 +583,7 @@ class Probe:
             if external_loader:
                 argv += ["-el", str(self.toolchain.external_loader(external_loader))]
             argv += ["-u", f"0x{address:08X}", str(size), str(out)]
-            result = run_command(argv, timeout=300)
+            result = self._run(argv, timeout=300)
             data = out.read_bytes() if out.is_file() else b""
         if len(data) != size:
             raise ProbeError(

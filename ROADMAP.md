@@ -39,7 +39,7 @@ fixed first rather than inherited. (RT4)
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
 | N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault" |
 | N8 interface is a parameter | **Done for SWD and JTAG** (2026-10-01): `interface` on every tool that connects, the banner's clock in the result, a held server never reused across interfaces. Measured on an ST-LINK/V2 and the N6's own probe. SWO and RTT are not started |
-| N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals, and nothing records who asked for an operation. The process-wide lock that runs tool calls one at a time guards the hardware, which every caller shares, so it adds no caller state |
+| N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals, and nothing records who asked for an operation. The locks that order tool calls belong to the probes, which every caller shares, so they add no caller state |
 
 Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and
 `pyproject.toml` caps it below 3. On 2026-09-28 the latest published was 2.2.0, and the suite and
