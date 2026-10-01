@@ -8,6 +8,11 @@ git tag; a build past the last tag reports the tag plus the number of commits si
 
 ## [Unreleased]
 
+### Added
+
+- `tools/hwcheck`, which runs the README's promises against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q
+  through the server and prints PASS or FAIL for each, with the test images it builds from source.
+
 ### Fixed
 
 - The warning that an access port was never measured now rides on every tool that connects and on

@@ -1,0 +1,105 @@
+/* Test images for tools/hwcheck. Each variant is selected by -D flags in
+   build_images.py. No start-up code, no .data or .bss: everything the image
+   needs is set in code, so it runs the same whether a debugger loaded it into
+   RAM or the boot ROM started it from flash.
+
+   Every image writes 0xC0FFEE00 plus a tick count to COUNTER_ADDR, so a
+   debugger can see it running by reading that word twice. With HAS_UART it also
+   prints "stlink-mcp hw check <TAG> tick <n>" on the board's virtual COM port. */
+#include <stdint.h>
+#define REG(a) (*(volatile uint32_t *)(a))
+
+#ifndef COUNTER_ADDR
+#error COUNTER_ADDR
+#endif
+#ifndef TAG
+#define TAG "ram"
+#endif
+#ifndef DELAY
+#define DELAY 3000000
+#endif
+
+#ifdef HAS_UART   /* NUCLEO-144 STM32H7: the ST-LINK VCP is USART3, PD8 TX / PD9 RX, AF7 */
+#ifndef BRR
+#define BRR 556   /* 64 MHz HSI / 115200 */
+#endif
+static void uart_init(void) {
+    /* A reset taken while earlier firmware clocked USART3 from PLL3 leaves its
+       kernel clock without a clock until PLL3 runs again (measured 2026-10-01,
+       docs/findings.md). Start PLL3 so the clock selector can switch. */
+    REG(0x58024400) |= 1u << 28;                /* RCC_CR.PLL3ON */
+    while (!(REG(0x58024400) & (1u << 29))) {}  /* PLL3RDY */
+    REG(0x580244E0) |= 1u << 3;                 /* RCC_AHB4ENR.GPIODEN */
+    REG(0x580244E8) |= 1u << 18;                /* RCC_APB1LENR.USART3EN */
+    (void)REG(0x580244E8);
+    uint32_t m = REG(0x58020C00);               /* GPIOD_MODER: PD8, PD9 alternate */
+    m &= ~((3u << 16) | (3u << 18)); m |= (2u << 16) | (2u << 18);
+    REG(0x58020C00) = m;
+    uint32_t af = REG(0x58020C24);              /* GPIOD_AFRH: AF7 on PD8, PD9 */
+    af &= ~0xFFu; af |= 0x77u;
+    REG(0x58020C24) = af;
+    REG(0x4000480C) = BRR;
+    REG(0x40004800) = (1u << 0) | (1u << 2) | (1u << 3);  /* UE, RE, TE */
+}
+static void putc_(char c) { while (!(REG(0x4000481C) & (1u << 7))) {} REG(0x40004828) = (uint8_t)c; }
+static void puts_(const char *s) { while (*s) putc_(*s++); }
+static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); puts_(&b[i]); }
+#else
+static void uart_init(void) {}
+static void puts_(const char *s) { (void)s; }
+static void putu(uint32_t v) { (void)v; }
+#endif
+
+static void delay(uint32_t n) { for (volatile uint32_t i = 0; i < n; i++) {} }
+
+extern void (*const vectors[16])(void);
+
+void reset_handler(void) {
+#ifdef SET_VTOR
+    REG(0xE000ED08) = (uint32_t)vectors;        /* SCB->VTOR: our own table, so our handler runs */
+#endif
+    uart_init();
+    for (uint32_t tick = 0;; tick++) {
+        REG(COUNTER_ADDR) = 0xC0FFEE00u + tick;
+        puts_("stlink-mcp hw check " TAG " tick "); putu(tick); puts_("\r\n");
+#ifdef FAULT_AFTER
+        if (tick == FAULT_AFTER) {
+#ifdef USE_PSP   /* run on PSP from here, as an RTOS thread does; same address, so locals survive */
+            __asm volatile("mrs r0, msp\n msr psp, r0\n mrs r0, control\n orr r0, r0, #2\n msr control, r0\n isb" ::: "r0", "memory");
+#endif
+#ifdef USE_FP    /* make FP context active, so the exception frame is the extended one */
+            REG(0xE000ED88) |= 0xFu << 20;      /* CPACR: CP10, CP11 full access */
+            __asm volatile("dsb\n isb");
+            __asm volatile("vmov s0, %0\n vadd.f32 s0, s0, s0" :: "r"(tick) : "s0");
+#endif
+#ifdef BUS_FAULT /* a buffered store to an address nothing answers: an imprecise bus error */
+            puts_("faulting now: store to 0x2C000000\r\n");
+            *(volatile uint32_t *)0x2C000000u = 0xDEADBEEFu;
+            for (volatile int spin = 0; spin < 100; spin++) {}
+#else
+            puts_("faulting now: udf\r\n");
+            __asm volatile("udf #0");
+#endif
+        }
+#endif
+        delay(DELAY);
+    }
+}
+
+#ifdef CALLING_HANDLER  /* a handler that calls a function first, which overwrites LR */
+__attribute__((noinline)) void handler_helper(void) { __asm volatile("nop"); }
+void fault_handler(void) { handler_helper(); for (;;) {} }
+#else
+__attribute__((naked)) void fault_handler(void) { __asm volatile("b ."); }
+#endif
+
+extern uint32_t _estack;
+__attribute__((section(".isr_vector"), used)) void (*const vectors[16])(void) = {
+    (void (*)(void))&_estack, reset_handler,
+    fault_handler, fault_handler, fault_handler, fault_handler, fault_handler,  /* NMI, HardFault, MemManage, BusFault, UsageFault */
+    fault_handler, 0, 0, 0, fault_handler, fault_handler, 0, fault_handler, fault_handler,
+};
+
+#ifdef EXTRA_SEGMENT  /* a second loadable segment, placed by the linker script */
+__attribute__((section(".extra"), used)) const uint32_t extra_segment[4] = {1, 2, 3, 4};
+#endif

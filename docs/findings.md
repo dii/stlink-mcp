@@ -300,7 +300,7 @@ Skipping the listing exposed something it had been hiding. The programmer ignore
 
 ## What each README promise rests on (2026-10-01)
 
-1.0.0 is cut when every promise in the README has a measurement behind it here. This is the ledger, from the README as it stood on 2026-10-01. "Fake" means a test against a faked programmer or port and nothing on a board. "Not measured" means neither.
+1.0.0 is cut when every promise in the README has a measurement behind it here. This is the ledger, from the README as it stood on 2026-10-01. Its hardware column on the H7 and the N6 is re-run by `tools/hwcheck/hwcheck.py`, which passed 33 of 33 checks on 2026-10-01 with `--jtag` and `--flash`. "Fake" means a test against a faked programmer or port and nothing on a board. "Not measured" means neither.
 
 | Promise | Measured on hardware | Fake only, or not measured |
 | --- | --- | --- |
