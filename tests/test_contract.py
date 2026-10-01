@@ -285,6 +285,7 @@ def bench(monkeypatch, tmp_path):
         markers=(0x34200000, 0x34180841, 2048),
         gdb_output="",
         console_text="",
+        console_buffered="",
         console_port="/dev/fake0",
         console_raises=None,
     )
@@ -310,6 +311,10 @@ def bench(monkeypatch, tmp_path):
         @property
         def text(self) -> str:
             return self._buffer
+
+        @property
+        def buffered(self) -> str:
+            return state.console_buffered
 
     def _attached(tc: object) -> list[probe_mod.ProbeInfo]:
         # As parse_probe_list builds it: a mapped console is labelled as such.
@@ -499,6 +504,34 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert r["status"] == result.VERIFIED
         assert "console" in r["verified_by"]
 
+    def test_the_probes_backlog_never_verifies_a_run(self, bench) -> None:
+        """Measured 2026-10-01: an image that printed nothing was verified on the
+        previous image's lines, which the probe had kept while the port was
+        closed. They are reported apart and are not evidence."""
+        bench.console_buffered = "previous image tick 41\r\n"
+        bench.console_text = ""
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.UNVERIFIED
+        assert r["console"] == ""
+        assert r["console_buffered"] == "previous image tick 41\r\n"
+        assert r["console_buffered_bytes"] == 24
+        assert "not counted as evidence" in r["console_buffered_note"]
+
+    def test_a_run_is_verified_by_its_own_output_beside_a_backlog(self, bench) -> None:
+        bench.console_buffered = "previous image tick 41\r\n"
+        bench.console_text = "new image tick 0\r\n"
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(r)
+        assert r["status"] == result.VERIFIED
+        assert r["console"] == "new image tick 0\r\n"
+        assert "console_buffered" in r
+
+    def test_no_backlog_adds_no_backlog_fields(self, bench) -> None:
+        bench.console_text = "tick 0\n"
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert not any(k.startswith("console_buffered") for k in r)
+
     def test_a_console_that_drops_mid_capture_keeps_what_it_already_had(
         self, bench
     ) -> None:
@@ -590,6 +623,18 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         probe = call("list_probes")["probes"][0]
         assert probe["console_port"] == "/dev/ttyUSB7"
         assert probe["console_port_source"] == self.CONSOLE
+
+    def test_capture_console_keeps_the_probes_backlog_out_of_its_output(self, bench) -> None:
+        bench.console_buffered = "x" * 1500
+        bench.console_text = "live\n"
+        out = call("capture_console")
+        assert_contract(out)
+        assert out["output"] == "live\n"
+        assert out["console_buffered_bytes"] == 1500
+        assert len(out["console_buffered"]) == 1000
+        assert "may be from before this capture" in out["console_buffered_note"]
+        assert "the part in the middle is missing" in out["console_buffered_note"]
+        assert "last 1000 characters" in out["console_buffered_note"]
 
     def test_capture_console_keeps_what_arrived_before_an_unplug(self, bench) -> None:
         """A SerialException mid-capture used to escape the tool with the text

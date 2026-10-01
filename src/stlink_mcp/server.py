@@ -554,6 +554,7 @@ the image says. Resets the target first and keeps the GDB server; see
     # This board's own console, not whichever ttyACM* happens to be first.
     port = probe_info.console_port if probe_info else None
     console_error: str | None = None
+    buffered = ""
     gdb_server = None
     gdb_output = ""
 
@@ -570,6 +571,9 @@ the image says. Resets the target first and keeps the GDB server; see
 
         if port:
             with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
+                # Set aside before the load: the probe's backlog of what the
+                # previous image printed, which must not verify this one.
+                buffered = cap.buffered
                 sp, pc, size, gdb_output = load_and_run(
                     toolchain, elf, quirks.vector_table_addr,
                     probe.gdb_access_port(info), gdb_port
@@ -614,6 +618,9 @@ the image says. Resets the target first and keeps the GDB server; see
         "image_entry_point": _hex(pc),
         "load_size_bytes": size,
         "console": text,
+        **_buffered_disclosure(buffered, before="this run started", source=(
+            "so it came from whatever ran before, not from this image, and it is "
+            "not counted as evidence")),
         "image_note": (
             "image_initial_sp and image_entry_point are read out of the ELF's own "
             "vector table and written into the core. They are what the image asked "
@@ -694,6 +701,32 @@ the image says. Resets the target first and keeps the GDB server; see
         )
 
     return verified(f"console output from {_console_evidence(probe_info)}", **detail)
+
+
+#: The most of a probe's backlog a result carries. An STLINK-V3E held about 8 KB:
+#: the first 6 KB printed after the port closed and the last 2 KB before it
+#: opened, with everything between dropped (docs/findings.md, 2026-10-01).
+_BUFFERED_TAIL = 1000
+
+
+def _buffered_disclosure(text: str, *, before: str, source: str) -> dict[str, Any]:
+    """The output the probe handed over when the port opened, kept apart (N3)."""
+    if not text:
+        return {}
+    size = len(text.encode("utf-8", errors="replace"))
+    return {
+        "console_buffered": text[-_BUFFERED_TAIL:],
+        "console_buffered_bytes": size,
+        "console_buffered_note": (
+            f"{size} bytes arrived the moment the serial port was opened, before "
+            f"{before}. The probe keeps what the target prints while nothing has "
+            f"the port open and hands it over on the next open, {source}. It holds "
+            "a few KB, and when the target printed more than that, the part in the "
+            "middle is missing."
+            + (f" Only the last {_BUFFERED_TAIL} characters are shown."
+               if len(text) > _BUFFERED_TAIL else "")
+        ),
+    }
 
 
 def _held_disclosure(serial: str | None) -> dict[str, Any]:
@@ -1486,7 +1519,8 @@ def capture_console(
 The port is the one the probe list maps to this probe's serial, or the one
 STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*, which with two
 boards attached is the wrong one about half the time. Refuses when it cannot
-resolve a port for that probe. At most 60 seconds.
+resolve a port for that probe. At most 60 seconds. What the probe buffered
+before the port opened comes back apart, in `console_buffered`.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")
     if too_long:
@@ -1514,8 +1548,10 @@ resolve a port for that probe. At most 60 seconds.
         )
 
     capture_error: str | None = None
+    buffered = ""
     try:
         with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
+            buffered = cap.buffered
             try:
                 text = cap.collect(seconds)
             except Exception as exc:  # noqa: BLE001
@@ -1532,6 +1568,8 @@ resolve a port for that probe. At most 60 seconds.
         "port_source": probe_info.console_source if probe_info else None,
         "seconds": seconds,
         "output": text,
+        **_buffered_disclosure(buffered, before="this capture started", source=(
+            "so it may be from before this capture, and it is not in `output`")),
     }
     source = (
         f"the port {settings.CONSOLE} assigns to this probe"

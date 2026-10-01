@@ -8,11 +8,14 @@ git tag; a build past the last tag reports the tag plus the number of commits si
 
 ## [Unreleased]
 
-None of these changes has been run on a board yet. They change what results claim, add
-refusals before anything touches the hardware, and run tool calls one at a time.
+These changes were run on an STM32H7 and an STM32N6 board on 2026-10-01; docs/findings.md has
+what was run and what it showed.
 
 ### Fixed
 
+- `run_firmware` no longer counts console output the probe kept while its serial port was closed. That
+  output comes from whatever ran before, and it verified a run of an image that printed nothing.
+  `run_firmware` and `capture_console` report it apart, as `console_buffered`, and never as evidence.
 - `core_registers` no longer reports `"halted": true` or says the core is still halted; a
   programmer halt does not outlive its command. It reports `halted_to_read_registers`.
 - `target_was_reset` is set when a resetting connect is issued, whether or not it connects, and

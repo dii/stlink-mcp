@@ -9,8 +9,20 @@ first-class part of the tool surface rather than a convenience.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
+from typing import Any
 
 import serial
+
+#: How long the port must stay quiet after opening before the capture counts
+#: what arrives as new. Measured on an STLINK-V3E (2026-10-01): the output it
+#: buffered while the port was closed, up to about 8 KB, arrived at once after
+#: the open, and a target printing a line every 650 ms sent its next one then.
+_BACKLOG_QUIET = 0.1
+
+#: The longest the drain runs. A target that prints with no 100 ms gap keeps
+#: it going, and what it prints in that time is set aside with the backlog.
+_BACKLOG_LIMIT = 1.0
 
 
 class ConsoleError(RuntimeError):
@@ -30,25 +42,56 @@ class ConsoleCapture:
     Used as a context manager around a load-and-run so that output produced
     immediately at start-up is not missed, which is exactly the output that says
     whether the thing started.
+
+    What arrives the moment the port opens is kept apart, in `buffered`. An
+    ST-LINK keeps what the target prints while nothing has its serial port open
+    and hands it over on the next open, so those bytes come from before the
+    capture: from the previous image, on the run path. Counting them as new is
+    how a run of an image that printed nothing was verified on the previous
+    image's lines (docs/findings.md, 2026-10-01). Clearing the host's input
+    buffer does not catch them, because they have not arrived yet when it runs.
     """
 
-    def __init__(self, port: str, baud: int = 115200) -> None:
+    def __init__(
+        self, port: str, baud: int = 115200,
+        opener: Callable[..., Any] = serial.Serial,
+    ) -> None:
         self.port = port
         self.baud = baud
-        self._serial: serial.Serial | None = None
+        self._opener = opener
+        self._serial: Any = None
         self._buffer = bytearray()
+        self._buffered = bytearray()
 
     def __enter__(self) -> "ConsoleCapture":
         try:
-            self._serial = serial.Serial(self.port, self.baud, timeout=0.1)
+            self._serial = self._opener(self.port, self.baud, timeout=0.1)
         except (serial.SerialException, OSError) as exc:
             raise ConsoleError(
                 f"Could not open {self.port} at {self.baud}: {exc}. "
                 "On Linux the user usually needs to be in the 'dialout' group."
             ) from exc
-        # Discard anything buffered from before this run.
         self._serial.reset_input_buffer()
+        try:
+            self._drain_backlog()
+        except (serial.SerialException, OSError) as exc:
+            self.__exit__()
+            raise ConsoleError(f"{self.port} failed while it was being opened: {exc}") from exc
         return self
+
+    def _drain_backlog(self) -> None:
+        """Set aside what arrives until the port has been quiet for _BACKLOG_QUIET."""
+        start = last = time.monotonic()
+        while True:
+            now = time.monotonic()
+            if now - start >= _BACKLOG_LIMIT or now - last >= _BACKLOG_QUIET:
+                return
+            waiting = self._serial.in_waiting
+            if waiting:
+                self._buffered.extend(self._serial.read(waiting))
+                last = time.monotonic()
+            else:
+                time.sleep(0.005)
 
     def __exit__(self, *exc_info: object) -> None:
         if self._serial is not None:
@@ -70,7 +113,13 @@ class ConsoleCapture:
 
     @property
     def text(self) -> str:
+        """What arrived after the port went quiet, which is what a capture counts."""
         return self._buffer.decode("utf-8", errors="replace")
+
+    @property
+    def buffered(self) -> str:
+        """What the probe handed over when the port opened, from before the capture."""
+        return self._buffered.decode("utf-8", errors="replace")
 
 
 # There was a one-shot capture() here. capture_console used it, and an unplug
