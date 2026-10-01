@@ -61,3 +61,14 @@ def test_a_client_sees_the_ten_tools_and_contract_shaped_results() -> None:
     # is about the toolchain or the probe, not a validation error.
     assert seen["read_memory"]["status"] == "failed"
     assert "0x20000000" not in seen["read_memory"]["error"]
+    # N8: every tool that connects offers the interface as a choice of two, so
+    # a client sees the options without reading a docstring.
+    connecting = {"board_state", "run_firmware", "flash_firmware", "read_memory",
+                  "reset_target", "core_registers", "read_fault_status"}
+    for name, tool in seen["tools"].items():
+        prop = tool.input_schema.get("properties", {}).get("interface")
+        if name in connecting:
+            assert prop is not None, f"{name} has no interface parameter"
+            assert prop.get("enum") == ["swd", "jtag"] and prop.get("default") == "swd", (name, prop)
+        else:
+            assert prop is None, f"{name} does not connect and should not take an interface"

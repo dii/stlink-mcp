@@ -21,6 +21,14 @@ class ProbeError(RuntimeError):
     pass
 
 
+#: The debug interfaces a probe can be asked for. SWD is the default because
+#: every probe that does JTAG also does SWD, and the on-board STLINK-V3E of a
+#: NUCLEO-H743ZI does only SWD (measured 2026-10-01).
+SWD = "swd"
+JTAG = "jtag"
+INTERFACES = (SWD, JTAG)
+
+
 @dataclass
 class TargetInfo:
     """What the probe can tell us about the attached target."""
@@ -33,12 +41,19 @@ class TargetInfo:
     device_name: str | None = None
     cpu: str | None = None
     revision: str | None = None
+    interface: str | None = None
+    """The interface the connect banner says it used, "swd" or "jtag": the
+    observation, not the request. None when the banner did not say."""
+    interface_khz: int | None = None
     errors: list[str] = field(default_factory=list)
 
     @property
     def quirks(self) -> FamilyQuirks:
         return for_device_id(self.device_id)
 
+
+# "SWD freq    : 8000 KHz" or "JTAG freq   : 9000 KHz", captured from both.
+_INTERFACE_CLOCK = re.compile(r"^(SWD|JTAG) freq\s*:\s*(\d+)\s*KHz", re.M)
 
 _FIELDS = {
     "stlink_serial": re.compile(r"^ST-LINK SN\s*:\s*(\S+)", re.M),
@@ -67,6 +82,11 @@ def parse_target_info(output: str) -> TargetInfo:
         match = pattern.search(output)
         if match:
             setattr(info, attr, match.group(1))
+
+    clock = _INTERFACE_CLOCK.search(output)
+    if clock:
+        info.interface = clock.group(1).lower()
+        info.interface_khz = int(clock.group(2))
 
     dev = _DEVICE_ID.search(output)
     if dev:
@@ -155,7 +175,7 @@ def reset_landed_at_vector(pc: int | None, reset_handler: int | None) -> bool:
     return pc == (reset_handler & ~1)
 
 
-def explain_connect_failure(info: TargetInfo) -> str:
+def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     """Turn an unhelpful CLI error into the two things it usually means.
 
     This exists because 'Unable to get core ID' is emitted for both a wrong
@@ -164,7 +184,16 @@ def explain_connect_failure(info: TargetInfo) -> str:
     """
     if info.connected:
         return ""
-    hints = [
+    hints = []
+    if interface == JTAG:
+        hints.append(
+            "The probe may not do JTAG, or not be wired for it. A probe that "
+            "cannot answers exactly as if no target were attached: the on-board "
+            "STLINK-V3E of a NUCLEO-H743ZI reports 'Unable to get core ID' over "
+            "JTAG while SWD works. Try interface 'swd', or a probe on the "
+            "target's JTAG connector."
+        )
+    hints += [
         "The debug access port may be wrong. Some families do not use AP0 "
         "(the STM32N6 uses AP1); see quirks.py.",
         "The target's boot configuration may close the debug port. On parts "
@@ -194,7 +223,13 @@ class Probe:
         toolchain: Toolchain,
         access_port: int | None = None,
         serial: str | None = None,
+        interface: str = SWD,
     ) -> None:
+        if interface not in INTERFACES:
+            raise ValueError(f"interface {interface!r} is not one of {', '.join(INTERFACES)}")
+        self.interface = interface
+        """SWD or JTAG, for every connect this probe makes. A parameter (N8):
+        the wiring decides, and nothing here may assume one."""
         self.toolchain = toolchain
         self._access_port = access_port
         self.serial = serial
@@ -231,7 +266,7 @@ class Probe:
         argv = [
             str(self.toolchain.programmer),
             "-c",
-            "port=SWD",
+            f"port={self.interface.upper()}",
             f"mode={mode}",
             f"ap={access_port}",
         ]

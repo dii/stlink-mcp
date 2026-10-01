@@ -1,0 +1,19 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 003C002C3335510535383531
+ST-LINK FW  : V3J15M6
+Board       : NUCLEO-N657X0-Q
+Voltage     : 3.28V
+JTAG freq   : 21333 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x486
+Revision ID : Rev B
+Revision ID : Rev B
+Device name : ST32N657
+Device type : MCU
+Device CPU  : Cortex-M55
+BL Version  : --
+

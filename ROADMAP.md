@@ -38,7 +38,7 @@ fixed first rather than inherited. (RT4)
 | N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
 | N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault" |
-| N8 interface is a parameter | **Not started.** `port=SWD` hardcoded in `Probe._connect_args` in `probe.py`, `-d` in `GdbServer.__enter__` in `runner.py`. No JTAG |
+| N8 interface is a parameter | **Done for SWD and JTAG** (2026-10-01): `interface` on every tool that connects, the banner's clock in the result, a held server never reused across interfaces. Measured on an ST-LINK/V2 and the N6's own probe. SWO and RTT are not started |
 | N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals, and nothing records who asked for an operation. The process-wide lock that runs tool calls one at a time guards the hardware, which every caller shares, so it adds no caller state |
 
 Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and
@@ -205,8 +205,11 @@ turns every user with a board into a source of measured data.
 
 ## Phase 4 - the interfaces (N8)
 
-- **JTAG.** `port=SWD` and the gdbserver's `-d` become a choice, defaulting to SWD and
-  falling back or being told. Some targets and some board wirings only offer JTAG.
+- **JTAG. DONE** 2026-10-01. A choice, defaulting to SWD, and told rather than falling back:
+  a fallback would turn a failed JTAG connect into a working SWD one without the caller asking,
+  and the result would then describe a connection nobody requested. Measured through an
+  ST-LINK/V2 on the H743's JTAG connector and the N6 board's own probe; the H743's own
+  STLINK-V3E does not do JTAG.
 - **SWO or ITM, and RTT.** A board with no virtual COM port currently has no verification
   path at all, which is exactly the case where verification matters most.
 - Make the console a peer of the debug interfaces rather than a special case bolted to

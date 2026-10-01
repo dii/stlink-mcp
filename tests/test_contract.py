@@ -229,6 +229,7 @@ class _FakeProbe:
     unmeasured_port_warning: str | None = None
 
     def __init__(self, *args, **kwargs) -> None:
+        self.interface = kwargs.get("interface", "swd")
         self.connect_mode = "HOTPLUG"
         self.target_was_reset = False
         self.degraded_reason: str | None = None
@@ -1623,3 +1624,30 @@ class TestReadBackUsesTheProgrammersUpload:
         p, _ = self._probe(monkeypatch, None)
         with pytest.raises(pm.ProbeError, match="returned 0"):
             p.read_back(0x08000000, 4)
+
+
+class TestTheInterfaceReachesTheProbeAndTheServer:
+    """N8, at the tool level: the parameter is passed on, and the result says it."""
+
+    def test_board_state_connects_over_the_interface_asked_for(self, bench, monkeypatch) -> None:
+        made: list[str] = []
+        real_init = _FakeProbe.__init__
+
+        def recording_init(self, *a, **k):
+            real_init(self, *a, **k)
+            made.append(self.interface)
+
+        monkeypatch.setattr(_FakeProbe, "__init__", recording_init)
+        out = call("board_state", interface="jtag")
+        assert_contract(out)
+        assert made == ["jtag"]
+        assert out["interface"] == "jtag"
+
+    def test_run_firmware_starts_its_server_for_that_interface(self, bench, monkeypatch) -> None:
+        asked: dict = {}
+        monkeypatch.setattr(server, "acquire_server", lambda *a, **k: asked.update(k))
+        bench.console_text = "tick 0\n"
+        out = call("run_firmware", elf_path=str(bench.elf), interface="jtag")
+        assert_contract(out)
+        assert asked.get("interface") == "jtag"
+        assert out["interface"] == "jtag"

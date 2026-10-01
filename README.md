@@ -86,7 +86,7 @@ commits since it, as in `0.1.0+3`. The public API that promise covers is the ten
 in the table below, their parameters and result fields, and the `stlink-mcp` command
 line. At 0.y.z any of it may change. Beta is reached when one user outside this project
 reports a run on a board this README does not list as measured, the ten tool signatures
-and result fields are declared stable, and the JTAG and Windows questions are decided.
+and result fields are declared stable, and the Windows question is decided.
 Release candidate follows beta. The two defects that gated it are fixed: two tool
 calls at once could give one GDB port to two probes or start two servers on one probe,
 and `run_firmware` discarded GDB's own output on a failed load. 1.0.0 is cut
@@ -206,6 +206,19 @@ Tool calls run one at a time, even when an agent issues several together, so a
 long console capture on one board delays a call for another. The probes and the
 server's own bookkeeping cannot be driven in parallel safely.
 
+### SWD or JTAG
+
+Every tool that connects takes `interface`, `swd` (the default) or `jtag`, and
+its result reports the interface and the clock the probe's connect banner gave
+for it. Not every probe does JTAG. On the boards measured, the NUCLEO-N657X0-Q's
+own probe does; the NUCLEO-H743ZI's own STLINK-V3E does not, and answers a JTAG
+connect exactly as if no target were attached, so the result's hint names that
+first. A JTAG failure there also takes over a minute, because the tool tries
+both access ports and a resetting connect. An ST-LINK/V2 on the H743's JTAG
+connector does both. There is no automatic fallback from one to the other: the
+tool connects over the interface it was given, and a GDB server kept for one
+interface is not reused for the other.
+
 ## Configuration
 
 | variable | meaning |
@@ -312,7 +325,8 @@ not.
   waiting for a second backend: adding OpenOCD would mean introducing one first.
 * Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer
   2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q,
-  NUCLEO-H743ZI and STM32H753I-EVAL2 boards. Other Linux distributions should
+  NUCLEO-H743ZI and STM32H753I-EVAL2 boards, and with an ST-LINK/V2 (firmware
+  V2J38S7) on the NUCLEO-H743ZI's JTAG connector, over SWD and JTAG. Other Linux distributions should
   work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to
   the install there. Windows is not supported: the executable names and device
   paths are wrong for it throughout.
@@ -354,7 +368,7 @@ nothing else, a result nobody watched says `unverified`, and no tool can set
 `ok` on its own. Every part-specific address carries a provenance that changes
 what the tool will do, the STM32N6 behaviour in the findings was measured on
 the board, and the tests were seeded and shown to fail. What this project
-lacks against the three: building, memory writes, breakpoints, JTAG and RTT. It was built before its author had looked for any
+lacks against the three: building, memory writes, breakpoints and RTT. It was built before its author had looked for any
 of them; the field was searched on 2026-09-02, three weeks in, which is the
 wrong order and is recorded as such in the findings.
 

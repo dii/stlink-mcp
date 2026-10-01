@@ -106,8 +106,10 @@ class GdbServer:
         access_port: int,
         port: int = 61234,
         serial: str | None = None,
+        interface: str = "swd",
     ) -> None:
         self.toolchain = toolchain
+        self.interface = interface
         self.access_port = access_port
         self.port = port
         self.serial = serial
@@ -142,7 +144,10 @@ class GdbServer:
 
         argv = [
             str(self.toolchain.gdb_server),
-            "-d",                      # SWD
+            # -d selects SWD and its absence JTAG; the server has no JTAG flag.
+            # With -d its option list shows "SWD Debug : Enabled", without it
+            # nothing (measured 2026-10-01, ST-LINK GDB server 7.14.0).
+            *(["-d"] if self.interface == "swd" else []),
             "-e",                      # persistent; without it the server drops
                                        # the GDB client on connect with
                                        # "Target disconnected: Connection reset
@@ -282,6 +287,7 @@ def acquire_server(
     access_port: int,
     port: int = 61234,
     serial: str | None = None,
+    interface: str = "swd",
 ) -> GdbServer:
     """The live server for one probe, starting it if needed."""
     global _atexit_registered
@@ -290,6 +296,13 @@ def acquire_server(
 
     existing = _sessions.get(serial)
     if existing is not None:
+        if existing.interface != interface:
+            raise RunError(
+                f"The GDB server holding this probe uses {existing.interface.upper()}, "
+                f"and this call asked for {interface.upper()}. Reusing it would run "
+                "over the interface you did not ask for. Call release_probe() first, "
+                "or pass the interface the server uses."
+            )
         return existing
 
     # A held server must not outlive this process. If it does it keeps holding
@@ -312,7 +325,7 @@ def acquire_server(
             "Give each board its own GDB port."
         )
 
-    server = GdbServer(toolchain, access_port, port, serial=serial)
+    server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface)
     server.__enter__()
     _sessions[serial] = server
     return server

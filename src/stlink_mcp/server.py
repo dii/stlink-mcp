@@ -30,7 +30,7 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from mcp.server import MCPServer
 
@@ -87,6 +87,10 @@ mcp = MCPServer("stlink-mcp", version=__version__)
 _ONE_CALL_AT_A_TIME = threading.RLock()
 
 _Tool = TypeVar("_Tool", bound=Callable[..., dict[str, Any]])
+
+#: The debug interface a tool connects over (N8). A parameter, not an
+#: assumption: SWD by default, since every probe that does JTAG also does SWD.
+Interface = Literal["swd", "jtag"]
 
 
 def _serialised(tool: _Tool) -> _Tool:
@@ -358,7 +362,9 @@ while other probes are held by a GDB server; those are marked as held.
 
 @mcp.tool()
 @_serialised
-def board_state(probe_serial: str | None = None) -> dict[str, Any]:
+def board_state(
+    probe_serial: str | None = None, interface: Interface = "swd"
+) -> dict[str, Any]:
     """Identify the target, the probe and the target's family.
 
 Tries access ports 0 and 1. If a hotplug connect cannot reach the core, or the
@@ -382,7 +388,7 @@ identity reads fine on a port that cannot halt the core.
     if entry is not None:
         probe, info, probe_info = entry
     else:
-        probe = Probe(toolchain, serial=serial)
+        probe = Probe(toolchain, serial=serial, interface=interface)
         info = probe.identify()
 
     quirks = info.quirks
@@ -400,6 +406,7 @@ identity reads fine on a port that cannot halt the core.
         # The mode that CONNECTED. When nothing did, naming the default would
         # read as a hotplug connect that worked.
         "connect_mode": probe.connect_mode if info.connected else None,
+        **_interface_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "family": {
             "name": quirks.name,
@@ -455,7 +462,7 @@ identity reads fine on a port that cannot halt the core.
         return failed(
             "Could not reach the core.",
             errors=info.errors,
-            hint=explain_connect_failure(info),
+            hint=explain_connect_failure(info, interface),
             **state,
         )
 
@@ -480,6 +487,7 @@ def run_firmware(
     elf_path: str,
     probe_serial: str | None = None,
     console_seconds: float = 3.0,
+    interface: Interface = "swd",
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
@@ -506,7 +514,7 @@ the image says. Resets the target first and keeps the GDB server; see
     if entry is not None:
         probe, info, probe_info = entry
     else:
-        probe = Probe(toolchain, serial=serial)
+        probe = Probe(toolchain, serial=serial, interface=interface)
         info = probe.identify()
         if not info.connected:
             return failed(
@@ -514,7 +522,8 @@ the image says. Resets the target first and keeps the GDB server; see
                 probe_serial=serial,
                 target_was_reset=probe.target_was_reset,
                 errors=info.errors,
-                hint=explain_connect_failure(info),
+                **_interface_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
             )
         # A degraded programmer connect is NOT a reason to refuse a run. The GDB
         # server uses its own path and reaches AP1 when the programmer cannot.
@@ -565,7 +574,8 @@ the image says. Resets the target first and keeps the GDB server; see
         # Family's port, not the one the programmer settled on: see
         # Probe.gdb_access_port for why those differ.
         gdb_server = acquire_server(
-            toolchain, probe.gdb_access_port(info), gdb_port, serial=serial
+            toolchain, probe.gdb_access_port(info), gdb_port, serial=serial,
+            interface=interface,
         )
         _held[serial] = (probe, info, probe_info)
 
@@ -607,6 +617,7 @@ the image says. Resets the target first and keeps the GDB server; see
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        **_interface_fields(probe, info),
         **_held_disclosure(serial),
         "console_port": port,
         "console_port_source": probe_info.console_source if probe_info else None,
@@ -788,7 +799,10 @@ nothing was held.
 @mcp.tool()
 @_serialised
 def flash_firmware(
-    image_path: str, probe_serial: str | None = None, address: int | str | None = None
+    image_path: str,
+    probe_serial: str | None = None,
+    address: int | str | None = None,
+    interface: Interface = "swd",
 ) -> dict[str, Any]:
     """Program a raw binary image (.bin) into boot memory for standalone boot.
 
@@ -823,7 +837,7 @@ when the written range, read back afterwards, matches the image byte for byte.
     if server_is_held(serial):
         return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials())
 
-    probe = Probe(toolchain, serial=serial)
+    probe = Probe(toolchain, serial=serial, interface=interface)
     try:
         info = probe.identify()
     except Exception as exc:  # noqa: BLE001
@@ -835,7 +849,8 @@ when the written range, read back afterwards, matches the image byte for byte.
             probe_serial=serial,
             target_was_reset=probe.target_was_reset,
             errors=info.errors,
-            hint=explain_connect_failure(info),
+            **_interface_fields(probe, info),
+            hint=explain_connect_failure(info, interface),
         )
 
     quirks = info.quirks
@@ -878,6 +893,7 @@ when the written range, read back afterwards, matches the image byte for byte.
 
     written: dict[str, Any] = {
         "probe_serial": serial,
+        **_interface_fields(probe, info),
         "image": str(image),
         "image_size_bytes": image_size,
         "address": _hex(target_address),
@@ -927,7 +943,10 @@ when the written range, read back afterwards, matches the image byte for byte.
 @mcp.tool()
 @_serialised
 def read_memory(
-    address: int | str, length_bytes: int = 32, probe_serial: str | None = None
+    address: int | str,
+    length_bytes: int = 32,
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
 ) -> dict[str, Any]:
     """Read target memory as 32-bit words without halting or resetting the target.
 
@@ -962,7 +981,7 @@ probe held by a GDB server until `release_probe`.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial)
+        probe = Probe(toolchain, serial=serial, interface=interface)
         info = probe.identify(allow_reset=False)
         if not info.connected:
             return failed(
@@ -970,7 +989,8 @@ probe held by a GDB server until `release_probe`.
                 "does not reset. core_registers() will reset if it must, at the "
                 "cost of the state you are inspecting.",
                 probe_serial=serial,
-                hint=explain_connect_failure(info),
+                **_interface_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
             )
         words = probe.read_memory(start, length_bytes)
     except Exception as exc:  # noqa: BLE001
@@ -984,6 +1004,7 @@ probe held by a GDB server until `release_probe`.
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "connect_mode": probe.connect_mode,
+        **_interface_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "words": {f"0x{a:08X}": f"0x{words[a]:08X}" for a in wanted if a in words},
     }
@@ -1112,7 +1133,9 @@ def load_board_config() -> tuple[int, Path | None]:
 
 @mcp.tool()
 @_serialised
-def reset_target(probe_serial: str | None = None) -> dict[str, Any]:
+def reset_target(
+    probe_serial: str | None = None, interface: Interface = "swd"
+) -> dict[str, Any]:
     """Reset the target and check that it actually restarted.
 
 The reset is a resetting connect; the core is halted at the reset vector just
@@ -1131,7 +1154,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
 
-        probe = Probe(toolchain, serial=serial)
+        probe = Probe(toolchain, serial=serial, interface=interface)
         # allow_reset=False deliberately: identification must not reset the
         # target before this tool has decided to, or the thing being verified
         # has already happened once, unobserved.
@@ -1140,7 +1163,8 @@ target stopped, use the GDB server that run_firmware keeps alive.
             return failed(
                 "Cannot reach the target to reset it.",
                 probe_serial=serial,
-                hint=explain_connect_failure(info),
+                **_interface_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
             )
 
         quirks = info.quirks
@@ -1184,6 +1208,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        **_interface_fields(probe, info),
         "family": quirks.name,
         "reset_kind": "hardware pulse on nRST (HWRSTPULSE connect)",
         "program_counter": _hex(pc),
@@ -1311,7 +1336,9 @@ target stopped, use the GDB server that run_firmware keeps alive.
 
 @mcp.tool()
 @_serialised
-def core_registers(probe_serial: str | None = None) -> dict[str, Any]:
+def core_registers(
+    probe_serial: str | None = None, interface: Interface = "swd"
+) -> dict[str, Any]:
     """Read the core registers, halting the core for the read.
 
 The direct way to find out what a program is doing, and what settles "did it
@@ -1330,7 +1357,7 @@ Perturbing, so never used inside routine checks.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial)
+        probe = Probe(toolchain, serial=serial, interface=interface)
         # The connect is checked before the read. It used to be discarded, so a
         # target nothing could reach surfaced as a bare parse failure from the
         # register read, without the connect errors, the hint, or the fact that
@@ -1342,7 +1369,8 @@ Perturbing, so never used inside routine checks.
                 probe_serial=serial,
                 target_was_reset=probe.target_was_reset,
                 errors=info.errors,
-                hint=explain_connect_failure(info),
+                **_interface_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
             )
         regs = probe.core_registers()
     except Exception as exc:  # noqa: BLE001
@@ -1359,6 +1387,7 @@ Perturbing, so never used inside routine checks.
         # (docs/findings.md, "A halt does not survive the invocation").
         "halted_to_read_registers": True,
         "connect_mode": probe.connect_mode,
+        **_interface_fields(probe, info),
         # Reported, not hidden. Reaching the family's access port on a part that
         # closes it can need a resetting connect, and a reset restarts the very
         # program being inspected. A caller cannot allow for that if it is not told.
@@ -1386,7 +1415,9 @@ Perturbing, so never used inside routine checks.
 
 @mcp.tool()
 @_serialised
-def read_fault_status(probe_serial: str | None = None) -> dict[str, Any]:
+def read_fault_status(
+    probe_serial: str | None = None, interface: Interface = "swd"
+) -> dict[str, Any]:
     """Read and decode the Cortex-M fault status registers without halting or
 resetting the target.
 
@@ -1406,7 +1437,7 @@ registers.
             return failed(
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
             )
-        probe = Probe(toolchain, serial=serial)
+        probe = Probe(toolchain, serial=serial, interface=interface)
         info = probe.identify(allow_reset=False)
         if not info.connected:
             return failed(
@@ -1415,7 +1446,8 @@ registers.
                 "clears them, which would destroy the information this tool "
                 "exists to read.",
                 probe_serial=serial,
-                hint=explain_connect_failure(info),
+                **_interface_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
             )
         # Refused before any read. These cores take every fault as a HardFault
         # and record nothing in this region, so a read of it would decode as
@@ -1462,6 +1494,7 @@ registers.
         "probe_serial": serial,
         "cpu": info.cpu,
         "connect_mode": probe.connect_mode,
+        **_interface_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "any_fault_active": status.any_fault,
         "diagnosis": status.diagnosis,
@@ -1614,6 +1647,23 @@ before the port opened comes back apart, in `console_buffered`.
         return failed(f"The console could not be read: {capture_error}", **detail)
 
     return verified(f"serial console read from {source}", **detail)
+
+
+def _interface_fields(probe: Probe, info: TargetInfo | None) -> dict[str, Any]:
+    """The interface asked for, and the clock the connect banner reported for it.
+
+    The banner's "SWD freq" or "JTAG freq" line is the observation. A clock of
+    None means the banner did not say, which a failed connect can produce."""
+    fields: dict[str, Any] = {
+        "interface": probe.interface,
+        "interface_clock_khz": info.interface_khz if info else None,
+    }
+    if info is not None and info.interface and info.interface != probe.interface:
+        fields["interface_note"] = (
+            f"Asked for {probe.interface.upper()}, and the connect banner reported "
+            f"{info.interface.upper()}."
+        )
+    return fields
 
 
 def _hex(value: int | None) -> str | None:

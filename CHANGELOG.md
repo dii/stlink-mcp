@@ -53,6 +53,8 @@ what was run and what it showed.
 
 ### Added
 
+- `interface`, `swd` or `jtag`, on every tool that connects. Results report the interface and the
+  clock from the probe's connect banner, and a failed JTAG connect says the probe may not do JTAG.
 - `stlink-mcp --check`, `--version` and `--help`.
 - CI for the suite on Python 3.11 to 3.13 and for the sdist contents, and an end-to-end test
   over stdio.
