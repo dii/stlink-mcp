@@ -826,7 +826,7 @@ class TestTheWritePathWillNotActOnAnUnmeasuredAddress:
     is exactly what a seeded entry looks like.
     """
 
-    UNMEASURED_DEVICE = 0x413  # STM32F4, not in FAMILIES: a plausible seeded part
+    UNMEASURED_DEVICE = 0x431  # STM32F411, not in FAMILIES: a plausible seeded part
 
     @pytest.fixture
     def seeded_bench(self, bench, monkeypatch):
@@ -1413,7 +1413,7 @@ class TestASeededAddressIsDisclosedWhereItIsUsed:
             provenance={"access_port": quirks_mod.ASSUMED},
         )
         monkeypatch.setattr(probe_mod, "for_device_id", lambda did: seeded)
-        monkeypatch.setattr(_FakeProbe, "device_id", 0x413)
+        monkeypatch.setattr(_FakeProbe, "device_id", 0x431)
         monkeypatch.setattr(_FakeProbe, "gdb_access_port", lambda self, info: 0)
         # The image has to be linked for THIS part's RAM, or run_firmware refuses
         # it before any load (RT1, 2026-09-03).
@@ -1960,8 +1960,8 @@ class TestThePortWarningReachesTheToolThatFails:
 
         def fake_run(argv, timeout=90):
             if "-coreReg" in argv:
-                return CommandResult(argv, 0, "Device ID   : 0x413\nError: Failed to halt target\n")
-            return CommandResult(argv, 0, "Device ID   : 0x413\nDevice CPU  : Cortex-M4\n")
+                return CommandResult(argv, 0, "Device ID   : 0x431\nError: Failed to halt target\n")
+            return CommandResult(argv, 0, "Device ID   : 0x431\nDevice CPU  : Cortex-M4\n")
 
         monkeypatch.setattr(pm, "run_command", fake_run)
         monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(programmer="x"))
@@ -1983,7 +1983,7 @@ class TestThePortWarningReachesTheToolThatFails:
         from stlink_mcp import probe as pm
         from stlink_mcp.toolchain import CommandResult
         monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(
-            argv, 0, "Device ID   : 0x413\nDevice CPU  : Cortex-M4\n"))
+            argv, 0, "Device ID   : 0x431\nDevice CPU  : Cortex-M4\n"))
         p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAAA0001", try_first=1)
         p.identify()
         assert p.access_port == 0 and "nobody measured" in p.unmeasured_port_warning
@@ -2070,7 +2070,7 @@ class TestOneProgrammerCallWhereNothingCanDiffer:
     an N6 call (a connect costs 1.1 s there, measured 2026-10-01)."""
 
     BANNER_N6 = "ST-LINK SN  : AAAA0001\nDevice ID   : 0x486\nDevice CPU  : Cortex-M55\n"
-    BANNER_UNKNOWN = "ST-LINK SN  : AAAA0001\nDevice ID   : 0x413\nDevice CPU  : Cortex-M4\n"
+    BANNER_UNKNOWN = "ST-LINK SN  : AAAA0001\nDevice ID   : 0x431\nDevice CPU  : Cortex-M4\n"
 
     def _probe(self, monkeypatch, banner: str, try_first):
         from stlink_mcp import probe as pm

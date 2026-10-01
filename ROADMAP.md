@@ -6,7 +6,7 @@ Three decisions set the shape, all taken 2026-08-16:
 
 - **Scope is one user, one machine, boards on their desk.** No authentication, no approvals, no team access. N9 keeps that addable later, so nothing here may assume a single implicit caller.
 - **The primary user is an agent, with a human supervising.** Where the two want different things, the agent's need to not be misled wins. That is why fault decoding outranks a nicer console, and why Windows sits below evidence quality.
-- **Breadth before depth.** DONE in phase 2: 2 device IDs measured, and 97 more seeded from ST's own databases (the seeding reads 99, and the two measured ones take precedence), 4 refused as ambiguous.
+- **Breadth before depth.** DONE in phase 2: 2 device IDs measured, 3 since 2026-10-01 with the STM32F4, and 96 more seeded from ST's own databases (the seeding reads 99, and the measured ones take precedence), 4 refused as ambiguous.
 
 This plan was red-teamed before anything was built from it, and revised against the result. Findings RT1 to RT5 are folded in below.
 

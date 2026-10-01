@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- STM32F4 (device 0x413) is a measured family: run on an STM32F407IGT6 board through an ST-LINK/V2, RAM run, faults, flash written and read back, reset to it.
+
 ### Fixed
 
 - `run_firmware` no longer tells an unverified run on an unmeasured address that "the run itself IS verified"; the note now claims nothing about the run. Found on the first seeded part run on a board, an STM32F407.

@@ -371,6 +371,34 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "in the first place). Verified on NUCLEO-N657X0-Q (MB1940C)."
         ),
     ),
+    "STM32F4": FamilyQuirks(
+        name="STM32F4",
+        access_port=0,
+        ram_load_base=0x20000000,
+        vector_table_addr=0x20000000,
+        flash_base=0x08000000,
+        requires_signing=False,
+        debug_closes_on_run=False,
+        notes=(
+            "The first family measured on a board that is not a NUCLEO: a custom "
+            "board built around an STM32F407IGT6 (device 0x413, Cortex-M4, Rev 2.0), "
+            "through an ST-LINK/V2 on firmware V2J48S7, on 2026-10-01. The part had "
+            "run on STM32CubeProgrammer's database values first, and each value was "
+            "then seen to work. Hotplug connects on AP0 identified it and halted the "
+            "core for core_registers and locate_fault. A RAM image linked with its "
+            "vector table at 0x20000000 ran, its counter at 0x2001F000 advancing "
+            "between reads. A raw binary written to 0x08000000 read back identical, "
+            "and reset_target then halted at that image's reset handler. Hotplug "
+            "connects kept working while firmware ran, from RAM and from flash, so "
+            "debug_closes_on_run is False, and unsigned images ran from RAM and "
+            "booted from flash, so requires_signing is False. "
+            "That board has no console on the probe, so the RAM run was verified by "
+            "reading memory, not by a console. Device 0x413 also covers the F405, "
+            "F415 and F417, which RM0090 gives the same memory map; only the F407 "
+            "was run. The 64 KB of core-coupled RAM at 0x10000000 lies outside the "
+            "SRAM region run_firmware accepts, so images must load to 0x20000000."
+        ),
+    ),
 }
 
 DEFAULT = FamilyQuirks(
@@ -389,6 +417,7 @@ DEFAULT = FamilyQuirks(
 
 #: Device IDs as reported by STM32_Programmer_CLI, mapped to a family key.
 DEVICE_ID_TO_FAMILY: dict[int, str] = {
+    0x413: "STM32F4",
     0x450: "STM32H7",
     0x486: "STM32N6",
 }

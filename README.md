@@ -40,7 +40,7 @@ Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp
 
 ## Status
 
-Alpha. Two families are measured on hardware, STM32N6 and STM32H7. Another 97 device IDs are seeded from STMicroelectronics' own device databases on your disk (the seeding reads 99, and the two measured ones take precedence), and every value from that source is labelled as such. Four device IDs (`0x42B`, `0x42C`, `0x472`, `0x49A`) are refused rather than guessed, because their databases name several separate SRAM banks; `board_state` names the addresses it would not choose between, and a board file settles it. Anything else unrecognised falls back to identification and memory reads only.
+Alpha. Three families are measured on hardware, STM32N6, STM32H7 and STM32F4. Another 96 device IDs are seeded from STMicroelectronics' own device databases on your disk (the seeding reads 99, and the three measured ones take precedence), and every value from that source is labelled as such. Four device IDs (`0x42B`, `0x42C`, `0x472`, `0x49A`) are refused rather than guessed, because their databases name several separate SRAM banks; `board_state` names the addresses it would not choose between, and a board file settles it. Anything else unrecognised falls back to identification and memory reads only.
 
 Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) and are read from the git tag; a build past the last tag reports the tag plus the number of commits since it, as in `0.1.0+3`. The public API that promise covers is the eleven tools in the table below, their parameters and result fields, and the `stlink-mcp` command line. At 0.y.z any of it may change. Beta is reached when one user outside this project reports a run on a board this README does not list as measured, the eleven tool signatures and result fields are declared stable, and the Windows question is decided. Release candidate follows beta. The two defects that gated it are fixed: two tool calls at once could give one GDB port to two probes or start two servers on one probe, and `run_firmware` discarded GDB's own output on a failed load. 1.0.0 is cut when every promise in this README has a measurement behind it in [docs/findings.md](docs/findings.md), whose last section lists what each promise rests on and what is not yet measured. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
@@ -129,7 +129,7 @@ Every tool call writes one line to the server's stderr, which MCP clients keep i
 
 ### SWD or JTAG
 
-Every tool that connects takes `interface`, `swd` (the default) or `jtag`, and its result reports the interface and the clock the probe's connect banner gave for it. Not every probe does JTAG. On the boards measured, the NUCLEO-N657X0-Q's own probe does; the NUCLEO-H743ZI's own STLINK-V3E does not, and answers a JTAG connect exactly as if no target were attached, so the result's hint names that first. A JTAG failure there also takes over a minute, because the tool tries both access ports and a resetting connect. An ST-LINK/V2 on the H743's JTAG connector does both. There is no automatic fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.
+Every tool that connects takes `interface`, `swd` (the default) or `jtag`, and its result reports the interface and the clock the probe's connect banner gave for it. Not every probe does JTAG. On the boards measured, the NUCLEO-N657X0-Q's own probe does; the NUCLEO-H743ZI's own STLINK-V3E does not, and answers a JTAG connect exactly as if no target were attached, so the result's hint names that first. A JTAG failure there also takes over a minute, because the tool tries both access ports and a resetting connect. An ST-LINK/V2 does both, on the H743's JTAG connector and on an F407 board's. There is no automatic fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.
 
 ## Configuration
 
@@ -164,8 +164,8 @@ The `vendor-db` values are read at run time from the STM32CubeProgrammer device 
 Write a TOML file, one table per device ID as the programmer prints it, at `~/.config/stlink-mcp/boards.toml` or wherever `STLINK_MCP_BOARDS` points:
 
 ```toml
-["0x413"]
-name = "STM32F4 on a NUCLEO-F429ZI"
+["0x419"]
+name = "STM32F429 on a NUCLEO-F429ZI"
 access_port = 0
 ram_load_base = 0x20000000
 vector_table_addr = 0x20000000
@@ -189,6 +189,7 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * **No ST-LINK probes found.** On Linux the probe needs ST's udev rules, which STM32CubeCLT installs; unplug the probe and plug it in again after installing them. A probe the programmer lists but cannot read usually means a USB problem, and `list_probes` says so.
 * **The serial port cannot be opened.** On Linux the user needs to be in the `dialout` group, and a new group membership takes effect at the next login.
 * **Could not reach the core.** The result's `hint` lists the likely causes. One is another process holding the probe, such as an IDE or a GDB server left by an earlier session. Check by port with `ss -ltnp`, not by process name: Linux truncates process names to fifteen characters, so `pgrep ST-LINK_gdbserver` finds nothing even while one is running.
+* **Serial number not found, or old firmware.** STM32CubeProgrammer refuses ST-LINK firmware that is too old: an ST-LINK/V2 on V2J16S4 was listed and then refused. STLinkUpgrade, in the STM32CubeCLT install, updates it (select the probe, Open in update mode, Upgrade).
 * **run_firmware refuses the image.** It has to be linked for RAM; see [The GDB server stays alive between runs](#the-gdb-server-stays-alive-between-runs).
 * **Other tools report the probe as held.** A `run_firmware` left its GDB server holding the probe, and `release_probe` frees it. On an STM32N6 running ST's stock start-up code the board then needs a power cycle before the next run.
 
@@ -197,8 +198,8 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * It does not build your firmware. That is your build system's job.
 * It does not sign images, because signing needs keys and options that belong to your project rather than to a programmer.
 * Only ST-LINK with STM32CubeCLT is supported. There is no abstraction layer waiting for a second backend: adding OpenOCD would mean introducing one first.
-* Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q, NUCLEO-H743ZI and STM32H753I-EVAL2 boards, and with an ST-LINK/V2 (firmware V2J38S7) on the NUCLEO-H743ZI's JTAG connector, over SWD and JTAG. Other Linux distributions should work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to the install there. Windows is not supported: the executable names and device paths are wrong for it throughout.
-* Two device families are verified on hardware, STM32N6 and STM32H7. Parts seeded from the vendor database can run firmware; anything unrecognised can be identified and read but not run.
+* Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q, NUCLEO-H743ZI and STM32H753I-EVAL2 boards, and with two ST-LINK/V2s, one on the NUCLEO-H743ZI's JTAG connector (firmware V2J38S7) and one on a custom STM32F407IGT6 board (V2J48S7), over SWD and JTAG. Other Linux distributions should work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to the install there. Windows is not supported: the executable names and device paths are wrong for it throughout.
+* Three device families are verified on hardware, STM32N6, STM32H7 and STM32F4. Parts seeded from the vendor database can run firmware, as the F407 did before its family was measured; anything unrecognised can be identified and read but not run.
 * The probes it has run against are on-board ST-LINK V3s and one ST-LINK/V2. An ST-LINK/V2-1 has not been tried. If you hit a parsing problem on any probe, the captured `-l` output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
 

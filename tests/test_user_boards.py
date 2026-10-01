@@ -21,7 +21,7 @@ def write(tmp_path, text: str):
 
 
 GOOD = '''
-["0x413"]
+["0x419"]
 name = "STM32F4 on a NUCLEO-F429ZI"
 access_port = 0
 ram_load_base = 0x20000000
@@ -34,11 +34,11 @@ notes = "addresses from the reference manual, not yet run on the board"
 class TestWhatLoadsAndHowItIsLabelled:
     def test_a_board_file_is_read_and_keyed_by_device_id(self, tmp_path) -> None:
         boards = quirks.load_user_boards(write(tmp_path, GOOD))
-        assert set(boards) == {0x413}
-        assert boards[0x413].ram_load_base == 0x20000000
+        assert set(boards) == {0x419}
+        assert boards[0x419].ram_load_base == 0x20000000
 
     def test_everything_it_contains_is_user_stated(self, tmp_path) -> None:
-        board = quirks.load_user_boards(write(tmp_path, GOOD))[0x413]
+        board = quirks.load_user_boards(write(tmp_path, GOOD))[0x419]
         assert set(board.provenance_summary().values()) == {quirks.USER_STATED}
 
     def test_nothing_in_it_can_be_called_measured(self, tmp_path) -> None:
@@ -59,7 +59,7 @@ class TestWhatLoadsAndHowItIsLabelled:
         """TOML has hex integer literals and JSON does not, which is why this is
         TOML: a load address written in decimal is a transcription error waiting
         to happen."""
-        board = quirks.load_user_boards(write(tmp_path, GOOD))[0x413]
+        board = quirks.load_user_boards(write(tmp_path, GOOD))[0x419]
         assert board.flash_base == 0x08000000
 
 
@@ -84,7 +84,7 @@ class TestItRefusesRatherThanQuietlyDoingSomethingElse:
         """The consistency invariants used to live only in this test suite, over
         the compile-time table, so a runtime entry got none of them. Now the
         loader and the tests call the same function."""
-        bad = '["0x413"]\nname = "x"\naccess_port = 0\nram_load_base = 0x20000000\n'
+        bad = '["0x419"]\nname = "x"\naccess_port = 0\nram_load_base = 0x20000000\n'
         with pytest.raises(quirks.BoardConfigError, match="vector_table_addr"):
             quirks.load_user_boards(write(tmp_path, bad))
 
@@ -199,7 +199,7 @@ class TestTheRuntimeWiring:
 
     def test_installed_boards_are_seen_by_the_no_argument_lookup(self, tmp_path) -> None:
         quirks.set_user_boards(quirks.load_user_boards(write(tmp_path, GOOD)))
-        assert quirks.for_device_id(0x413).name == "STM32F4 on a NUCLEO-F429ZI"
+        assert quirks.for_device_id(0x419).name == "STM32F4 on a NUCLEO-F429ZI"
 
     def test_installing_replaces_rather_than_accumulates(self, tmp_path) -> None:
         """A stale entry surviving a reload would describe a board that is no
@@ -208,7 +208,7 @@ class TestTheRuntimeWiring:
         other = '["0x999"]\nname = "other"\naccess_port = 0\n'
         quirks.set_user_boards(quirks.load_user_boards(write(tmp_path, other)))
         assert quirks.for_device_id(0x999).name == "other"
-        assert quirks.for_device_id(0x413) is quirks.DEFAULT
+        assert quirks.for_device_id(0x419) is quirks.DEFAULT
 
     def test_an_explicit_env_path_is_used_even_when_it_does_not_exist(
         self, tmp_path, monkeypatch
@@ -254,4 +254,4 @@ class TestTheRuntimeWiring:
         monkeypatch.setenv("STLINK_MCP_BOARDS", str(path))
         count, used = server.load_board_config()
         assert (count, used) == (1, path)
-        assert quirks.for_device_id(0x413).provenance_of("flash_base") == quirks.USER_STATED
+        assert quirks.for_device_id(0x419).provenance_of("flash_base") == quirks.USER_STATED

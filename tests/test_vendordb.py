@@ -161,24 +161,24 @@ class TestPrecedence:
         assert entry.is_measured("ram_load_base")
 
     def test_a_seeded_entry_is_used_where_nothing_was_measured(self) -> None:
-        self._seed(0x413, 0x20000000)
-        entry = quirks.for_device_id(0x413)
+        self._seed(0x431, 0x20000000)
+        entry = quirks.for_device_id(0x431)
         assert entry.ram_load_base == 0x20000000
         assert entry.provenance_of("ram_load_base") == quirks.VENDOR_DB
 
     def test_a_user_board_beats_a_seeded_entry(self) -> None:
-        self._seed(0x413, 0x20000000)
+        self._seed(0x431, 0x20000000)
         quirks.set_user_boards({
-            0x413: quirks.FamilyQuirks(
+            0x431: quirks.FamilyQuirks(
                 name="mine", access_port=0, ram_load_base=0x10000000,
                 vector_table_addr=0x10000000, notes="mine",
                 default_provenance=quirks.USER_STATED,
             )
         })
-        assert quirks.for_device_id(0x413).ram_load_base == 0x10000000
+        assert quirks.for_device_id(0x431).ram_load_base == 0x10000000
 
     def test_an_unseeded_unknown_still_offers_nothing_to_guess_with(self) -> None:
-        self._seed(0x413, 0x20000000)
+        self._seed(0x431, 0x20000000)
         assert quirks.for_device_id(0xDEAD) is quirks.DEFAULT
 
 
