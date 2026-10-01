@@ -8,6 +8,8 @@ git tag; a build past the last tag reports the tag plus the number of commits si
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-01
+
 These changes were run on an STM32H7 and an STM32N6 board on 2026-10-01; docs/findings.md has
 what was run and what it showed.
 
@@ -91,5 +93,6 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dii/stlink-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dii/stlink-mcp/releases/tag/v0.1.0
