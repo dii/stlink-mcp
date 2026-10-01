@@ -13,6 +13,9 @@ what was run and what it showed.
 
 ### Fixed
 
+- `board_state` reports `board` as null for a probe with no board of its own, as `list_probes` does,
+  where it passed on the banner's `--`.
+- A GDB server that starts but never opens its port is reported with its own output.
 - `run_firmware` no longer counts console output the probe kept while its serial port was closed. That
   output comes from whatever ran before, and it verified a run of an image that printed nothing.
   `run_firmware` and `capture_console` report it apart, as `console_buffered`, and never as evidence.

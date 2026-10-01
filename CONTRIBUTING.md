@@ -29,8 +29,9 @@ Open an issue with:
 
 If the problem is in how probes are listed, paste the output of
 `STM32_Programmer_CLI -l` exactly as printed. Every parser here is tested against
-captured output, and only ST-LINK V3 probes have been captured so far, so a
-listing from any other probe is useful even when nothing is wrong.
+captured output, and only on-board ST-LINK V3s and one ST-LINK/V2 have been
+captured so far, so a listing from any other probe, a V2-1 especially, is useful
+even when nothing is wrong.
 
 ## Contributing a board
 

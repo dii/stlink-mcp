@@ -85,6 +85,11 @@ def parse_target_info(output: str) -> TargetInfo:
         if match:
             setattr(info, attr, match.group(1))
 
+    # A probe with no board of its own, such as an ST-LINK/V2, prints
+    # "Board       : --" (captured 2026-10-01); list_probes reports None for it.
+    if info.board in ("--", ""):
+        info.board = None
+
     clock = _INTERFACE_CLOCK.search(output)
     if clock:
         info.interface = clock.group(1).lower()

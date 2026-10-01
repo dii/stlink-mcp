@@ -296,15 +296,27 @@ class TestANonNucleoBoardWithAnOlderProbe:
         assert by_serial["0038004C3335510735383531"].console_port == "/dev/ttyACM0"
         assert by_serial["003E00463234510337333934"].console_port == "/dev/ttyACM4"
 
-    def test_every_probe_here_is_v3_generation(self) -> None:
-        """Guards a claim the README makes about its own coverage.
 
-        The parser is expected to handle an older ST-LINK/V2 or V2-1, and that
-        expectation has never been measured, because no V2 probe has been
-        attached to the machine this was developed on. The H753I-EVAL2 was
-        expected to be the one that settled it and is a V3E as well. If a V2
-        capture is ever added as a fixture, this assertion is what should fail
-        and send someone to the README limitation to delete it.
-        """
-        firmwares = [p.firmware for p in parse_probe_list(self.FIXTURE)]
-        assert all(fw and fw.startswith("V3") for fw in firmwares)
+class TestAnStLinkV2Listing:
+    """Captured 2026-10-01: an ST-LINK/V2 (V2J38S7) wired to a NUCLEO-H743ZI's
+    JTAG connector, beside that board's own STLINK-V3E and a NUCLEO-N657X0-Q.
+    The first V2 this project has seen. It replaces a test that asserted every
+    captured probe was a V3, which existed to fail on this day."""
+
+    FIXTURE = _fixture("probe_list_v2_h743_n657.txt")
+
+    def test_all_three_probes_are_found(self) -> None:
+        assert [p.serial for p in parse_probe_list(self.FIXTURE)] == [
+            "53FF75065177485736340687", "0054003D3137511139383538", "003C002C3335510535383531"]
+        assert count_unreadable_entries(self.FIXTURE) == 0
+
+    def test_the_v2_has_firmware_and_no_board_name_or_console(self) -> None:
+        v2 = parse_probe_list(self.FIXTURE)[0]
+        assert v2.firmware == "V2J38S7"
+        assert v2.board is None, "the V2 prints an empty Board Name"
+        assert v2.console_port is None, "a V2 has no virtual COM port"
+
+    def test_the_v3_consoles_still_map_by_serial(self) -> None:
+        by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
+        assert by_serial["0054003D3137511139383538"].console_port == "/dev/ttyACM0"
+        assert by_serial["003C002C3335510535383531"].console_port == "/dev/ttyACM1"

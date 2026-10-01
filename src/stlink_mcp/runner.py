@@ -93,6 +93,10 @@ def port_is_accepting(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+#: How long a GDB server gets to open its port before it is stopped.
+_LISTEN_TIMEOUT = 15.0
+
+
 class GdbServer:
     """A GDB server process.
 
@@ -166,7 +170,7 @@ class GdbServer:
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
 
-        deadline = time.monotonic() + 15.0
+        deadline = time.monotonic() + _LISTEN_TIMEOUT
         while time.monotonic() < deadline:
             if port_is_accepting(self.port):
                 self._start_draining()
@@ -176,8 +180,18 @@ class GdbServer:
                 raise RunError(f"GDB server exited before listening:\n{out.strip()}")
             time.sleep(0.2)
 
+        # Its output says why, and used to be thrown away here: the server was
+        # stopped without its pipe being read (red-team RT8, 2026-09-03). Once it
+        # has stopped, what it printed is all in the pipe.
+        proc = self._proc
         self.__exit__()
-        raise RunError(f"GDB server did not start listening on port {self.port}")
+        out = strip_ansi(proc.stdout.read() if proc is not None and proc.stdout else "")
+        tail = "\n".join(out.strip().splitlines()[-20:])
+        raise RunError(
+            f"GDB server did not start listening on port {self.port} within "
+            f"{_LISTEN_TIMEOUT:g} s."
+            + (f" Its output:\n{tail}" if tail else " It printed nothing.")
+        )
 
     def _start_draining(self) -> None:
         """Keep reading the server's stdout so it can never block writing to it.

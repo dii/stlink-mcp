@@ -30,6 +30,10 @@ class TestTheBannerSaysWhichInterfaceConnected:
         assert info.connected and info.device_id == 0x450
         assert (info.interface, info.interface_khz) == ("jtag", 9000)
 
+    def test_a_probe_with_no_board_reports_none_not_dashes(self) -> None:
+        assert pm.parse_target_info(_banner("connect_v2_jtag_under_reset.txt")).board is None
+        assert pm.parse_target_info(_banner("connect_n6_v3_jtag.txt")).board == "NUCLEO-N657X0-Q"
+
     def test_jtag_on_the_n6_boards_own_probe(self) -> None:
         info = pm.parse_target_info(_banner("connect_n6_v3_jtag.txt"))
         assert info.connected and info.device_id == 0x486
@@ -102,3 +106,28 @@ class TestTheGdbServerIsStartedForTheInterface:
         with pytest.raises(runner.RunError, match="uses SWD, and this call asked for JTAG"):
             runner.acquire_server(SimpleNamespace(), 0, 61300, serial="AAA", interface="jtag")
         assert runner.acquire_server(SimpleNamespace(), 0, 61300, serial="AAA", interface="swd") is held
+
+
+class TestAServerThatNeverListensSaysWhy:
+    """Red-team RT8 (2026-09-03): the server was stopped and its output thrown
+    away, so the agent got "did not start listening" and nothing else."""
+
+    def test_its_output_is_in_the_error(self, monkeypatch) -> None:
+        import io
+
+        class _Proc:
+            stdout = io.StringIO("ST-LINK firmware update available.\nWaiting for debugger connection...\n")
+            def poll(self):
+                return None
+            def terminate(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+
+        monkeypatch.setattr(runner, "_LISTEN_TIMEOUT", 0.3)
+        monkeypatch.setattr(runner, "port_is_taken", lambda port: False)
+        monkeypatch.setattr(runner, "port_is_accepting", lambda port: False)
+        monkeypatch.setattr(runner.subprocess, "Popen", lambda argv, **kw: _Proc())
+        tc = SimpleNamespace(gdb_server="srv", programmer_bin_dir="bin")
+        with pytest.raises(runner.RunError, match="firmware update available"):
+            runner.GdbServer(tc, 0, 61300, serial="AAAA0001").__enter__()

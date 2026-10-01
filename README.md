@@ -72,9 +72,9 @@ target that is not an STM32, or Windows.
 
 ## Status
 
-Alpha. Two families are measured on hardware, STM32N6 and STM32H7. A further
-99 device IDs are seeded from STMicroelectronics' own device databases on your
-disk, and every value from that source is labelled as such. Four device IDs
+Alpha. Two families are measured on hardware, STM32N6 and STM32H7. Another 97
+device IDs are seeded from STMicroelectronics' own device databases on your
+disk (the seeding reads 99, and the two measured ones take precedence), and every value from that source is labelled as such. Four device IDs
 (`0x42B`, `0x42C`, `0x472`, `0x49A`) are refused rather than guessed, because
 their databases name several separate SRAM banks; `board_state` names the
 addresses it would not choose between, and a board file settles it. Anything
@@ -339,10 +339,9 @@ not.
 * Two device families are verified on hardware, STM32N6 and STM32H7. Parts
   seeded from the vendor database can run firmware; anything unrecognised can
   be identified and read but not run.
-* Every probe this has run against is ST-LINK V3 generation. The probe list
-  parser should handle an older ST-LINK/V2 or V2-1, but that is reasoning, not
-  a measurement. If you hit a parsing problem on a V2, the captured `-l` output
-  is the useful bug report.
+* The probes it has run against are on-board ST-LINK V3s and one ST-LINK/V2.
+  An ST-LINK/V2-1 has not been tried. If you hit a parsing problem on any
+  probe, the captured `-l` output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
 
 ## Related projects

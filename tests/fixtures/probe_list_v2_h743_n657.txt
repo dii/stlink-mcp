@@ -1,0 +1,211 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+=====  DFU Interface   =====
+
+No STM32 device in DFU mode connected
+
+===== J-Link Interface =====
+No J-Link/flasher probe detected.
+===== STLink Interface =====
+
+-------- Connected ST-LINK Probes List --------
+
+ST-Link Probe 0 :
+   ST-LINK SN  : 53FF75065177485736340687
+   ST-LINK FW  : V2J38S7
+   Access Port Number  : 3
+   Board Name  : 
+
+ST-Link Probe 1 :
+   ST-LINK SN  : 0054003D3137511139383538
+   ST-LINK FW  : V3J7M2
+   Access Port Number  : 3
+   Board Name  : NUCLEO-H743ZI
+
+ST-Link Probe 2 :
+   ST-LINK SN  : 003C002C3335510535383531
+   ST-LINK FW  : V3J15M6
+   Access Port Number  : 3
+   Board Name  : NUCLEO-N657X0-Q
+-----------------------------------------------
+
+=====  UART Interface  =====
+
+Total number of serial ports available: 34
+
+Board Name  : NUCLEO-N657X0-Q
+ST-LINK SN: 003C002C3335510535383531
+Port: ttyACM1
+Location: /dev/ttyACM1
+Description: STLINK-V3
+Manufacturer: STMicroelectronics
+
+Board Name  : NUCLEO-H743ZI
+ST-LINK SN: 0054003D3137511139383538
+Port: ttyACM0
+Location: /dev/ttyACM0
+Description: STLINK-V3
+Manufacturer: STMicroelectronics
+
+Port: ttyS0
+Location: /dev/ttyS0
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS1
+Location: /dev/ttyS1
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS10
+Location: /dev/ttyS10
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS11
+Location: /dev/ttyS11
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS12
+Location: /dev/ttyS12
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS13
+Location: /dev/ttyS13
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS14
+Location: /dev/ttyS14
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS15
+Location: /dev/ttyS15
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS16
+Location: /dev/ttyS16
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS17
+Location: /dev/ttyS17
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS18
+Location: /dev/ttyS18
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS19
+Location: /dev/ttyS19
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS2
+Location: /dev/ttyS2
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS20
+Location: /dev/ttyS20
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS21
+Location: /dev/ttyS21
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS22
+Location: /dev/ttyS22
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS23
+Location: /dev/ttyS23
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS24
+Location: /dev/ttyS24
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS25
+Location: /dev/ttyS25
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS26
+Location: /dev/ttyS26
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS27
+Location: /dev/ttyS27
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS28
+Location: /dev/ttyS28
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS29
+Location: /dev/ttyS29
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS3
+Location: /dev/ttyS3
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS30
+Location: /dev/ttyS30
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS31
+Location: /dev/ttyS31
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS4
+Location: /dev/ttyS4
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS5
+Location: /dev/ttyS5
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS6
+Location: /dev/ttyS6
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS7
+Location: /dev/ttyS7
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS8
+Location: /dev/ttyS8
+Description: N/A
+Manufacturer: N/A
+
+Port: ttyS9
+Location: /dev/ttyS9
+Description: N/A
+Manufacturer: N/A
+
