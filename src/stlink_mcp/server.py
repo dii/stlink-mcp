@@ -815,6 +815,7 @@ the image says. Resets the target first and keeps the GDB server; see
         "image_entry_point": _hex(pc),
         "load_size_bytes": size,
         "console": text,
+        **_garbled_note(text),
         **_buffered_disclosure(buffered, before="this run started", source=(
             "so it came from whatever ran before, not from this image, and it is "
             "not counted as evidence")),
@@ -898,6 +899,25 @@ the image says. Resets the target first and keeps the GDB server; see
         )
 
     return verified(f"console output from {_console_evidence(probe_info)}", **detail)
+
+
+def _garbled_note(text: str) -> dict[str, Any]:
+    """A note when most of the console output is not text.
+
+    Measured 2026-10-01: an H7 image printing at 57600 baud, read at the
+    default 115200, verified its run on output that was all replacement and
+    stray characters. The verdict is right, since bytes did arrive after the
+    new image started, but the agent cannot read them and is not told why."""
+    if len(text) < 16:
+        return {}
+    unreadable = sum(1 for ch in text if not (ch.isascii() and (ch.isprintable() or ch in "\r\n\t")))
+    if unreadable * 2 <= len(text):
+        return {}
+    return {"console_garbled_note": (
+        f"{unreadable} of {len(text)} characters are not readable text, which is "
+        "what a wrong baud rate looks like. The console is read at "
+        f"{settings.console_baud()} baud; {settings.CONSOLE_BAUD} sets it."
+    )}
 
 
 #: The most of a probe's backlog a result carries. An STLINK-V3E held about 8 KB:
@@ -1065,8 +1085,8 @@ when the written range, read back afterwards, matches the image byte for byte.
         return failed(
             f"The flash base for {quirks.name} is "
             f"{quirks.provenance_of('flash_base')}, not measured on hardware, and "
-            "this tool writes permanently with no readback to catch a wrong "
-            "address.",
+            "this tool writes permanently. Its readback confirms what was "
+            "written, not that the address was the right one.",
             hint=(
                 "Either pass `address` explicitly, which records the choice as "
                 "yours, or confirm the base by running an image from RAM first, "
@@ -2011,6 +2031,7 @@ before the port opened comes back apart, in `console_buffered`.
         "port_source": probe_info.console_source if probe_info else None,
         "seconds": seconds,
         "output": text,
+        **_garbled_note(text),
         **_buffered_disclosure(buffered, before="this capture started", source=(
             "so it may be from before this capture, and it is not in `output`")),
     }

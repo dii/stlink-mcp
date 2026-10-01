@@ -74,7 +74,8 @@ target that is not an STM32, or Windows.
 
 Alpha. Two families are measured on hardware, STM32N6 and STM32H7. Another 97
 device IDs are seeded from STMicroelectronics' own device databases on your
-disk (the seeding reads 99, and the two measured ones take precedence), and every value from that source is labelled as such. Four device IDs
+disk (the seeding reads 99, and the two measured ones take precedence), and
+every value from that source is labelled as such. Four device IDs
 (`0x42B`, `0x42C`, `0x472`, `0x49A`) are refused rather than guessed, because
 their databases name several separate SRAM banks; `board_state` names the
 addresses it would not choose between, and a board file settles it. Anything
@@ -91,7 +92,9 @@ Release candidate follows beta. The two defects that gated it are fixed: two too
 calls at once could give one GDB port to two probes or start two servers on one probe,
 and `run_firmware` discarded GDB's own output on a failed load. 1.0.0 is cut
 when every promise in this README has a measurement behind it in
-[docs/findings.md](docs/findings.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+[docs/findings.md](docs/findings.md), whose last section lists what each promise
+rests on and what is not yet measured. Changes are listed in
+[CHANGELOG.md](CHANGELOG.md).
 
 Plans are in [ROADMAP.md](ROADMAP.md). The measurements behind the claims in
 this file are in [docs/findings.md](docs/findings.md). How to report a problem
@@ -148,13 +151,13 @@ claude mcp add stlink -- uv --directory /path/to/stlink-mcp run stlink-mcp
 | tool | what it does | how it verifies |
 | --- | --- | --- |
 | `board_state` | Identifies the target, the probe, and the family's quirks | Tries access ports 0 and 1, since a wrong port and an absent target look identical. If no hotplug connect reaches the core it retries with a resetting connect, and reports `target_was_reset` whether or not that connect worked. Reports `unverified` when a held server means it is answering from cache |
-| `run_firmware` | Loads an ELF into RAM and starts it | Refuses, before any load, an image not linked for the family's RAM or with any loaded segment outside the SRAM region, since a GDB load writes wherever the image says. Captures console output from before the target resumes. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
+| `run_firmware` | Loads an ELF into RAM and starts it | Refuses, before any load, an image not linked for the family's RAM or with any loaded segment outside the SRAM region, since a GDB load writes wherever the image says. Captures console output from before the target resumes; what the probe kept from before the run is reported apart and never verifies it. `failed` if the GDB batch did not reach its end markers, since then the load did not happen and any output belongs to the previous image |
 | `flash_firmware` | Programs a raw binary (.bin) into boot memory | Reads the written range back and compares it with the image. Only an identical readback is `verified`; a difference is `failed`, naming the first differing address. Refuses HEX, S-record and ELF files, which the programmer writes to their own addresses rather than the one the tool checked |
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port. A read that returns fewer words than asked for is `failed`, naming the missing addresses |
 | `core_registers` | Reads the core registers, halting the core for the read | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset. Does not claim the core is still halted afterwards, since a programmer halt does not outlive its command |
 | `read_fault_status` | Reads and decodes the Cortex-M fault registers | The raw registers plus a plain-English diagnosis. Reports the faulting address when the hardware recorded it, and the next step to find the faulting instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers and would read as clean, and refuses a read that did not return all six |
 | `locate_fault` | Finds the instruction that faulted, from the exception frame. Halts the core for the register read | EXC_RETURN in LR names the stack holding the frame, and word 6 of the frame is the stacked PC; with the ELF, its function and line. `unverified` when the words found do not look like a frame, as when a handler pushed registers first; refuses in thread mode or when LR no longer holds EXC_RETURN |
-| `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, or the one `STLINK_MCP_CONSOLE` names for it, and refuses if it cannot resolve one |
+| `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, or the one `STLINK_MCP_CONSOLE` names for it, and refuses if it cannot resolve one. What the probe kept from before the capture comes back apart, in `console_buffered`, and output that is mostly not text carries a note about the baud rate |
 | `reset_target` | Resets the target and checks it restarted | Halts at the reset vector and compares the PC against word 1 of the vector table. The reset is the *connect*, because `-rst` then `-halt` loses the race and lands hundreds of bytes into start-up |
 | `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |
 | `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing. Works while other probes are held |
@@ -177,8 +180,8 @@ one per run. Either way the target is reset before every load; without that,
 each image inherits the previous run's peripheral and interrupt state and
 faults during start-up.
 
-While the server holds a probe, `read_memory`, `core_registers` and
-`flash_firmware` cannot reach that probe until you call `release_probe`. Other
+While the server holds a probe, the tools that connect to it cannot reach it
+until you call `release_probe`; `capture_console` still reads its console. Other
 probes are unaffected. Listing the probes slows to about 11 seconds while one
 is held, which is one reason a call that names its probe does not list them.
 
@@ -254,7 +257,8 @@ beside the value:
 Only `measured` means the value has been seen to work, and the label changes
 behaviour. `flash_firmware` refuses to write to a base that is not measured
 unless you name the address yourself, because that write persists, and reading
-it back afterwards confirms what was written, not that it went to the right place. `run_firmware` will load to a `vendor-db` address, because a
+it back afterwards confirms what was written, not that it went to the right
+place. `run_firmware` will load to a `vendor-db` address, because a
 wrong one is undone by a reset, and the result still says the address was not
 measured. A measured entry always beats a seeded one: the databases can report
 a vector table address as the RAM base, and they do not carry the access port
@@ -332,10 +336,10 @@ not.
 * Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer
   2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q,
   NUCLEO-H743ZI and STM32H753I-EVAL2 boards, and with an ST-LINK/V2 (firmware
-  V2J38S7) on the NUCLEO-H743ZI's JTAG connector, over SWD and JTAG. Other Linux distributions should
-  work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to
-  the install there. Windows is not supported: the executable names and device
-  paths are wrong for it throughout.
+  V2J38S7) on the NUCLEO-H743ZI's JTAG connector, over SWD and JTAG. Other
+  Linux distributions should work and have not been run. macOS is untried; set
+  `STLINK_MCP_CLT_ROOT` to the install there. Windows is not supported: the
+  executable names and device paths are wrong for it throughout.
 * Two device families are verified on hardware, STM32N6 and STM32H7. Parts
   seeded from the vendor database can run firmware; anything unrecognised can
   be identified and read but not run.
@@ -373,9 +377,10 @@ nothing else, a result nobody watched says `unverified`, and no tool can set
 `ok` on its own. Every part-specific address carries a provenance that changes
 what the tool will do, the STM32N6 behaviour in the findings was measured on
 the board, and the tests were seeded and shown to fail. What this project
-lacks against the three: building, memory writes, breakpoints and RTT. It was built before its author had looked for any
-of them; the field was searched on 2026-09-02, three weeks in, which is the
-wrong order and is recorded as such in the findings.
+lacks against the three: building, memory writes, breakpoints and RTT. It was
+built before its author had looked for any of them; the field was searched on
+2026-09-02, three weeks in, which is the wrong order and is recorded as such
+in the findings.
 
 ## Licence
 

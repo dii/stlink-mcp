@@ -1911,3 +1911,24 @@ class TestTheConsoleIsFoundByTheProbesSerial:
         bench.console_text = "tick 0\n"
         out = call("capture_console", probe_serial=self.SERIAL)
         assert out["port"] == "/dev/ttyUSB3" and out["port_source"] == "STLINK_MCP_CONSOLE"
+
+
+class TestAConsoleThatIsNotTextSaysWhy:
+    """Measured 2026-10-01: a 57600-baud image read at 115200 verified on
+    output nobody could read."""
+
+    def test_garbled_output_carries_a_baud_note(self, bench) -> None:
+        bench.console_text = "\ufffd\ufffd\u679e\ufffd\ufffd\ufffd\u6606\ufffd\ufffd\u6618\ufffd\ufffd\ufffd\ufffd\u679e\ufffd\ufffd"
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert out["status"] == result.VERIFIED, "bytes did arrive after the start"
+        assert "baud" in out["console_garbled_note"]
+
+    def test_ordinary_text_carries_no_note(self, bench) -> None:
+        bench.console_text = "stlink-mcp hw check ram tick 0\r\nstlink-mcp hw check ram tick 1\r\n"
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert "console_garbled_note" not in out
+
+    def test_capture_console_says_it_too(self, bench) -> None:
+        bench.console_text = "\ufffd" * 40
+        out = call("capture_console")
+        assert "console_garbled_note" in out

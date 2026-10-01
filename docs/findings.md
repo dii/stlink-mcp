@@ -297,3 +297,42 @@ Every slow call seen on 2026-10-01, 11 to 14 seconds, was the probe listing (`ST
 So a call that names its probe no longer lists the probes. One that needs the console finds the port by the probe's serial in `/dev/serial/by-id`, where udev names each port after its USB serial number, which for these ST-LINKs is the serial the programmer reports. Calls on different probes run together, calls on one probe queue, and a call that lists runs alone. Each probe's last settled access port is tried first, which takes the N6 to two connects. Through the server: an H7 read 0.26 seconds against 1.57, an N6 read 2.3 against 4.8, an N6 read while the H7 was held 3.4 against 14.7, and an H7 capture ran beside two N6 calls, which queued behind each other.
 
 Skipping the listing exposed something it had been hiding. The programmer ignores an `sn=` it cannot parse as hex and connects to the first probe it finds: `sn=NONE` and `sn=X` answered from the ST-LINK/V2, while `sn=123` got "Serial number not found". The project's own stdio test, which passes `NONE`, came back verified from the wrong board before this was caught. A serial that is not hex digits is now refused, and every programmer answer for a named probe is checked against the serial in its own banner.
+
+## What each README promise rests on (2026-10-01)
+
+1.0.0 is cut when every promise in the README has a measurement behind it here. This is the ledger, from the README as it stood on 2026-10-01. "Fake" means a test against a faked programmer or port and nothing on a board. "Not measured" means neither.
+
+| Promise | Measured on hardware | Fake only, or not measured |
+| --- | --- | --- |
+| No tool reports success it did not observe; `ok` is never set by hand | Every tool's verified path, on the H7 and N6, 2026-10-01 | The no-literal-`ok` rule is a test |
+| ST's tools overstate (the three examples) | N6, 2026-08-14 to 08-16 | |
+| `board_state` scans ports 0 and 1, and retries with a resetting connect | Three probes by hotplug, 2026-10-01; the reset retry on the N6 with AP1 closed, 2026-08-15 | `target_was_reset` after a resetting connect that then fails: fake |
+| `board_state` is `unverified` while a server holds the probe | H7, 2026-10-01 | |
+| `run_firmware` refuses an image not linked for RAM, or with a segment outside SRAM | H7, a flash-linked ELF and one with a flash segment beside a RAM vector table, 2026-10-01 | |
+| `run_firmware` is verified by the new image's console, and output from before the run never counts | H7, 2026-10-01; the N6's silent image `unverified` | |
+| `run_firmware` is `failed` when the GDB batch does not reach its end markers | | Fake |
+| `flash_firmware` reads back and compares, and takes only a `.bin` | H7 at 0x08000000, 2026-10-01 | A mismatch, and a failed readback: fake. The N6 path through its external loader: not measured |
+| `read_memory` connects hotplug-only and refuses rather than reset at a closed port | Hotplug reads throughout, 2026-10-01 | The refusal at a closed port: fake; the closing itself measured 2026-08-14 |
+| A short read is `failed`, naming what is missing | | Fake |
+| `core_registers` halts for the read and claims nothing after | H7, 2026-08-17 and 2026-10-01; N6, 2026-10-01 | |
+| `read_fault_status` decodes the registers | An undefined instruction on the H7 and the N6, 2026-10-01 | Refusing Cortex-M0, M0+, M1 and M23: fake, no such board here. A partial read: fake |
+| `locate_fault` finds the faulting instruction, and says when the frame does not look like one | H7 on MSP, on PSP and with an FP frame; N6 on its Secure MSP; a handler that pushed first; thread mode refused; 2026-10-01 | LR overwritten, the Armv8-M extra state, an imprecise bus error: fake |
+| `capture_console` reads the port mapped to the probe | Probe list and udev names, 2026-10-01; a setting pair through the V2 | |
+| `reset_target` halts at the reset handler and compares it with the vector table | H7 through the V3E, 2026-08-16 and 2026-10-01; through the V2 over JTAG, 2026-10-01 | The N6 was not reset today |
+| `release_probe` is `unverified` when nothing was held | 2026-10-01 | |
+| `list_probes` lists each probe once and works while others are held | 2026-08-15; 2026-10-01, at 11 s while held | |
+| The server is held because the N6's stock start-up closes AP1 | 2026-08-14 to 08-16 | |
+| The target is reset before every load | 2026-08 (the reset-before-every-load entry) | |
+| A held server blocks only its own probe | N6 calls while the H7 was held, 2026-10-01 | |
+| The tool does not set VTOR | A fault went to the flash firmware's handler, 2026-10-01 | |
+| A serial is required with several boards; consoles map by serial; each board gets its own GDB port | 2026-10-01: refused with three attached, two servers on 61234 and 61238 | |
+| Calls on different probes run together; on one probe they queue | 2026-10-01 | |
+| SWD or JTAG, and which probes do JTAG | 2026-10-01 | |
+| Every setting does what the table says, and a bad one stops start-up | All six, 2026-10-01, including 57600 baud and a GDB port base of 62000 | |
+| Provenance changes behaviour; an unmeasured flash base is refused | Through a board file for the H7: user-stated values, a run with the note, flash refused without an address, 2026-10-01 | A `vendor-db` part: not measured, no seeded board here |
+| A seeded part can run firmware; an unrecognised one can be identified and read | | Not measured: needs a board that is neither an H7 nor an N6 |
+| A board file is user-stated only and wins over the table | H7, 2026-10-01 | |
+| 97 seeded device IDs, 4 refused | The installed databases, 2026-10-01 | |
+| Tested on the listed boards and probes | Each, on the dates above | macOS and an ST-LINK/V2-1: not measured. Windows: not supported |
+
+So the hardware gaps before 1.0.0 are a board outside the two measured families (an STM32G0, C0, L0 or F0 would also settle the Cortex-M0 refusal), the N6 flash path, and a GDB load that fails partway. The fake-only rows need a way to make a board produce the case, and some of them may never get one.
