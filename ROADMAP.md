@@ -6,7 +6,7 @@ Three decisions set the shape, all taken 2026-08-16:
 
 - **Scope is one user, one machine, boards on their desk.** No authentication, no approvals, no team access. N9 keeps that addable later, so nothing here may assume a single implicit caller.
 - **The primary user is an agent, with a human supervising.** Where the two want different things, the agent's need to not be misled wins. That is why fault decoding outranks a nicer console, and why Windows sits below evidence quality.
-- **Breadth before depth.** DONE in phase 2: 2 device IDs measured, 99 more seeded from ST's own databases, 4 refused as ambiguous.
+- **Breadth before depth.** DONE in phase 2: 2 device IDs measured, and 97 more seeded from ST's own databases (the seeding reads 99, and the two measured ones take precedence), 4 refused as ambiguous.
 
 This plan was red-teamed before anything was built from it, and revised against the result. Findings RT1 to RT5 are folded in below.
 
@@ -20,15 +20,15 @@ This plan was red-teamed before anything was built from it, and revised against 
 | --- | --- |
 | N1 verdict and evidence | Done. `result.verified/unverified/failed`, no tool sets `ok`, enforced by a contract test |
 | N2 missing facts refuse rather than guess | Done. Four device IDs with ambiguous SRAM are refused rather than seeded, and the write path refuses an unmeasured base. Since 2026-09-28 `read_fault_status` refuses cores without fault registers and partial reads, and `read_memory` refuses a short read |
-| N3 hidden state is reported | Done: reset, cache, degraded access port, held probe, including after a failed run, and where a console setting came from |
+| N3 hidden state is reported | Done: reset, cache, degraded access port, held probe, including after a failed run, where a console setting came from, console output the probe kept from before a run (2026-10-01), and an unmeasured access port on every tool that uses it, not only `board_state` (2026-10-01) |
 | N4 nothing perturbs silently | Done: `target_was_reset`, which since 2026-09-28 is set when a resetting connect is issued whether or not it connects. `core_registers` halts for its read and no longer claims the core stays halted |
 | N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
-| N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault" |
+| N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault", and `locate_fault` answers where (2026-10-01); `flash_firmware` reads back what it wrote (2026-10-01) |
 | N8 interface is a parameter | **Done for SWD and JTAG** (2026-10-01): `interface` on every tool that connects, the banner's clock in the result, a held server never reused across interfaces. Measured on an ST-LINK/V2 and the N6's own probe. SWO and RTT are not started |
 | N9 no single-caller assumptions | **Not started.** Per-probe state is in module globals, and nothing records who asked for an operation. The locks that order tool calls belong to the probes, which every caller shares, so they add no caller state |
 
-Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and `pyproject.toml` caps it below 3. On 2026-09-28 the latest published was 2.2.0, and the suite and the stdio test in `tests/test_stdio.py` passed against it. Re-verify on every SDK bump rather than assuming.
+Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and `pyproject.toml` caps it below 3. On 2026-10-01 the latest published was still 2.2.0, and the suite and the stdio test in `tests/test_stdio.py` had passed against it. Re-verify on every SDK bump rather than assuming.
 
 ## Phase 1 - the core verbs, and letting the user describe the board
 
@@ -89,7 +89,7 @@ What the database does **not** give, and what therefore still comes from measure
 
 **The known trap, and the first thing to test.** For the N6 the database gives SRAM at `0x34180400`, which is this project's `vector_table_addr` and not its `ram_load_base` of `0x34180000`. The difference is 0x400, the signing header. Measured across every SRAM base in the set, **exactly one carries a 0x400 offset and it is the N6**, with 106 of 119 bases perfectly round, so treating the database address as the load base is right in the common case. That is a reason to expect the mapping to be simple, not a reason to skip testing it, and the part we know best is the one that proves a naive reading wrong.
 
-Open choice: parse the databases at runtime from the user's own install, which stays current and vendors nothing, or generate a checked-in table, which survives an install that lacks the directory. Runtime is preferred with a fallback.
+Decided: the databases are parsed at run time from the user's own install, and there is no checked-in fallback table, because a table derived from them would put ST's SLA0048 files under this repository's MIT licence (AGENTS.md).
 
 ## Phase 3 - close the loop, so users produce measured entries
 
@@ -117,7 +117,7 @@ After Phase 2 most parts have a proposed layout that nobody has run a board agai
 - **Attachment ergonomics.** Installing it and pointing an agent client at it should not require reading the source. The self-check is DONE, `stlink-mcp --check`; a generated client config is not.
 - **CI. DONE** 2026-09-28: the suite on Python 3.11 to 3.13, with no hardware attached, and the check that the sdist file list equals `git ls-files`, run on every push.
 - **Windows.** Executable names and device paths are wrong throughout, and a large share of STM32 developers are there.
-- Contributing guide asking for captured `-l` output on any parsing problem, issue templates, and a changelog: DONE. `py.typed`: not done.
+- Contributing guide asking for captured `-l` output on any parsing problem, issue templates, a changelog, and `py.typed`: DONE.
 - OpenOCD or pyOCD as a second backend. This means introducing an abstraction layer that deliberately does not exist yet, so it is last and may never be worth it.
 
 ## Cross-cutting, not a phase
@@ -130,4 +130,4 @@ Building firmware, signing images, a human-facing debugger interface, team acces
 
 ## Open measurement
 
-No ST-LINK/V2 or V2-1 probe has ever been attached to the machine this was developed on. Every board here is V3 generation. The parser is expected to handle an older probe, and that expectation is reasoning rather than a measurement, which is why it is in the README limitations and guarded by a test.
+An ST-LINK/V2-1 has never been attached. An ST-LINK/V2 (V2J38S7) was, on 2026-10-01: its listing parses and is a fixture, and it ran every connecting tool over SWD and JTAG. A V2-1 listing is the open item, and the issue template for probe listings asks for one.

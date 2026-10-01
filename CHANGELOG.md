@@ -6,6 +6,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Added
 
+- `py.typed`, so type checkers read the package's annotations.
 - `tools/hwcheck`, which runs the README's promises against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q through the server and prints PASS or FAIL for each, with the test images it builds from source.
 
 ### Fixed
