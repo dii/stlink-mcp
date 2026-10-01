@@ -310,13 +310,13 @@ Skipping the listing exposed something it had been hiding. The programmer ignore
 | `board_state` is `unverified` while a server holds the probe | H7, 2026-10-01 | |
 | `run_firmware` refuses an image not linked for RAM, or with a segment outside SRAM | H7, a flash-linked ELF and one with a flash segment beside a RAM vector table, 2026-10-01 | |
 | `run_firmware` is verified by the new image's console, and output from before the run never counts | H7, 2026-10-01; the N6's silent image `unverified` | |
-| `run_firmware` is `failed` when the GDB batch does not reach its end markers | | Fake |
+| `run_firmware` is `failed` when the GDB batch does not reach its end markers | H7, an image with a segment at 0x2C000000, where nothing answers, 2026-10-02; GDB's own output in the result | |
 | `flash_firmware` reads back and compares, and takes only a `.bin` | H7 at 0x08000000, 2026-10-01 | A mismatch, and a failed readback: fake. The N6 path through its external loader: not measured |
 | `read_memory` connects hotplug-only and refuses rather than reset at a closed port | Hotplug reads throughout, 2026-10-01 | The refusal at a closed port: fake; the closing itself measured 2026-08-14 |
-| A short read is `failed`, naming what is missing | | Fake |
+| A short read is `failed`, naming what is missing | | Fake. On the H7 a read across the end of RAM failed whole instead (2026-10-02), so no board has produced a short read |
 | `core_registers` halts for the read and claims nothing after | H7, 2026-08-17 and 2026-10-01; N6, 2026-10-01 | |
 | `read_fault_status` decodes the registers | An undefined instruction on the H7 and the N6, 2026-10-01 | Refusing Cortex-M0, M0+, M1 and M23: fake, no such board here. A partial read: fake |
-| `locate_fault` finds the faulting instruction, and says when the frame does not look like one | H7 on MSP, on PSP and with an FP frame; N6 on its Secure MSP; a handler that pushed first; thread mode refused; 2026-10-01 | LR overwritten, the Armv8-M extra state, an imprecise bus error: fake |
+| `locate_fault` finds the faulting instruction, and says when the frame does not look like one | H7 on MSP, on PSP and with an FP frame; N6 on its Secure MSP; a handler that pushed first; thread mode refused; 2026-10-01. An overwritten LR refused, and an imprecise bus error noted, 2026-10-02 | The Armv8-M extra state: fake |
 | `capture_console` reads the port mapped to the probe | Probe list and udev names, 2026-10-01; a setting pair through the V2 | |
 | `reset_target` halts at the reset handler and compares it with the vector table | H7 through the V3E, 2026-08-16 and 2026-10-01; through the V2 over JTAG, 2026-10-01 | The N6 was not reset today |
 | `release_probe` is `unverified` when nothing was held | 2026-10-01 | |
@@ -335,4 +335,8 @@ Skipping the listing exposed something it had been hiding. The programmer ignore
 | 97 seeded device IDs, 4 refused | The installed databases, 2026-10-01 | |
 | Tested on the listed boards and probes | Each, on the dates above | macOS and an ST-LINK/V2-1: not measured. Windows: not supported |
 
-So the hardware gaps before 1.0.0 are a board outside the two measured families (an STM32G0, C0, L0 or F0 would also settle the Cortex-M0 refusal), the N6 flash path, and a GDB load that fails partway. The fake-only rows need a way to make a board produce the case, and some of them may never get one.
+So the hardware gaps before 1.0.0 are a board outside the two measured families (an STM32G0, C0, L0 or F0 would also settle the Cortex-M0 refusal) and the N6 flash path. A GDB load that fails partway was added on 2026-10-02. The fake-only rows need a way to make a board produce the case, and some of them may never get one.
+
+## Four ledger rows moved onto the H7 (2026-10-02)
+
+Images made to produce each case. An image with its vector table in AXI SRAM and a second segment at 0x2C000000, which is inside the range the tool accepts as RAM and holds nothing on an H7, passed the image check, and GDB's load stopped at that section: `run_firmware` was `failed`, its `gdb_output` naming `.flashblob` at 0x2c000000 and the error. A store to the same address from a running image raised an imprecise bus error: `read_fault_status` decoded CFSR 0x00000400 (IMPRECISERR) and HFSR 0x40000000, and `locate_fault` returned a stacked PC of 0x24000166, 12 bytes past the store at 0x2400015A, with its note that the PC is late. A HardFault handler that calls a function before looping left LR at 0x2400018F, and `locate_fault` refused, naming it. A 32-byte read from 0x2407FFF0, across the end of the 512 KB of AXI SRAM, did not come back short: the programmer failed the whole read, so the short-read refusal still has only a fake behind it.
