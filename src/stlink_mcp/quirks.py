@@ -317,7 +317,11 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "STM32_Prog_DB_0x450.xml names 0x450 'STM32H7xx' in series 'STM32H7', so "
             "an H743 and an H753 arrive here as the same device ID by design. That "
             "is the granularity of this table. It is keyed on what the tool can "
-            "actually report, not on the part number printed on the chip."
+            "actually report, not on the part number printed on the chip. "
+            "If a RAM image's UART stays silent after run_firmware: firmware that "
+            "clocked the UART from PLL3 and was running when the reset came can "
+            "leave that UART without a clock until PLL3 runs again (measured on "
+            "USART3, 2026-10-01). Turn PLL3 on in the image before using it."
         ),
     ),
     "STM32N6": FamilyQuirks(
