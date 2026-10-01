@@ -60,7 +60,9 @@ class Server:
         params = StdioServerParameters(
             command=sys.executable, args=["-m", "stlink_mcp"], env=self.env
         )
-        read, write = await self._stack.enter_async_context(stdio_client(params))
+        # The server traces every call on stderr (N9); kept out of the report.
+        self.errlog = self._stack.enter_context(tempfile.TemporaryFile("w+"))
+        read, write = await self._stack.enter_async_context(stdio_client(params, errlog=self.errlog))
         self.session = await self._stack.enter_async_context(ClientSession(read, write))
         await self.session.initialize()
         return self

@@ -494,6 +494,40 @@ class Probe:
             )
         return words
 
+    def identify_and_read(
+        self, address: int, length_bytes: int
+    ) -> tuple[TargetInfo, dict[int, int]] | None:
+        """Connect and read in one programmer call, where identify() could add
+        nothing; None when it could, and the caller then does both in turn.
+
+        One call instead of two halves the time on an STM32N6, where every
+        connect costs about 1.1 s (measured 2026-10-01). It is tried only on
+        the port this probe settled on before, with a hotplug connect, and
+        kept only when that port is the family's MEASURED port: then identify()
+        would scan nothing else, settle nowhere else and warn of nothing. A
+        read changes nothing on the target, so a discarded attempt costs only
+        its time."""
+        port = self._try_first
+        if self._access_port is not None or port is None:
+            return None
+        argv = self._connect_args(port, "HOTPLUG") + ["-r32", f"0x{address:08X}", str(length_bytes)]
+        result = self._run(argv, timeout=90)
+        info = parse_target_info(result.stdout)
+        if not info.connected:
+            return None
+        quirks = info.quirks
+        if quirks.access_port != port or not quirks.is_measured("access_port"):
+            return None
+        self._access_port = port
+        self.connect_mode = "HOTPLUG"
+        self.access_port_provenance = quirks.provenance_of("access_port")
+        words = parse_memory(result.stdout)
+        if not words:
+            raise ProbeError(
+                f"No data read at 0x{address:08X}. Output was:\n{result.stdout.strip()}"
+            )
+        return info, words
+
     def core_registers(self) -> dict[str, int]:
         """Read the core registers.
 

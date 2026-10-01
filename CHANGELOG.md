@@ -7,8 +7,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 ### Added
 
 - `py.typed`, so type checkers read the package's annotations.
-- A caller for every tool call, from the MCP context: one trace line per call on stderr, and `held_by` on
-  refusals and releases naming the client whose run holds a probe.
+- A caller for every tool call, from the MCP context: one trace line per call on stderr, and `held_by` on refusals and releases naming the client whose run holds a probe.
 - `tools/hwcheck`, which runs the README's promises against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q through the server and prints PASS or FAIL for each, with the test images it builds from source.
 
 ### Fixed
@@ -16,6 +15,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - The warning that an access port was never measured now rides on every tool that connects and on their failures, not only on `board_state`, and is no longer skipped when a probe's remembered port differs from the assumed one.
 - The newest complete STM32CubeCLT install is used, not the newest one with a programmer; `--check` names a newer install it passed over, and the error for an incomplete one names the others.
 - `list_probes` is `unverified`, with the programmer's error lines, when it printed errors and listed no probe; an empty bus stays verified and points at `lsusb`.
+
+### Changed
+
+- `read_memory` and `read_fault_status` connect and read in one programmer call when the probe's remembered port is its family's measured port: an STM32N6 read takes 1.15 s against 2.3.
 
 ## [0.2.0] - 2026-10-01
 

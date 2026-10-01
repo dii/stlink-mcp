@@ -1315,18 +1315,22 @@ probe held by a GDB server until `release_probe`.
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
-        info = probe.identify(allow_reset=False)
-        _remember_port(serial, probe, info)
-        if not info.connected:
-            return failed(
-                "Could not reach the core without resetting it, and this tool "
-                "does not reset. core_registers() will reset if it must, at the "
-                "cost of the state you are inspecting.",
-                probe_serial=serial,
-                **_connection_fields(probe, info),
-                hint=explain_connect_failure(info, interface),
-            )
-        words = probe.read_memory(start, length_bytes)
+        one_call = probe.identify_and_read(start, length_bytes)
+        if one_call is not None:
+            info, words = one_call
+        else:
+            info = probe.identify(allow_reset=False)
+            _remember_port(serial, probe, info)
+            if not info.connected:
+                return failed(
+                    "Could not reach the core without resetting it, and this tool "
+                    "does not reset. core_registers() will reset if it must, at the "
+                    "cost of the state you are inspecting.",
+                    probe_serial=serial,
+                    **_connection_fields(probe, info),
+                    hint=explain_connect_failure(info, interface),
+                )
+            words = probe.read_memory(start, length_bytes)
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc), **_after_failure(probe))
 
@@ -1780,40 +1784,50 @@ registers.
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
-        info = probe.identify(allow_reset=False)
-        _remember_port(serial, probe, info)
-        if not info.connected:
-            return failed(
-                "Could not reach the core without resetting it. Reading the "
-                "fault registers requires a debug connection, and resetting "
-                "clears them, which would destroy the information this tool "
-                "exists to read.",
-                probe_serial=serial,
-                **_connection_fields(probe, info),
-                hint=explain_connect_failure(info, interface),
-            )
-        # Refused before any read. These cores take every fault as a HardFault
-        # and record nothing in this region, so a read of it would decode as
-        # "no fault active" for a core sitting in its HardFault handler: the
-        # confidently wrong answer, on a whole class of parts the vendor seed
-        # covers (C0, F0, G0, L0 and more).
-        if faults_mod.has_fault_registers(info.cpu) is False:
-            return failed(
-                f"{info.cpu} has no configurable fault status registers. Armv6-M "
-                "and Armv8-M Baseline cores take every fault as a HardFault and "
-                "record nothing in CFSR, HFSR, MMFAR, BFAR or AFSR, so reading "
-                "them cannot say whether this core faulted.",
-                probe_serial=serial,
-                cpu=info.cpu,
-                hint=(
-                    "core_registers() answers it instead, halting the core for "
-                    "the read: XPSR bits 0-8 read 3 while the core is in its "
-                    "HardFault handler, and 0 in thread mode."
-                ),
-            )
-        words = probe.read_memory(
-            faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE,
+        # In one programmer call where nothing could differ; the one-call path
+        # runs only for a family whose access port was measured, and every such
+        # family has fault registers, so the refusal below still comes first
+        # wherever it can apply.
+        one_call = probe.identify_and_read(
+            faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE
         )
+        if one_call is not None:
+            info, words = one_call
+        else:
+            info = probe.identify(allow_reset=False)
+            _remember_port(serial, probe, info)
+            if not info.connected:
+                return failed(
+                    "Could not reach the core without resetting it. Reading the "
+                    "fault registers requires a debug connection, and resetting "
+                    "clears them, which would destroy the information this tool "
+                    "exists to read.",
+                    probe_serial=serial,
+                    **_connection_fields(probe, info),
+                    hint=explain_connect_failure(info, interface),
+                )
+            # Refused before any read. These cores take every fault as a HardFault
+            # and record nothing in this region, so a read of it would decode as
+            # "no fault active" for a core sitting in its HardFault handler: the
+            # confidently wrong answer, on a whole class of parts the vendor seed
+            # covers (C0, F0, G0, L0 and more).
+            if faults_mod.has_fault_registers(info.cpu) is False:
+                return failed(
+                    f"{info.cpu} has no configurable fault status registers. Armv6-M "
+                    "and Armv8-M Baseline cores take every fault as a HardFault and "
+                    "record nothing in CFSR, HFSR, MMFAR, BFAR or AFSR, so reading "
+                    "them cannot say whether this core faulted.",
+                    probe_serial=serial,
+                    cpu=info.cpu,
+                    hint=(
+                        "core_registers() answers it instead, halting the core for "
+                        "the read: XPSR bits 0-8 read 3 while the core is in its "
+                        "HardFault handler, and 0 in thread mode."
+                    ),
+                )
+            words = probe.read_memory(
+                faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE,
+            )
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc), **_after_failure(probe))
 

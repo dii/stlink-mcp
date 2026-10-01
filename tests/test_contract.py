@@ -318,6 +318,9 @@ class _FakeProbe:
     def core_registers(self) -> dict[str, int]:
         return dict(self.registers)
 
+    def identify_and_read(self, address: int, length_bytes: int):
+        return None  # the bench always takes the identify-then-read path
+
     # What a readback returns: None for exactly what was written, bytes for
     # something else, a string to raise with. Class-level so a test can set it.
     readback: bytes | str | None = None
@@ -2050,3 +2053,50 @@ class TestEveryCallIsTracedToWhoAsked:
         second = server._caller_from(other)
         assert first.connection != second.connection
         assert server._caller_from(other).connection == second.connection
+
+
+class TestOneProgrammerCallWhereNothingCanDiffer:
+    """read_memory and read_fault_status connect and read in one programmer call
+    when the probe's remembered port is the family's measured port, which halves
+    an N6 call (a connect costs 1.1 s there, measured 2026-10-01)."""
+
+    BANNER_N6 = "ST-LINK SN  : AAAA0001\nDevice ID   : 0x486\nDevice CPU  : Cortex-M55\n"
+    BANNER_UNKNOWN = "ST-LINK SN  : AAAA0001\nDevice ID   : 0x413\nDevice CPU  : Cortex-M4\n"
+
+    def _probe(self, monkeypatch, banner: str, try_first):
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+        calls: list[list[str]] = []
+
+        def fake_run(argv, timeout=90):
+            calls.append(argv)
+            body = banner + ("0x341B0000 : C0FFEE03\n" if "-r32" in argv else "")
+            return CommandResult(argv, 0, body)
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        return pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAAA0001", try_first=try_first), calls
+
+    def test_a_remembered_measured_port_takes_one_call(self, monkeypatch) -> None:
+        p, calls = self._probe(monkeypatch, self.BANNER_N6, 1)
+        info, words = p.identify_and_read(0x341B0000, 4)
+        assert len(calls) == 1 and words == {0x341B0000: 0xC0FFEE03} and p.access_port == 1
+
+    def test_no_remembered_port_is_not_tried(self, monkeypatch) -> None:
+        p, calls = self._probe(monkeypatch, self.BANNER_N6, None)
+        assert p.identify_and_read(0x341B0000, 4) is None and calls == []
+
+    def test_a_port_that_is_not_the_familys_is_given_back(self, monkeypatch) -> None:
+        p, calls = self._probe(monkeypatch, self.BANNER_N6, 0)  # the N6's port is AP1
+        assert p.identify_and_read(0x341B0000, 4) is None
+
+    def test_an_unmeasured_family_is_given_back(self, monkeypatch) -> None:
+        p, calls = self._probe(monkeypatch, self.BANNER_UNKNOWN, 0)  # port 0 is only assumed
+        assert p.identify_and_read(0x20000000, 4) is None
+
+    def test_the_tool_uses_it(self, monkeypatch) -> None:
+        p, calls = self._probe(monkeypatch, self.BANNER_N6, 1)
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(programmer="x"))
+        monkeypatch.setattr(server, "_SETTLED_PORTS", {"AAAA0001": 1})
+        out = call("read_memory", address="0x341B0000", length_bytes=4, probe_serial="AAAA0001")
+        assert out["status"] == result.VERIFIED and out["words"] == {"0x341B0000": "0xC0FFEE03"}
+        assert sum(1 for c in calls) == 1
