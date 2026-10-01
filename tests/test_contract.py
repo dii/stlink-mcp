@@ -736,6 +736,21 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         assert out["output"] == "boot ok\n"
         assert "device disconnected" in out["console_error"]
 
+    def test_a_capture_that_heard_nothing_is_unverified(self, bench) -> None:
+        """It came back verified with empty output from an STM32F407 whose
+        UART was sending, measured from its registers, to an adapter not yet
+        wired to the pin (2026-10-01). Read as a verdict, that says the target
+        is silent, which the port cannot tell from a missing wire."""
+        bench.console_buffered = "old\n"
+        bench.console_text = ""
+        out = call("capture_console", seconds=2)
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert "wired" in out["unverified_because"]
+        assert "115200" in out["unverified_because"]
+        assert out["output"] == ""
+        assert out["console_buffered"] == "old\n"
+
 
 class TestAddressesAndSizesAreCheckedAtTheBoundary:
     """JSON has no hex literals, so an agent had to turn "0x20000000" into

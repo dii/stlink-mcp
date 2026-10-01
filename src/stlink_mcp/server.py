@@ -2129,10 +2129,11 @@ def capture_console(
     """Capture what a target prints on its serial console for a number of seconds.
 
 The port is the one the probe list maps to this probe's serial, or the one
-STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*, which with two
-boards attached is the wrong one about half the time. Refuses when it cannot
-resolve a port for that probe. At most 60 seconds. What the probe buffered
-before the port opened comes back apart, in `console_buffered`.
+STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*. Refuses when it
+cannot resolve a port for that probe. At most 60 seconds. What the probe
+buffered before the port opened comes back apart, in `console_buffered`. A
+capture that hears nothing is unverified: silence on the port cannot be told
+from a port not wired to the target.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")
     if too_long:
@@ -2200,6 +2201,16 @@ before the port opened comes back apart, in `console_buffered`.
             )
         return failed(f"The console could not be read: {capture_error}", **detail)
 
+    if not text:
+        # Silence on the port is not silence from the target: an adapter not
+        # yet wired to the TX pin reads exactly the same.
+        return unverified(
+            f"Nothing arrived on {source} in {seconds:g} seconds. That does not "
+            "show the target is silent: it may not be running or may not print, "
+            f"it may print at a baud rate other than {settings.console_baud()}, "
+            "or this port may not be wired to its TX pin.",
+            **detail,
+        )
     return verified(f"serial console read from {source}", **detail)
 
 

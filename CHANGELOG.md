@@ -7,11 +7,13 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 ### Added
 
 - STM32F4 (device 0x413) is a measured family: run on an STM32F407IGT6 board through an ST-LINK/V2, RAM run, faults, flash written and read back, reset to it.
+- `tools/hwcheck` checks an STM32F407 board named with `--f4`, by its console on UART5 when `--f4-console` names an adapter, and prints every result since the previous check when one fails.
 
 ### Fixed
 
 - `run_firmware` no longer tells an unverified run on an unmeasured address that "the run itself IS verified"; the note now claims nothing about the run. Found on the first seeded part run on a board, an STM32F407.
 - A connect that fails with "Serial number not found" no longer says the probe is absent: an ST-LINK/V2 too old for STM32CubeProgrammer fails the same way, and the hint now names STLinkUpgrade.
+- `capture_console` returned `verified` with empty output when nothing arrived, which reads as a silent target. Silence is now `unverified`, naming the causes it cannot tell apart, a missing wire among them.
 
 ## [0.3.0] - 2026-10-01
 
