@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from stlink_mcp.toolchain import _version_key
 
 
@@ -107,3 +109,49 @@ class TestTheNotFoundMessageNamesWhereItLooked:
         monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
         monkeypatch.setattr(toolchain.Path, "expanduser", no_home)
         assert isinstance(toolchain._candidate_roots(), list)
+
+
+class TestTheNewestCompleteInstallIsChosen:
+    """Red-team RT9 (2026-09-03): the newest install with a programmer won even
+    when it lacked the GDB server, over a complete older one."""
+
+    @staticmethod
+    def _install(base, name, *, gdb_server=True):
+        root = base / name
+        for rel in ("STM32CubeProgrammer/bin/STM32_Programmer_CLI",
+                    "GNU-tools-for-STM32/bin/arm-none-eabi-gdb",
+                    *(["STLink-gdb-server/bin/ST-LINK_gdbserver"] if gdb_server else [])):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("")
+        return root
+
+    @pytest.fixture
+    def base(self, tmp_path, monkeypatch):
+        from stlink_mcp import toolchain
+        monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
+        monkeypatch.setattr(toolchain, "_SEARCH_BASES", (str(tmp_path),))
+        monkeypatch.setattr(toolchain, "_MAC_ROOT", tmp_path / "no-mac")
+        return tmp_path
+
+    def test_a_complete_older_install_beats_an_incomplete_newer_one(self, base) -> None:
+        from stlink_mcp.toolchain import find_toolchain
+        old = self._install(base, "stm32cubeclt_1.18.0")
+        new = self._install(base, "stm32cubeclt_1.22.0", gdb_server=False)
+        tc = find_toolchain()
+        assert tc.root == old and tc.passed_over == (new,)
+        tc.check()
+
+    def test_with_none_complete_the_error_names_the_others(self, base) -> None:
+        from stlink_mcp.toolchain import ToolchainError, find_toolchain
+        self._install(base, "stm32cubeclt_1.18.0", gdb_server=False)
+        new = self._install(base, "stm32cubeclt_1.22.0", gdb_server=False)
+        tc = find_toolchain()
+        assert tc.root == new
+        with pytest.raises(ToolchainError, match="other installs found are incomplete too: .*1.18.0"):
+            tc.check()
+
+    def test_the_newest_complete_install_wins(self, base) -> None:
+        from stlink_mcp.toolchain import find_toolchain
+        self._install(base, "stm32cubeclt_1.18.0")
+        new = self._install(base, "stm32cubeclt_1.22.0")
+        assert find_toolchain().root == new and find_toolchain().passed_over == ()

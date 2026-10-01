@@ -8,6 +8,16 @@ git tag; a build past the last tag reports the tag plus the number of commits si
 
 ## [Unreleased]
 
+### Fixed
+
+- The warning that an access port was never measured now rides on every tool that connects and on
+  their failures, not only on `board_state`, and is no longer skipped when a probe's remembered
+  port differs from the assumed one.
+- The newest complete STM32CubeCLT install is used, not the newest one with a programmer; `--check`
+  names a newer install it passed over, and the error for an incomplete one names the others.
+- `list_probes` is `unverified`, with the programmer's error lines, when it printed errors and listed
+  no probe; an empty bus stays verified and points at `lsusb`.
+
 ## [0.2.0] - 2026-10-01
 
 These changes were run on an STM32H7 and an STM32N6 board on 2026-10-01; docs/findings.md has

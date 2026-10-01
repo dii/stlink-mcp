@@ -413,6 +413,12 @@ class Probe:
             result = self._run(self._connect_args(wanted, attempt), timeout=90)
             if parse_target_info(result.stdout).connected:
                 self.connect_mode = attempt
+                # Settling here does not make an unmeasured port measured. This
+                # path was reached only from a scan that answered elsewhere, and
+                # once a probe's last port is tried first it is reached for an
+                # assumed port too, where the warning used to be skipped.
+                if not info.quirks.is_measured("access_port"):
+                    self._note_unmeasured_port(wanted)
                 return wanted
 
         self.degraded_reason = (
@@ -778,7 +784,32 @@ def list_probes(toolchain: Toolchain) -> list[ProbeInfo]:
     return parse_probe_list(result.stdout)
 
 
-def list_probes_with_unreadable(toolchain: Toolchain) -> tuple[list[ProbeInfo], int]:
-    """Readable probes, plus how many entries could not be read at all."""
+def list_probes_with_unreadable(
+    toolchain: Toolchain,
+) -> tuple[list[ProbeInfo], int, list[str]]:
+    """Readable probes, how many entries could not be read at all, and the error
+    lines the programmer printed in its ST-LINK section."""
     result = run_command([str(toolchain.programmer), "-l"], timeout=90)
-    return parse_probe_list(result.stdout), count_unreadable_entries(result.stdout)
+    return (
+        parse_probe_list(result.stdout),
+        count_unreadable_entries(result.stdout),
+        listing_errors(result.stdout),
+    )
+
+
+_LISTING_ERROR = re.compile(r"^(?:Error:\s*(.+?)|(ST-LINK error \(.+?\)))\s*$", re.M)
+
+
+def listing_errors(output: str) -> list[str]:
+    """The error lines of the ST-LINK section, each once, in order.
+
+    A listing with errors and no readable entry cannot say that nothing is
+    attached: a probe the user cannot open (udev rules, a USB fault) prints an
+    error and no entry. Kept so the caller can tell that from an empty bus
+    (red-team RT10, 2026-09-03)."""
+    seen: list[str] = []
+    for match in _LISTING_ERROR.finditer(_section(output, "STLink")):
+        line = (match.group(1) or match.group(2)).strip()
+        if line not in seen:
+            seen.append(line)
+    return seen

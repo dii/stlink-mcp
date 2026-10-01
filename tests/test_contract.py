@@ -405,7 +405,7 @@ def bench(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "_toolchain", lambda: object())
     monkeypatch.setattr(server, "_list_probes", _attached)
     monkeypatch.setattr(
-        server, "list_probes_with_unreadable", lambda tc: (_attached(tc), 0)
+        server, "list_probes_with_unreadable", lambda tc: (_attached(tc), 0, [])
     )
     monkeypatch.setattr(server, "Probe", _FakeProbe)
     monkeypatch.setattr(server, "acquire_server", lambda *a, **k: None)
@@ -419,6 +419,7 @@ def bench(monkeypatch, tmp_path):
 
     server._held.clear()
     server._gdb_ports.clear()
+    server._SETTLED_PORTS.clear()
     yield state
     server._held.clear()
     server._gdb_ports.clear()
@@ -450,7 +451,7 @@ class TestEveryToolKeepsTheContract:
     def test_with_no_probes_attached(self, name: str, monkeypatch) -> None:
         monkeypatch.setattr(server, "_toolchain", lambda: object())
         monkeypatch.setattr(server, "_list_probes", lambda tc: [])
-        monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: ([], 0))
+        monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: ([], 0, []))
         server._held.clear()
         assert_contract(call(name), name)
 
@@ -1932,3 +1933,62 @@ class TestAConsoleThatIsNotTextSaysWhy:
         bench.console_text = "\ufffd" * 40
         out = call("capture_console")
         assert "console_garbled_note" in out
+
+
+class TestThePortWarningReachesTheToolThatFails:
+    """Red-team RT7 (2026-09-03): on a part whose access port nobody measured,
+    board_state warned that the port was a guess, and core_registers then
+    failed to halt the core on that port without a word about it."""
+
+    def test_a_failed_halt_on_an_unmeasured_port_says_so(self, monkeypatch) -> None:
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+
+        def fake_run(argv, timeout=90):
+            if "-coreReg" in argv:
+                return CommandResult(argv, 0, "Device ID   : 0x413\nError: Failed to halt target\n")
+            return CommandResult(argv, 0, "Device ID   : 0x413\nDevice CPU  : Cortex-M4\n")
+
+        monkeypatch.setattr(pm, "run_command", fake_run)
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(programmer="x"))
+        monkeypatch.setattr(server, "_SETTLED_PORTS", {})
+        out = call("core_registers", probe_serial="AAAA0001")
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+        assert "nobody measured" in out["access_port_warning"]
+        assert "AP1 also answered" in out["access_port_warning"]
+
+    def test_a_measured_port_carries_no_warning(self, bench) -> None:
+        out = call("read_memory", probe_serial="AAAA0001")
+        assert "access_port_warning" not in out
+
+    def test_the_warning_survives_a_remembered_port_on_the_other_side(self, monkeypatch) -> None:
+        """Found when a remembered AP1 from another test reached this one: the
+        scan answered on AP1, settled on the assumed AP0 by the other branch,
+        and that branch did not warn."""
+        from stlink_mcp import probe as pm
+        from stlink_mcp.toolchain import CommandResult
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(
+            argv, 0, "Device ID   : 0x413\nDevice CPU  : Cortex-M4\n"))
+        p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAAA0001", try_first=1)
+        p.identify()
+        assert p.access_port == 0 and "nobody measured" in p.unmeasured_port_warning
+
+
+class TestAnEmptyListingSaysWhatItCanShow:
+    """Red-team RT10 (2026-09-03): errors and no entries read as "verified, 0
+    probes", so the agent could not tell unplugged from blocked."""
+
+    def test_errors_with_no_probe_are_not_a_verified_zero(self, bench, monkeypatch) -> None:
+        errs = ["ST-LINK error (DEV_USB_COMM_ERR)"]
+        monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: ([], 0, errs))
+        out = call("list_probes")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert out["errors"] == errs and "udev" in out["hint"]
+
+    def test_an_empty_bus_is_verified_and_points_below_the_tool(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: ([], 0, []))
+        out = call("list_probes")
+        assert out["status"] == result.VERIFIED and out["count"] == 0
+        assert "lsusb" in out["hint"]

@@ -96,6 +96,9 @@ def _check() -> int:
         print(f"toolchain: {exc}")
         return 1
     print(f"toolchain: {toolchain.root}")
+    if getattr(toolchain, "passed_over", ()):
+        passed = ", ".join(str(p) for p in toolchain.passed_over)
+        print(f"  passed over as incomplete, though newer: {passed}")
     print(f"vendor database: {server_mod.load_vendor_seed()}")
 
     try:
@@ -107,7 +110,9 @@ def _check() -> int:
 
     listing = server_mod.list_probes()
     if listing["status"] != "verified":
-        print(f"probes: {listing.get('error')}")
+        print(f"probes: {listing.get('error') or listing.get('unverified_because')}")
+        for line in listing.get("errors", []):
+            print(f"  {line}")
         return 1
     print(f"probes: {listing['count']} attached")
     for probe in listing["probes"]:

@@ -27,6 +27,14 @@ class Toolchain:
     """Paths to the CubeCLT executables this server drives."""
 
     root: Path
+    passed_over: tuple[Path, ...] = ()
+    """Newer installs skipped because they lack one of the three executables."""
+    also_incomplete: tuple[Path, ...] = ()
+    """Other installs found when none was complete, for the error to name."""
+
+    @property
+    def complete(self) -> bool:
+        return all(p.exists() for p in (self.programmer, self.gdb_server, self.gdb))
 
     @property
     def programmer(self) -> Path:
@@ -66,10 +74,15 @@ class Toolchain:
             if not p.exists()
         ]
         if missing:
+            others = (
+                "\nThe other installs found are incomplete too: "
+                + ", ".join(str(p) for p in self.also_incomplete) + "."
+                if self.also_incomplete else ""
+            )
             raise ToolchainError(
-                "STM32CubeCLT is incomplete at {root}. Missing:\n  {items}\n"
+                "STM32CubeCLT is incomplete at {root}. Missing:\n  {items}{others}\n"
                 "Set STLINK_MCP_CLT_ROOT to your install, or install STM32CubeCLT.".format(
-                    root=self.root, items="\n  ".join(missing)
+                    root=self.root, items="\n  ".join(missing), others=others
                 )
             )
 
@@ -127,12 +140,19 @@ def _candidate_roots() -> list[Path]:
 
 
 def find_toolchain() -> Toolchain:
-    """Locate STM32CubeCLT, newest first when several are installed."""
+    """Locate STM32CubeCLT: the newest complete install when several are there.
+
+    Complete means the programmer, the GDB server and GDB all exist. Taking the
+    newest install that merely had a programmer chose a broken newer install
+    over a working older one, and the error then named only the broken one
+    (red-team RT9, 2026-09-03)."""
     candidates = _candidate_roots()
-    for root in candidates:
-        tc = Toolchain(root=root)
-        if tc.programmer.exists():
-            return tc
+    usable = [Toolchain(root=root) for root in candidates if Toolchain(root=root).programmer.exists()]
+    for index, tc in enumerate(usable):
+        if tc.complete:
+            return Toolchain(root=tc.root, passed_over=tuple(t.root for t in usable[:index]))
+    if usable:
+        return Toolchain(root=usable[0].root, also_incomplete=tuple(t.root for t in usable[1:]))
 
     env = os.environ.get(_CLT_ROOT_ENV)
     if env:

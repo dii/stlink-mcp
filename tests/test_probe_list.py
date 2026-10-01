@@ -320,3 +320,17 @@ class TestAnStLinkV2Listing:
         by_serial = {p.serial: p for p in parse_probe_list(self.FIXTURE)}
         assert by_serial["0054003D3137511139383538"].console_port == "/dev/ttyACM0"
         assert by_serial["003C002C3335510535383531"].console_port == "/dev/ttyACM1"
+
+
+class TestListingErrors:
+    def test_none_attached_has_no_errors_and_no_probes(self) -> None:
+        """Captured 2026-10-01 while a hub had dropped every ST-LINK off the bus."""
+        from stlink_mcp.probe import listing_errors
+        text = _fixture("probe_list_none_attached.txt")
+        assert parse_probe_list(text) == [] and listing_errors(text) == []
+
+    def test_usb_errors_are_kept_once_each(self) -> None:
+        from stlink_mcp.probe import listing_errors
+        errors = listing_errors(_fixture("probe_list_with_unreadable_entries.txt"))
+        assert errors and all(errors.count(e) == 1 for e in errors)
+        assert any("DEV_USB_COMM_ERR" in e for e in errors)

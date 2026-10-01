@@ -504,7 +504,7 @@ while other probes are held by a GDB server; those are marked as held.
 
     held = set(held_serials())
     try:
-        probes, unreadable = list_probes_with_unreadable(toolchain)
+        probes, unreadable, errors = list_probes_with_unreadable(toolchain)
         # Listed as the tools will use them, so a console setting shows here.
         probes = [_with_console(p, len(probes)) for p in probes]
     except (ToolchainError, settings.SettingError) as exc:
@@ -518,6 +518,24 @@ while other probes are held by a GDB server; those are marked as held.
             "USB problem rather than anything about the target. They are excluded "
             "above rather than passed on, because the placeholder the tool prints "
             "in place of a serial is not one."
+        )
+    if not probes and errors:
+        return unverified(
+            "The programmer printed errors and listed no probe, so this does not "
+            "show that none is attached: a probe this user cannot open prints an "
+            "error and no entry.",
+            errors=errors,
+            hint=(
+                "On Linux, check ST's udev rules (STM32CubeCLT installs them) and "
+                "replug the probe, and `lsusb` for devices with vendor ID 0483."
+            ),
+            **detail,
+        )
+    if not probes:
+        detail["hint"] = (
+            "If a board is plugged in, its probe is not reaching this machine. "
+            "`lsusb` lists ST probes under vendor ID 0483; when none is there the "
+            "cause is below this tool, in the cable, a hub or the USB controller."
         )
     return verified(
         "programmer enumeration",
@@ -590,7 +608,7 @@ identity reads fine on a port that cannot halt the core.
         # The mode that CONNECTED. When nothing did, naming the default would
         # read as a hotplug connect that worked.
         "connect_mode": probe.connect_mode if info.connected else None,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "family": {
             "name": quirks.name,
@@ -637,8 +655,6 @@ identity reads fine on a port that cannot halt the core.
 
     if not cached and probe.access_port_provenance is not None:
         state["access_port_provenance"] = probe.access_port_provenance
-    if not cached and probe.unmeasured_port_warning:
-        state["access_port_warning"] = probe.unmeasured_port_warning
         if probe.other_ports_that_answered:
             state["other_access_ports_that_answered"] = probe.other_ports_that_answered
 
@@ -707,7 +723,7 @@ the image says. Resets the target first and keeps the GDB server; see
                 probe_serial=serial,
                 target_was_reset=probe.target_was_reset,
                 errors=info.errors,
-                **_interface_fields(probe, info),
+                **_connection_fields(probe, info),
                 hint=explain_connect_failure(info, interface),
             )
         # A degraded programmer connect is NOT a reason to refuse a run. The GDB
@@ -803,7 +819,7 @@ the image says. Resets the target first and keeps the GDB server; see
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         **_held_disclosure(serial),
         "console_port": port,
         "console_port_source": probe_info.console_source if probe_info else None,
@@ -1050,15 +1066,14 @@ when the written range, read back afterwards, matches the image byte for byte.
         info = probe.identify()
         _remember_port(serial, probe, info)
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc), probe_serial=serial,
-                      target_was_reset=probe.target_was_reset)
+        return failed(str(exc), probe_serial=serial, **_after_failure(probe))
     if not info.connected:
         return failed(
             "No target",
             probe_serial=serial,
             target_was_reset=probe.target_was_reset,
             errors=info.errors,
-            **_interface_fields(probe, info),
+            **_connection_fields(probe, info),
             hint=explain_connect_failure(info, interface),
         )
 
@@ -1097,12 +1112,11 @@ when the written range, read back afterwards, matches the image byte for byte.
     try:
         output = probe.program_flash(str(image), target_address, quirks.external_loader)
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc), probe_serial=serial,
-                      target_was_reset=probe.target_was_reset)
+        return failed(str(exc), probe_serial=serial, **_after_failure(probe))
 
     written: dict[str, Any] = {
         "probe_serial": serial,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         "image": str(image),
         "image_size_bytes": image_size,
         "address": _hex(target_address),
@@ -1181,6 +1195,7 @@ probe held by a GDB server until `release_probe`.
     if start + length_bytes > 1 << 32:
         return failed(f"A {length_bytes}-byte read at 0x{start:08X} runs past the end of the address space.")
 
+    probe: Probe | None = None
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
@@ -1199,12 +1214,12 @@ probe held by a GDB server until `release_probe`.
                 "does not reset. core_registers() will reset if it must, at the "
                 "cost of the state you are inspecting.",
                 probe_serial=serial,
-                **_interface_fields(probe, info),
+                **_connection_fields(probe, info),
                 hint=explain_connect_failure(info, interface),
             )
         words = probe.read_memory(start, length_bytes)
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc))
+        return failed(str(exc), **_after_failure(probe))
 
     # Only the words asked for, and all of them. A read that came back short
     # used to be verified with whatever it held, and the absent words were
@@ -1214,7 +1229,7 @@ probe held by a GDB server until `release_probe`.
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "connect_mode": probe.connect_mode,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "words": {f"0x{a:08X}": f"0x{words[a]:08X}" for a in wanted if a in words},
     }
@@ -1354,6 +1369,7 @@ released, and that brief halt is reported. The result does not claim whether
 the core is halted now, because nothing here can observe that. To hold a
 target stopped, use the GDB server that run_firmware keeps alive.
     """
+    probe: Probe | None = None
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
@@ -1374,7 +1390,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
             return failed(
                 "Cannot reach the target to reset it.",
                 probe_serial=serial,
-                **_interface_fields(probe, info),
+                **_connection_fields(probe, info),
                 hint=explain_connect_failure(info, interface),
             )
 
@@ -1394,7 +1410,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
 
         pc, output = probe.reset_and_halt(access_port)
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc))
+        return failed(str(exc), **_after_failure(probe))
 
     # Release the core BEFORE deciding the verdict, on every path where
     # something was halted. Whether the reset could be VERIFIED and whether the
@@ -1419,7 +1435,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         "family": quirks.name,
         "reset_kind": "hardware pulse on nRST (HWRSTPULSE connect)",
         "program_counter": _hex(pc),
@@ -1581,14 +1597,12 @@ Perturbing, so never used inside routine checks.
                 probe_serial=serial,
                 target_was_reset=probe.target_was_reset,
                 errors=info.errors,
-                **_interface_fields(probe, info),
+                **_connection_fields(probe, info),
                 hint=explain_connect_failure(info, interface),
             )
         regs = probe.core_registers()
     except Exception as exc:  # noqa: BLE001
-        return failed(
-            str(exc), target_was_reset=bool(probe and probe.target_was_reset)
-        )
+        return failed(str(exc), **_after_failure(probe))
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
@@ -1599,7 +1613,7 @@ Perturbing, so never used inside routine checks.
         # (docs/findings.md, "A halt does not survive the invocation").
         "halted_to_read_registers": True,
         "connect_mode": probe.connect_mode,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         # Reported, not hidden. Reaching the family's access port on a part that
         # closes it can need a resetting connect, and a reset restarts the very
         # program being inspected. A caller cannot allow for that if it is not told.
@@ -1640,6 +1654,7 @@ faulting address when the hardware recorded it, and how to find the faulting
 instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which lack these
 registers.
     """
+    probe: Probe | None = None
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
@@ -1659,7 +1674,7 @@ registers.
                 "clears them, which would destroy the information this tool "
                 "exists to read.",
                 probe_serial=serial,
-                **_interface_fields(probe, info),
+                **_connection_fields(probe, info),
                 hint=explain_connect_failure(info, interface),
             )
         # Refused before any read. These cores take every fault as a HardFault
@@ -1685,7 +1700,7 @@ registers.
             faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE,
         )
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc))
+        return failed(str(exc), **_after_failure(probe))
 
     # A register the read did not return is not a clean register. decode()
     # treats an absent word as zero, and zero is "no fault bit set".
@@ -1707,7 +1722,7 @@ registers.
         "probe_serial": serial,
         "cpu": info.cpu,
         "connect_mode": probe.connect_mode,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "any_fault_active": status.any_fault,
         "diagnosis": status.diagnosis,
@@ -1823,18 +1838,18 @@ frame.
                 probe_serial=serial,
                 target_was_reset=probe.target_was_reset,
                 errors=info.errors,
-                **_interface_fields(probe, info),
+                **_connection_fields(probe, info),
                 hint=explain_connect_failure(info, interface),
             )
         regs = probe.core_registers()
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc), target_was_reset=bool(probe and probe.target_was_reset))
+        return failed(str(exc), **_after_failure(probe))
 
     base: dict[str, Any] = {
         "probe_serial": serial,
         "cpu": info.cpu,
         "connect_mode": probe.connect_mode,
-        **_interface_fields(probe, info),
+        **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "halted_to_read_registers": True,
         "registers": {
@@ -2053,21 +2068,40 @@ before the port opened comes back apart, in `console_buffered`.
     return verified(f"serial console read from {source}", **detail)
 
 
-def _interface_fields(probe: Probe, info: TargetInfo | None) -> dict[str, Any]:
-    """The interface asked for, and the clock the connect banner reported for it.
+def _connection_fields(probe: Probe, info: TargetInfo | None) -> dict[str, Any]:
+    """The interface asked for, the clock the connect banner reported for it,
+    and the warning when the access port in use was never measured.
 
     The banner's "SWD freq" or "JTAG freq" line is the observation. A clock of
-    None means the banner did not say, which a failed connect can produce."""
+    None means the banner did not say, which a failed connect can produce. The
+    port warning used to appear in board_state alone, so the tool that then
+    failed to halt the core on that port said nothing about it (red-team RT7,
+    2026-09-03)."""
     fields: dict[str, Any] = {
         "interface": probe.interface,
         "interface_clock_khz": info.interface_khz if info else None,
     }
+    fields.update(_port_warning(probe))
     if info is not None and info.interface and info.interface != probe.interface:
         fields["interface_note"] = (
             f"Asked for {probe.interface.upper()}, and the connect banner reported "
             f"{info.interface.upper()}."
         )
     return fields
+
+
+def _port_warning(probe: Probe | None) -> dict[str, Any]:
+    if probe is None or not probe.unmeasured_port_warning:
+        return {}
+    return {"access_port_warning": probe.unmeasured_port_warning}
+
+
+def _after_failure(probe: Probe | None) -> dict[str, Any]:
+    """What a failure after identify() still owes the agent: whether the target
+    was reset getting there, and whether the port it used was a guess."""
+    if probe is None:
+        return {}
+    return {"target_was_reset": probe.target_was_reset, **_port_warning(probe)}
 
 
 def _hex(value: int | None) -> str | None:
