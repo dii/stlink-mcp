@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-01
+
+Run on an STM32H7 and an STM32N6 board on 2026-10-01: `tools/hwcheck` passed 33 of 33 checks with `--jtag` and `--flash`. docs/findings.md has what was run and what each README promise rests on.
+
 ### Added
 
 - `py.typed`, so type checkers read the package's annotations.
@@ -72,6 +76,7 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/dii/stlink-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dii/stlink-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dii/stlink-mcp/releases/tag/v0.1.0
