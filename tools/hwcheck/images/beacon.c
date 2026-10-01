@@ -19,7 +19,26 @@
 #define DELAY 3000000
 #endif
 
-#ifdef HAS_UART   /* NUCLEO-144 STM32H7: the ST-LINK VCP is USART3, PD8 TX / PD9 RX, AF7 */
+#ifdef F4_UART5   /* STM32F407: UART5 TX on PC12, AF8, at 115200 from the 16 MHz reset clock.
+                     That is where the board this was measured on has its console; on
+                     other boards the image still runs, and its counter is what shows it. */
+static void uart_init(void) {
+    REG(0x40023830) |= 1u << 2;                 /* RCC_AHB1ENR.GPIOCEN */
+    REG(0x40023840) |= 1u << 20;                /* RCC_APB1ENR.UART5EN */
+    (void)REG(0x40023840);
+    uint32_t m = REG(0x40020800);               /* GPIOC_MODER: PC12 alternate */
+    m &= ~(3u << 24); m |= 2u << 24;
+    REG(0x40020800) = m;
+    uint32_t af = REG(0x40020824);              /* GPIOC_AFRH: AF8 on PC12 */
+    af &= ~(0xFu << 16); af |= 8u << 16;
+    REG(0x40020824) = af;
+    REG(0x40005008) = 139;                      /* UART5_BRR: 16 MHz HSI / 115200 */
+    REG(0x4000500C) = (1u << 13) | (1u << 3);   /* CR1: UE, TE */
+}
+static void putc_(char c) { while (!(REG(0x40005000) & (1u << 7))) {} REG(0x40005004) = (uint8_t)c; }
+static void puts_(const char *s) { while (*s) putc_(*s++); }
+static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); puts_(&b[i]); }
+#elif defined(HAS_UART)   /* NUCLEO-144 STM32H7: the ST-LINK VCP is USART3, PD8 TX / PD9 RX, AF7 */
 #ifndef BRR
 #define BRR 556   /* 64 MHz HSI / 115200 */
 #endif

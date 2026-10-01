@@ -2,6 +2,7 @@
 
     uv run python tools/hwcheck/hwcheck.py [--h7 SERIAL] [--n6 SERIAL]
                                            [--jtag SERIAL] [--flash]
+                                           [--f4 SERIAL [--f4-console PORT]]
 
 Starts the server over stdio, as an MCP client does, and runs each check as
 tool calls against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q, whichever are
@@ -15,7 +16,9 @@ running a RAM image, which a power cycle clears. --flash also writes the H7's
 flash: it saves the whole flash first with the programmer, writes a test
 image, and writes the saved copy back and verifies it, even when a check fails.
 --jtag names an ST-LINK wired to the H7's JTAG connector, and adds checks over
-JTAG through it.
+JTAG through it. --f4 names the ST-LINK on an STM32F407 board, whose RAM
+images are loaded and which is reset at the end; with --flash its flash is
+saved, written and restored the same way.
 
 Each check prints PASS or FAIL with what it saw; the exit status is 1 when any
 check failed. docs/findings.md records what each check stands for.
@@ -45,7 +48,11 @@ from build_images import Built, build  # noqa: E402
 from stlink_mcp.toolchain import find_toolchain  # noqa: E402
 
 H7_BOARD, N6_BOARD = "NUCLEO-H743ZI", "NUCLEO-N657X0-Q"
-H7_COUNTER, N6_COUNTER = "0x24070000", "0x341B0000"
+H7_COUNTER, N6_COUNTER, F4_COUNTER = "0x24070000", "0x341B0000", "0x2001F000"
+
+
+CALLS: list[tuple[str, dict, dict]] = []
+"""Every call since the last check, printed whole when that check fails."""
 
 
 class Server:
@@ -73,9 +80,11 @@ class Server:
     async def call(self, tool: str, **args: object) -> dict:
         assert self.session is not None
         result = await self.session.call_tool(tool, args)
-        if result.structured_content is not None:
-            return result.structured_content
-        return json.loads(result.content[0].text)
+        body = result.structured_content
+        if body is None:
+            body = json.loads(result.content[0].text)
+        CALLS.append((tool, args, body))
+        return body
 
 
 class Report:
@@ -85,6 +94,12 @@ class Report:
     def check(self, ok: bool, name: str, saw: str) -> bool:
         self.rows.append((ok, name, saw))
         print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f"\n        {saw}" if saw else ""), flush=True)
+        if not ok:
+            for tool, args, body in CALLS:
+                print(f"        {tool}({json.dumps(args)}) returned:", flush=True)
+                for line in json.dumps(body, indent=2).splitlines():
+                    print(f"          {line}", flush=True)
+        CALLS.clear()
         return ok
 
     @property
@@ -207,34 +222,74 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     report.check(idle["status"] == "unverified", "H7: release_probe with nothing held is unverified", _why(idle))
 
 
-async def check_h7_flash(server: Server, serial: str, images: Built, report: Report) -> None:
-    """Write the H7's flash, read it back, and restore the board's own image."""
+async def check_flash(server: Server, label: str, serial: str, flash_size: int,
+                      image: Path, report: Report) -> None:
+    """Write a board's flash, read it back, and restore the board's own image."""
     programmer = str(find_toolchain().programmer)
     connect = ["-c", "port=SWD", f"sn={serial}", "mode=UR"]
-    backup = Path(tempfile.mkdtemp(prefix="stlink-hwcheck-flash-")) / "h7-flash.bin"
+    backup = Path(tempfile.mkdtemp(prefix="stlink-hwcheck-flash-")) / f"{label.lower()}-flash.bin"
     saved = subprocess.run([programmer, "-c", "port=SWD", f"sn={serial}", "mode=HOTPLUG",
-                            "-u", "0x08000000", "0x200000", str(backup)], capture_output=True, text=True)
-    if not backup.is_file() or backup.stat().st_size != 0x200000:
-        report.check(False, "H7 flash: save the board's flash before writing", saved.stdout[-300:])
+                            "-u", "0x08000000", hex(flash_size), str(backup)], capture_output=True, text=True)
+    if not backup.is_file() or backup.stat().st_size != flash_size:
+        report.check(False, f"{label} flash: save the board's flash before writing", saved.stdout[-300:])
         return
     data = backup.read_bytes()
     used = len(data.rstrip(b"\xff"))
     trimmed = backup.with_suffix(".trimmed.bin")
     trimmed.write_bytes(data[: (used + 31) // 32 * 32])
-    print(f"      saved the H7's flash to {backup} ({used} bytes in use)", flush=True)
+    print(f"      saved the {label}'s flash to {backup} ({used} bytes in use)", flush=True)
     try:
-        flash = await server.call("flash_firmware", image_path=str(images.bin["h7_flash"]), probe_serial=serial)
+        flash = await server.call("flash_firmware", image_path=str(image), probe_serial=serial)
         report.check(flash["status"] == "verified" and "identical" in flash.get("verified_by", ""),
-                     "H7 flash: flash_firmware is verified by reading the range back", _why(flash))
+                     f"{label} flash: flash_firmware is verified by reading the range back", _why(flash))
         booted = await server.call("reset_target", probe_serial=serial)
-        report.check(booted["status"] == "verified", "H7 flash: the written image's reset handler is where the core starts", _why(booted))
+        report.check(booted["status"] == "verified",
+                     f"{label} flash: the written image's reset handler is where the core starts", _why(booted))
     finally:
-        restored = subprocess.run([programmer, *connect, "-w", str(trimmed), "0x08000000", "-v"],
-                                  capture_output=True, text=True)
-        report.check("Download verified successfully" in restored.stdout,
-                     "H7 flash: the board's own flash is written back and verified",
-                     f"saved copy kept at {backup}")
+        if used:
+            restored = subprocess.run([programmer, *connect, "-w", str(trimmed), "0x08000000", "-v"],
+                                      capture_output=True, text=True)
+            report.check("Download verified successfully" in restored.stdout,
+                         f"{label} flash: the board's own flash is written back and verified",
+                         f"saved copy kept at {backup}")
         await server.call("reset_target", probe_serial=serial)
+
+
+async def check_f4(server: Server, serial: str, images: Built, report: Report, console: bool) -> None:
+    """An STM32F407 board. Its images print on UART5 (PC12); with --f4-console
+    naming a serial adapter there the RAM run is verified by console, and
+    without one it is unverified and the counter shows it running."""
+    s = serial
+    board = await server.call("board_state", probe_serial=s)
+    report.check(board["status"] == "verified" and board["family"]["name"] == "STM32F4"
+                 and "access_port_warning" not in board,
+                 "F4: board_state identifies the family on a measured port", _why(board))
+    run = await server.call("run_firmware", elf_path=str(images.elf["f4_ram"]), probe_serial=s, console_seconds=2)
+    if console:
+        report.check(run["status"] == "verified" and "f407 tick 0" in run.get("console", ""),
+                     "F4: run_firmware is verified by the image's own console", _why(run))
+    else:
+        report.check(run["status"] == "unverified",
+                     "F4: with no console, run_firmware is unverified, not verified", _why(run))
+    await server.call("release_probe", probe_serial=s)
+    first = await server.call("read_memory", address=F4_COUNTER, length_bytes=4, probe_serial=s)
+    await anyio.sleep(1.0)
+    second = await server.call("read_memory", address=F4_COUNTER, length_bytes=4, probe_serial=s)
+    a, b = _counter(first, F4_COUNTER), _counter(second, F4_COUNTER)
+    report.check(a is not None and b is not None and b > a,
+                 "F4: the image runs (its counter advances)", f"{a and hex(a)} then {b and hex(b)}")
+    elf = images.elf["f4_fault"]
+    await server.call("run_firmware", elf_path=str(elf), probe_serial=s, console_seconds=2)
+    await server.call("release_probe", probe_serial=s)
+    await anyio.sleep(3.0)
+    status = await server.call("read_fault_status", probe_serial=s)
+    report.check(any(f["bit"] == "UNDEFINSTR" for f in status.get("faults", [])),
+                 "F4: read_fault_status decodes the undefined instruction", _why(status))
+    where = await server.call("locate_fault", probe_serial=s, elf_path=str(elf))
+    report.check(where["status"] == "verified" and where.get("faulting_pc") == f"0x{_udf_address(elf):08X}",
+                 "F4: locate_fault finds the udf", f"{_why(where)}; pc {where.get('faulting_pc')}")
+    reset = await server.call("reset_target", probe_serial=s)
+    report.check(reset["status"] == "verified", "F4: reset_target halts at the reset handler", _why(reset))
 
 
 async def check_jtag(server: Server, serial: str, images: Built, report: Report) -> None:
@@ -289,9 +344,11 @@ async def check_together(server: Server, h7: str, n6: str, report: Report) -> No
         await call()
         timings[name] = time.monotonic() - begin
 
+    # Both sides take seconds: a read now takes one programmer call, and against a
+    # tenth of a second the two orders cannot be told apart.
     async with anyio.create_task_group() as group:
         group.start_soon(timed, "h7", lambda: server.call("capture_console", probe_serial=h7, seconds=3))
-        group.start_soon(timed, "n6", lambda: server.call("read_memory", address=N6_COUNTER, probe_serial=n6))
+        group.start_soon(timed, "n6", lambda: server.call("capture_console", probe_serial=n6, seconds=3))
     total = time.monotonic() - started
     report.check(total < timings["h7"] + timings["n6"] - 0.5,
                  "Both: calls on different probes run at the same time",
@@ -303,12 +360,16 @@ async def main() -> int:
     parser.add_argument("--h7", help="serial of the NUCLEO-H743ZI's own probe")
     parser.add_argument("--n6", help="serial of the NUCLEO-N657X0-Q's own probe")
     parser.add_argument("--jtag", help="serial of an ST-LINK on the H7's JTAG connector")
-    parser.add_argument("--flash", action="store_true", help="also write, read back and restore the H7's flash")
+    parser.add_argument("--f4", help="serial of the ST-LINK on an STM32F407 board")
+    parser.add_argument("--f4-console", help="serial port wired to that board's UART5 TX (PC12)")
+    parser.add_argument("--flash", action="store_true",
+                        help="also write, read back and restore the flash of the H7 and the F4")
     args = parser.parse_args()
 
     images = build(Path(tempfile.mkdtemp(prefix="stlink-hwcheck-")))
     report = Report()
-    async with Server() as server:
+    env = {"STLINK_MCP_CONSOLE": f"{args.f4}={args.f4_console}"} if args.f4 and args.f4_console else {}
+    async with Server(env) as server:
         listed = await server.call("list_probes")
         by_board = {p["board"]: p for p in listed.get("probes", []) if p.get("board")}
         h7 = args.h7 or by_board.get(H7_BOARD, {}).get("serial")
@@ -317,11 +378,15 @@ async def main() -> int:
         if h7:
             await check_h7(server, h7, images, report)
             if args.flash:
-                await check_h7_flash(server, h7, images, report)
+                await check_flash(server, "H7", h7, 0x200000, images.bin["h7_flash"], report)
         if n6:
             await check_n6(server, n6, images, report)
         if h7 and n6:
             await check_together(server, h7, n6, report)
+        if args.f4:
+            await check_f4(server, args.f4, images, report, console=bool(args.f4_console))
+            if args.flash:
+                await check_flash(server, "F4", args.f4, 0x100000, images.bin["f4_flash"], report)
     if args.jtag and h7:
         console = next((p["console_port"] for p in listed.get("probes", []) if p["serial"] == h7), None)
         env = {"STLINK_MCP_CONSOLE": f"{args.jtag}={console}"} if console else {}

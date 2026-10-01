@@ -26,6 +26,7 @@ _COMMON = [
 ]
 _H7 = ["-mcpu=cortex-m7", "-DHAS_UART", "-DCOUNTER_ADDR=0x24070000u"]
 _N6 = ["-mcpu=cortex-m55", "-DCOUNTER_ADDR=0x341B0000u", "-DDELAY=300000"]
+_F4 = ["-mcpu=cortex-m4", "-DF4_UART5", "-DCOUNTER_ADDR=0x2001F000u", "-DDELAY=1000000"]
 _SOFT = ["-mfloat-abi=soft"]
 _FAULT = ["-DSET_VTOR", "-DFAULT_AFTER=3"]
 
@@ -60,6 +61,10 @@ VARIANTS: list[Image] = [
     Image("h7_hole", _H7 + _SOFT + ["-DEXTRA_SEGMENT"], "h7_hole.ld",
           notes="a segment at 0x2C000000; GDB's load fails"),
     Image("h7_flash", _H7 + _SOFT + ['-DTAG="flash"'], "h7_flash.ld", binary=True,
+          notes="boots from flash at 0x08000000"),
+    Image("f4_ram", _F4 + _SOFT + ['-DTAG="f407"'], "f4_ram.ld", notes="prints on UART5 and counts in SRAM1"),
+    Image("f4_fault", _F4 + _SOFT + _FAULT + ['-DTAG="f407 fault"'], "f4_ram.ld", notes="udf after four ticks"),
+    Image("f4_flash", _F4 + _SOFT + ['-DTAG="f407 flash"'], "f4_flash.ld", binary=True,
           notes="boots from flash at 0x08000000"),
     Image("n6_ram", _N6 + _SOFT, "n6_ram.ld", notes="counts in AXISRAM2, prints nothing"),
     Image("n6_fault", _N6 + _SOFT + _FAULT, "n6_ram.ld", notes="udf after four ticks"),
