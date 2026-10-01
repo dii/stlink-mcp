@@ -123,6 +123,10 @@ Every tool takes a `probe_serial`. With several boards attached, omitting it is 
 
 Calls on different probes run at the same time, and calls on one probe wait for each other. A call that has to list the probes, `list_probes` or any call without a `probe_serial`, waits until no probe is in use and runs alone, because listing beside a command on another probe broke some of those commands. With several boards attached, name the probe in every call.
 
+### Who asked for what
+
+Every tool call writes one line to the server's stderr, which MCP clients keep in their logs: the client's declared name and version, which connection and request it came on, the tool, the probe and the verdict. A call refused because a GDB server holds the probe says, in `held_by`, which client's run is holding it, and `release_probe` says whose it was. Nothing is authenticated: the caller is recorded, not checked.
+
 ### SWD or JTAG
 
 Every tool that connects takes `interface`, `swd` (the default) or `jtag`, and its result reports the interface and the clock the probe's connect banner gave for it. Not every probe does JTAG. On the boards measured, the NUCLEO-N657X0-Q's own probe does; the NUCLEO-H743ZI's own STLINK-V3E does not, and answers a JTAG connect exactly as if no target were attached, so the result's hint names that first. A JTAG failure there also takes over a minute, because the tool tries both access ports and a resetting connect. An ST-LINK/V2 on the H743's JTAG connector does both. There is no automatic fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.

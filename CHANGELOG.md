@@ -7,6 +7,8 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 ### Added
 
 - `py.typed`, so type checkers read the package's annotations.
+- A caller for every tool call, from the MCP context: one trace line per call on stderr, and `held_by` on
+  refusals and releases naming the client whose run holds a probe.
 - `tools/hwcheck`, which runs the README's promises against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q through the server and prints PASS or FAIL for each, with the test images it builds from source.
 
 ### Fixed

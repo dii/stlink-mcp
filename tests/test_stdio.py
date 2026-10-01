@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 
 import anyio
 
@@ -34,8 +35,9 @@ async def _session() -> dict:
         # test has no use for.
         env={**os.environ, "STLINK_MCP_NO_VENDOR_SEED": "1"},
     )
+    errlog = tempfile.TemporaryFile("w+")
     with anyio.fail_after(60):
-        async with stdio_client(params) as (read, write):
+        async with stdio_client(params, errlog=errlog) as (read, write):
             async with ClientSession(read, write) as session:
                 init = await session.initialize()
                 listed = await session.list_tools()
@@ -48,6 +50,7 @@ async def _session() -> dict:
         "tools": {tool.name: tool for tool in listed.tools},
         "list_probes": json.loads(probes.content[0].text),
         "read_memory": json.loads(read_hex.content[0].text),
+        "stderr": (errlog.seek(0), errlog.read())[1],
     }
 
 
@@ -72,3 +75,6 @@ def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
             assert prop.get("enum") == ["swd", "jtag"] and prop.get("default") == "swd", (name, prop)
         else:
             assert prop is None, f"{name} does not connect and should not take an interface"
+        assert "ctx" not in tool.input_schema.get("properties", {}), f"{name} exposes its context"
+    # N9: every call is traced to who asked, on the server's stderr.
+    assert "connection 1, request" in seen["stderr"] and "list_probes(" in seen["stderr"]

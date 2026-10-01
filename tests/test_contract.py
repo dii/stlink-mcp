@@ -418,10 +418,12 @@ def bench(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "_BY_ID_DIR", tmp_path / "no-by-id")
 
     server._held.clear()
+    server._held_by.clear()
     server._gdb_ports.clear()
     server._SETTLED_PORTS.clear()
     yield state
     server._held.clear()
+    server._held_by.clear()
     server._gdb_ports.clear()
 
 
@@ -1992,3 +1994,59 @@ class TestAnEmptyListingSaysWhatItCanShow:
         out = call("list_probes")
         assert out["status"] == result.VERIFIED and out["count"] == 0
         assert "lsusb" in out["hint"]
+
+
+class TestEveryCallIsTracedToWhoAsked:
+    """N9: nothing assumes a single implicit caller. The caller is always the
+    local user today; it is recorded so identity and policy can be added later
+    without a redesign."""
+
+    @staticmethod
+    def _ctx(name: str, request: str):
+        session = SimpleNamespace(client_params=SimpleNamespace(
+            client_info=SimpleNamespace(name=name, version="1.0")))
+        return SimpleNamespace(session=session, request_id=request)
+
+    def test_a_held_probe_says_who_holds_it(self, bench, monkeypatch, tmp_path) -> None:
+        by_id = tmp_path / "by-id"
+        by_id.mkdir()
+        (by_id / "usb-STMicroelectronics_STLINK-V3_AAAA0001-if02").symlink_to("/dev/ttyACM9")
+        monkeypatch.setattr(server, "_BY_ID_DIR", by_id)
+        monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
+        monkeypatch.setattr(server, "release_server", lambda serial=None: True)
+        bench.console_text = "tick 0\n"
+        run = call("run_firmware", elf_path=str(bench.elf), probe_serial="AAAA0001", ctx=self._ctx("agent-a", "7"))
+        assert run["status"] == result.VERIFIED, run
+        refused = call("read_memory", probe_serial="AAAA0001", ctx=self._ctx("agent-b", "3"))
+        assert refused["status"] == result.FAILED
+        assert refused["held_by"].startswith("agent-a 1.0, connection ")
+        assert refused["held_by"].endswith(", request 7")
+        released = call("release_probe", probe_serial="AAAA0001", ctx=self._ctx("agent-b", "4"))
+        assert "agent-a 1.0" in released["held_by"]["AAAA0001"]
+
+    def test_each_call_leaves_one_trace_line(self, bench, capsys) -> None:
+        call("read_memory", probe_serial="AAAA0001", ctx=self._ctx("agent-a", "9"))
+        lines = [l for l in capsys.readouterr().err.splitlines() if "read_memory(" in l]
+        assert len(lines) == 1
+        assert "agent-a 1.0" in lines[0] and "request 9" in lines[0]
+        assert "probe_serial=AAAA0001" in lines[0] and lines[0].endswith("-> verified")
+
+    def test_a_call_made_in_process_is_traced_as_such(self, bench, capsys) -> None:
+        call("read_memory", probe_serial="AAAA0001")
+        assert "[in-process, connection 0, request -]" in capsys.readouterr().err
+
+    def test_one_connection_keeps_its_number_across_requests(self) -> None:
+        """The SDK builds a new session object for every request and keeps the
+        client's initialize parameters once per connection (measured with a
+        toy server over stdio, 2026-10-01). Keying on the session numbered each
+        call as a new connection."""
+        params = SimpleNamespace(client_info=SimpleNamespace(name="agent", version="1"))
+        calls = [SimpleNamespace(session=SimpleNamespace(client_params=params), request_id=str(i)) for i in range(3)]
+        assert len({server._caller_from(c).connection for c in calls}) == 1
+
+    def test_two_connections_are_told_apart(self) -> None:
+        one, other = self._ctx("x", "1"), self._ctx("x", "1")  # both connections stay open
+        first = server._caller_from(one)
+        second = server._caller_from(other)
+        assert first.connection != second.connection
+        assert server._caller_from(other).connection == second.connection

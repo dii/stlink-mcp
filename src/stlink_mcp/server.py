@@ -25,17 +25,21 @@ firmware onto the wrong board is a failure that looks like success.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import dataclasses
 import functools
 import inspect
 import os
 import re
+import sys
 import threading
+import weakref
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from . import __version__
 from . import console as console_mod
@@ -73,6 +77,80 @@ mcp = MCPServer("stlink-mcp", version=__version__)
 #: The debug interface a tool connects over (N8). A parameter, not an
 #: assumption: SWD by default, since every probe that does JTAG also does SWD.
 Interface = Literal["swd", "jtag"]
+
+
+@dataclasses.dataclass(frozen=True)
+class Caller:
+    """Who asked for an operation (N9). Always the local user today; recorded so
+    identity and per-caller policy can be added without a redesign."""
+
+    client: str
+    """The name and version the MCP client declared when it connected."""
+    connection: int
+    """Which connection to this server, counted from 1 in arrival order."""
+    request: str
+    """The MCP request id."""
+
+    @property
+    def label(self) -> str:
+        return f"{self.client}, connection {self.connection}, request {self.request}"
+
+
+#: A call made in-process rather than over MCP: tests, tools/hwcheck's builds.
+_IN_PROCESS = Caller("in-process", 0, "-")
+_CALLER: contextvars.ContextVar[Caller] = contextvars.ContextVar("caller", default=_IN_PROCESS)
+_CONNECTIONS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+_CONNECTIONS_BY_ID: dict[int, int] = {}
+_CONNECTION_COUNT = [0]
+
+
+def _connection_number(session: Any) -> int:
+    """A number per connection, in arrival order, keyed on an object that lives
+    as long as the connection. Kept by weak reference where the object allows
+    one, so a closed connection's number is not inherited."""
+    with _STATE:
+        try:
+            known = _CONNECTIONS.get(session)
+        except TypeError:
+            known = _CONNECTIONS_BY_ID.get(id(session))
+        if known is not None:
+            return known
+        _CONNECTION_COUNT[0] += 1
+        try:
+            _CONNECTIONS[session] = _CONNECTION_COUNT[0]
+        except TypeError:
+            _CONNECTIONS_BY_ID[id(session)] = _CONNECTION_COUNT[0]
+        return _CONNECTION_COUNT[0]
+
+
+def _caller_from(ctx: Context | None) -> Caller:
+    if ctx is None:
+        return _IN_PROCESS
+    try:
+        session = ctx.session
+        params = session.client_params
+        info = params.client_info if params is not None else None
+        client = f"{info.name} {info.version}" if info is not None else "an unnamed client"
+        # The session object is new on every request (measured 2026-10-01 with
+        # MCP SDK 2.0); the client's initialize parameters are kept once per
+        # connection, so they are what identifies one.
+        return Caller(client, _connection_number(params if params is not None else session), ctx.request_id)
+    except Exception:  # noqa: BLE001 - identity must never be why a tool fails
+        return Caller("an unidentified client", 0, "-")
+
+
+def current_caller() -> Caller:
+    """The caller of the tool call running in this thread."""
+    return _CALLER.get()
+
+
+def _trace(caller: Caller, tool: str, args: dict[str, Any], result: dict[str, Any]) -> None:
+    """One line on stderr per tool call, which MCP clients keep in their logs, so
+    every operation can be traced to who asked for it (N9)."""
+    shown = {k: v for k, v in args.items() if k in ("probe_serial", "interface", "address", "elf_path", "image_path") and v is not None}
+    detail = ", ".join(f"{k}={v}" for k, v in shown.items())
+    print(f"stlink-mcp: [{caller.label}] {tool}({detail}) -> {result.get('status')}",
+          file=sys.stderr, flush=True)
 
 
 class _Gate:
@@ -208,15 +286,21 @@ def _serialised(tool: _Tool) -> _Tool:
 
     @functools.wraps(tool)
     def gated(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        serial = (
-            signature.bind_partial(*args, **kwargs).arguments.get("probe_serial")
-            if takes_serial else None
-        )
-        if serial is None or _listing_needed(serial, console):
-            with _GATE.exclusive():
-                return tool(*args, **kwargs)
-        with _GATE.shared(), _probe_lock(serial):
-            return tool(*args, **kwargs)
+        bound = signature.bind_partial(*args, **kwargs).arguments
+        serial = bound.get("probe_serial") if takes_serial else None
+        caller = _caller_from(bound.get("ctx"))
+        token = _CALLER.set(caller)
+        try:
+            if serial is None or _listing_needed(serial, console):
+                with _GATE.exclusive():
+                    result = tool(*args, **kwargs)
+            else:
+                with _GATE.shared(), _probe_lock(serial):
+                    result = tool(*args, **kwargs)
+        finally:
+            _CALLER.reset(token)
+        _trace(caller, tool.__name__, bound, result)
+        return result
 
     return gated  # type: ignore[return-value]
 
@@ -231,6 +315,17 @@ _GDB_PORT_STRIDE = 4
 # Cached per probe while its GDB server is held. Re-identifying would mean
 # running STM32_Programmer_CLI, which cannot reach a probe the server has.
 _held: dict[str | None, tuple[Probe, TargetInfo, ProbeInfo | None]] = {}
+
+
+#: Who acquired each held GDB server (N9): state keyed to a caller, so a refusal
+#: can say who holds the probe and a release who held it.
+_held_by: dict[str | None, Caller] = {}
+
+
+def _held_by_disclosure(serial: str | None) -> dict[str, Any]:
+    with _STATE:
+        holder = _held_by.get(serial)
+    return {"held_by": holder.label} if holder is not None else {}
 
 
 def _cached_for(serial: str | None):
@@ -490,7 +585,9 @@ def _capture_seconds_problem(seconds: float, name: str) -> str | None:
 
 @mcp.tool()
 @_serialised
-def list_probes() -> dict[str, Any]:
+def list_probes(
+    ctx: Context | None = None,
+) -> dict[str, Any]:
     """List every attached ST-LINK with its firmware, board name and serial console.
 
 The console mapping is the useful part with more than one board: it is not
@@ -564,7 +661,9 @@ while other probes are held by a GDB server; those are marked as held.
 @mcp.tool()
 @_serialised
 def board_state(
-    probe_serial: str | None = None, interface: Interface = "swd"
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Identify the target, the probe and the target's family.
 
@@ -688,6 +787,7 @@ def run_firmware(
     probe_serial: str | None = None,
     console_seconds: float = 3.0,
     interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
@@ -780,6 +880,7 @@ the image says. Resets the target first and keeps the GDB server; see
         )
         with _STATE:
             _held[serial] = (probe, info, probe_info)
+            _held_by.setdefault(serial, current_caller())
 
         if port:
             with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
@@ -984,7 +1085,10 @@ def _server_output(gdb_server: Any) -> dict[str, Any]:
 
 @mcp.tool()
 @_serialised
-def release_probe(probe_serial: str | None = None) -> dict[str, Any]:
+def release_probe(
+    probe_serial: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
     """Shut down held GDB servers and free their probes; with no serial, all of them.
 
 Needed before read_memory, core_registers or flash_firmware can reach a probe
@@ -998,10 +1102,13 @@ nothing was held.
 
     released = release_server(probe_serial)
     with _STATE:
+        holders = {s: _held_by.pop(s).label for s in affected if s in _held_by}
         for s in affected:
             _held.pop(s, None)
 
     detail: dict[str, Any] = {"released": released, "probes": affected}
+    if holders:
+        detail["held_by"] = holders
     if released and any(q.debug_closes_on_run for q in quirks):
         detail["warning"] = (
             "The debug access port cannot be re-acquired now that firmware has "
@@ -1027,6 +1134,7 @@ def flash_firmware(
     probe_serial: str | None = None,
     address: int | str | None = None,
     interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Program a raw binary image (.bin) into boot memory for standalone boot.
 
@@ -1059,7 +1167,7 @@ when the written range, read back afterwards, matches the image byte for byte.
         return failed(error)
     # Only this probe matters. Another board's held server does not stop us.
     if server_is_held(serial):
-        return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials())
+        return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial))
 
     probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
     try:
@@ -1170,6 +1278,7 @@ def read_memory(
     length_bytes: int = 32,
     probe_serial: str | None = None,
     interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Read target memory as 32-bit words without halting or resetting the target.
 
@@ -1203,7 +1312,7 @@ probe held by a GDB server until `release_probe`.
             return failed(error)
         if server_is_held(serial):
             return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify(allow_reset=False)
@@ -1359,7 +1468,9 @@ def load_board_config() -> tuple[int, Path | None]:
 @mcp.tool()
 @_serialised
 def reset_target(
-    probe_serial: str | None = None, interface: Interface = "swd"
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Reset the target and check that it actually restarted.
 
@@ -1377,7 +1488,7 @@ target stopped, use the GDB server that run_firmware keeps alive.
             return failed(error)
         if server_is_held(serial):
             return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
 
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
@@ -1564,7 +1675,9 @@ target stopped, use the GDB server that run_firmware keeps alive.
 @mcp.tool()
 @_serialised
 def core_registers(
-    probe_serial: str | None = None, interface: Interface = "swd"
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Read the core registers, halting the core for the read.
 
@@ -1582,7 +1695,7 @@ Perturbing, so never used inside routine checks.
             return failed(error)
         if server_is_held(serial):
             return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         # The connect is checked before the read. It used to be discarded, so a
@@ -1642,7 +1755,9 @@ Perturbing, so never used inside routine checks.
 @mcp.tool()
 @_serialised
 def read_fault_status(
-    probe_serial: str | None = None, interface: Interface = "swd"
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Read and decode the Cortex-M fault status registers without halting or
 resetting the target.
@@ -1662,7 +1777,7 @@ registers.
             return failed(error)
         if server_is_held(serial):
             return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify(allow_reset=False)
@@ -1804,6 +1919,7 @@ def locate_fault(
     probe_serial: str | None = None,
     elf_path: str | None = None,
     interface: Interface = "swd",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Find the instruction that faulted, from the exception frame. Halts the core
 to read registers.
@@ -1827,7 +1943,7 @@ frame.
             return failed(error)
         if server_is_held(serial):
             return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify()
@@ -1989,7 +2105,9 @@ def _symbol(toolchain: Toolchain, elf: Path, address: int) -> dict[str, Any]:
 @mcp.tool()
 @_serialised
 def capture_console(
-    seconds: float = 5.0, probe_serial: str | None = None
+    seconds: float = 5.0,
+    probe_serial: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Capture what a target prints on its serial console for a number of seconds.
 
