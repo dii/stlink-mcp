@@ -18,8 +18,8 @@ from stlink_mcp import __version__
 
 TOOLS = {
     "board_state", "capture_console", "core_registers", "flash_firmware",
-    "list_probes", "read_fault_status", "read_memory", "release_probe",
-    "reset_target", "run_firmware",
+    "list_probes", "locate_fault", "read_fault_status", "read_memory",
+    "release_probe", "reset_target", "run_firmware",
 }
 
 
@@ -51,7 +51,7 @@ async def _session() -> dict:
     }
 
 
-def test_a_client_sees_the_ten_tools_and_contract_shaped_results() -> None:
+def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
     seen = anyio.run(_session)
     assert seen["server"].name == "stlink-mcp"
     assert seen["server"].version == __version__
@@ -64,7 +64,7 @@ def test_a_client_sees_the_ten_tools_and_contract_shaped_results() -> None:
     # N8: every tool that connects offers the interface as a choice of two, so
     # a client sees the options without reading a docstring.
     connecting = {"board_state", "run_firmware", "flash_firmware", "read_memory",
-                  "reset_target", "core_registers", "read_fault_status"}
+                  "reset_target", "core_registers", "read_fault_status", "locate_fault"}
     for name, tool in seen["tools"].items():
         prop = tool.input_schema.get("properties", {}).get("interface")
         if name in connecting:

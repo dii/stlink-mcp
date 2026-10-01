@@ -226,6 +226,9 @@ turns every user with a board into a source of measured data.
   suite and by the blind suite in `tests/blind/`. The registers are at fixed Cortex-M addresses
   and do not vary by family, which is why this was built before JTAG. Cores without them,
   Armv6-M and Armv8-M Baseline, are refused rather than read.
+- **Fault location. DONE** 2026-10-01. `locate_fault` follows that next step in one call: the
+  stack from EXC_RETURN, the frame checked before it is trusted, the stacked PC and LR, and with
+  the ELF their functions and lines. Run on the H7 (MSP, PSP, FP frame) and the N6.
 - **Flash readback verification. DONE** 2026-10-01. `flash_firmware` reads the written range
   back with the programmer's upload and compares it with the image itself, rather than parsing
   `-v`'s banner, and only an identical readback is `verified`. First run on hardware the same

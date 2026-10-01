@@ -39,6 +39,7 @@ TOOL_CALLS: dict[str, dict] = {
     "capture_console": {"seconds": 0.01},
     "reset_target": {},
     "read_fault_status": {},
+    "locate_fault": {},
 }
 
 
@@ -243,12 +244,16 @@ class _FakeProbe:
     def gdb_access_port(self, info: object) -> int:
         return 1
 
+    # Class-level so a test can lay out memory and registers; zero elsewhere.
+    memory: dict[int, int] = {}
+    registers: dict[str, int] = {"PC": 0x34180D3C}
+
     def read_memory(self, address: int, length_bytes: int) -> dict[int, int]:
         n_words = max(1, length_bytes // 4)
-        return {address + i * 4: 0 for i in range(n_words)}
+        return {address + i * 4: self.memory.get(address + i * 4, 0) for i in range(n_words)}
 
     def core_registers(self) -> dict[str, int]:
-        return {"PC": 0x34180D3C}
+        return dict(self.registers)
 
     # What a readback returns: None for exactly what was written, bytes for
     # something else, a string to raise with. Class-level so a test can set it.
@@ -1651,3 +1656,107 @@ class TestTheInterfaceReachesTheProbeAndTheServer:
         assert_contract(out)
         assert asked.get("interface") == "jtag"
         assert out["interface"] == "jtag"
+
+
+class TestLocateFaultFollowsTheFrame:
+    """locate_fault does in one call what read_fault_status's next step says to
+    do by hand, which was followed on an H7 and an N6 on 2026-10-01: XPSR says a
+    handler is active, EXC_RETURN in LR names the stack, word 6 is the PC."""
+
+    MSP, PSP = 0x20001000, 0x20002000
+    UDF = 0x0800013E
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch):
+        monkeypatch.setattr(server, "_symbol", lambda tc, elf, addr: {"address": hex(addr)})
+        yield
+        _FakeProbe.memory = {}
+        _FakeProbe.registers = {"PC": 0x34180D3C}
+        _FakeProbe.cpu = "Cortex-M55"
+
+    def _fault(self, lr: int, xpsr: int = 0x01000003, at: int | None = None,
+               stacked_xpsr: int = 0x61000000) -> None:
+        _FakeProbe.registers = {"PC": 0x08000170, "LR": lr, "XPSR": xpsr,
+                                "MSP": self.MSP, "PSP": self.PSP}
+        frame = at if at is not None else (self.PSP if lr & 4 else self.MSP)
+        words = [1, 2, 3, 4, 12, 0x080000D3, self.UDF, stacked_xpsr]
+        _FakeProbe.memory = {frame + 4 * i: w for i, w in enumerate(words)}
+
+    def test_a_frame_on_msp_gives_the_faulting_pc(self, bench) -> None:
+        self._fault(0xFFFFFFF9)
+        out = call("locate_fault")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED
+        assert (out["stack"], out["faulting_pc"]) == ("MSP", "0x0800013E")
+        assert out["exception"] == {"number": 3, "name": "HardFault"}
+        assert out["halted_to_read_registers"] is True
+
+    def test_a_thread_on_psp_is_read_from_psp(self, bench) -> None:
+        self._fault(0xFFFFFFFD)
+        out = call("locate_fault")
+        assert (out["stack"], out["frame_address"], out["faulting_pc"]) == ("PSP", "0x20002000", "0x0800013E")
+
+    def test_an_fp_frame_is_marked_and_still_read_at_word_6(self, bench) -> None:
+        self._fault(0xFFFFFFE9)
+        out = call("locate_fault")
+        assert out["fp_frame"] is True and out["faulting_pc"] == "0x0800013E"
+
+    def test_armv8m_additional_state_moves_the_frame_up_40_bytes(self, bench) -> None:
+        self._fault(0xFFFFFFD9, at=self.MSP + 40)
+        out = call("locate_fault")
+        assert out["status"] == result.VERIFIED
+        assert out["frame_address"] == "0x20001028"
+        assert any("Secure" in n for n in out["notes"])
+
+    def test_the_same_lr_on_an_armv7m_core_has_no_additional_state(self, bench) -> None:
+        _FakeProbe.cpu = "Cortex-M7"
+        self._fault(0xFFFFFFD9)
+        out = call("locate_fault")
+        assert out["frame_address"] == "0x20001000"
+        assert "notes" not in out
+
+    def test_thread_mode_has_no_frame_to_read(self, bench) -> None:
+        self._fault(0xFFFFFFF9, xpsr=0x61000000)
+        out = call("locate_fault")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "thread mode" in out["error"]
+
+    def test_an_overwritten_lr_is_refused_not_guessed(self, bench) -> None:
+        self._fault(0x08000123)
+        out = call("locate_fault")
+        assert out["status"] == result.FAILED and "not an EXC_RETURN" in out["error"]
+
+    def test_words_without_the_thumb_bit_are_not_a_frame(self, bench) -> None:
+        """What the H7's own HardFault handler produced on 2026-10-01: it pushed
+        registers first, so the words at MSP were not the frame."""
+        self._fault(0xFFFFFFF9, stacked_xpsr=0x2407FFB4)
+        out = call("locate_fault")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert "Thumb bit" in out["unverified_because"]
+
+    def test_a_pc_outside_the_elf_is_called_out(self, bench) -> None:
+        self._fault(0xFFFFFFF9)
+        out = call("locate_fault", elf_path=str(bench.elf))
+        assert out["status"] == result.UNVERIFIED
+        assert "outside every segment" in out["unverified_because"]
+        assert out["faulting_function"] == {"address": hex(self.UDF)}
+
+    def test_an_imprecise_bus_error_warns_that_the_pc_is_late(self, bench) -> None:
+        from stlink_mcp import faults
+        self._fault(0xFFFFFFF9)
+        _FakeProbe.memory[faults.CFSR] = 1 << (8 + 2)  # BFSR.IMPRECISERR
+        out = call("locate_fault")
+        assert any("imprecise" in n for n in out["notes"])
+
+    def test_a_reset_to_reach_the_core_is_not_a_location(self, bench, monkeypatch) -> None:
+        self._fault(0xFFFFFFF9)
+        real_identify = _FakeProbe.identify
+
+        def resetting(self, allow_reset=True):
+            self.target_was_reset = True
+            return real_identify(self, allow_reset)
+
+        monkeypatch.setattr(_FakeProbe, "identify", resetting)
+        out = call("locate_fault")
+        assert out["status"] == result.FAILED and "restarted" in out["error"]

@@ -420,3 +420,47 @@ class TestTheBlindSuiteSeedsStillApply:
         assert edits, "no seeds found, so this checks nothing"
         wrong = [(name, source.count(find)) for name, find in edits if source.count(find) != 1]
         assert not wrong, f"seed text no longer found exactly once: {wrong}"
+
+
+class TestLocatingTheFrame:
+    """The pure part of locate_fault: what XPSR and EXC_RETURN say."""
+
+    def test_exception_names(self) -> None:
+        from stlink_mcp.faults import exception_name
+        assert [exception_name(n) for n in (0, 3, 6, 7, 16, 47)] == [
+            "thread mode", "HardFault", "UsageFault", "SecureFault", "IRQ 0", "IRQ 31"]
+
+    @pytest.mark.parametrize("lr, stack, fp", [
+        (0xFFFFFFF1, "MSP", False),  # handler to handler
+        (0xFFFFFFF9, "MSP", False),
+        (0xFFFFFFFD, "PSP", False),
+        (0xFFFFFFE9, "MSP", True),
+        (0xFFFFFFED, "PSP", True),
+    ])
+    def test_exc_return_names_the_stack_and_the_frame_kind(self, lr, stack, fp) -> None:
+        from stlink_mcp.faults import decode_exc_return
+        r = decode_exc_return(lr, armv8m=False)
+        assert (r.stack, r.fp_frame, r.extra_state_bytes, r.secure_stack) == (stack, fp, 0, None)
+
+    def test_armv8m_bits(self) -> None:
+        from stlink_mcp.faults import decode_exc_return
+        assert decode_exc_return(0xFFFFFFF9, armv8m=True).secure_stack is True
+        assert decode_exc_return(0xFFFFFFB8, armv8m=True).secure_stack is False
+        assert decode_exc_return(0xFFFFFFD9, armv8m=True).extra_state_bytes == 40
+        assert decode_exc_return(0xFFFFFFF9, armv8m=True).extra_state_bytes == 0
+
+    def test_an_lr_that_is_not_exc_return_is_none(self) -> None:
+        from stlink_mcp.faults import decode_exc_return
+        assert decode_exc_return(0x080000D3, armv8m=False) is None
+
+    def test_frame_checks(self) -> None:
+        from stlink_mcp.faults import frame_problems
+        good = {"PC": 0x24000156, "XPSR": 0x61000000}
+        assert frame_problems(good) == []
+        assert "Thumb" in frame_problems({"PC": 0x24000156, "XPSR": 0x40004000})[0]
+        assert "odd" in frame_problems({"PC": 0x24000157, "XPSR": 0x01000000})[0]
+
+    def test_armv8m_cores(self) -> None:
+        from stlink_mcp.faults import is_armv8m
+        assert [is_armv8m(c) for c in ("Cortex-M55", "Cortex-M23", "Cortex-M33", "Cortex-M7", "Cortex-M3", None)] == [
+            True, True, True, False, False, False]

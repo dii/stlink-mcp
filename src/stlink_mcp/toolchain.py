@@ -46,6 +46,11 @@ class Toolchain:
         return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-gdb"
 
     @property
+    def addr2line(self) -> Path:
+        """Turns an address into a function and source line, given the ELF."""
+        return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-addr2line"
+
+    @property
     def programmer_bin_dir(self) -> Path:
         """The GDB server needs this passed with -cp."""
         return self.root / "STM32CubeProgrammer" / "bin"

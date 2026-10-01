@@ -53,6 +53,8 @@ what was run and what it showed.
 
 ### Added
 
+- `locate_fault`, which finds the instruction that faulted from the exception frame: the stack
+  from EXC_RETURN, the stacked PC and LR, and with the ELF their functions and lines.
 - `interface`, `swd` or `jtag`, on every tool that connects. Results report the interface and the
   clock from the probe's connect banner, and a failed JTAG connect says the probe may not do JTAG.
 - `stlink-mcp --check`, `--version` and `--help`.

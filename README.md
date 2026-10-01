@@ -62,7 +62,7 @@ checked, so it is not mistaken for a failure.
 
 Use it if your board has an ST-LINK, STM32CubeCLT is already installed, and
 you want an agent whose every report names what was observed on the target.
-It is deliberately small: ten tools, and no breakpoints, stepping, RTT or
+It is deliberately small: eleven tools, and no breakpoints, stepping, RTT or
 memory writes.
 
 Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp)
@@ -82,10 +82,10 @@ else unrecognised falls back to identification and memory reads only.
 
 Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) and are
 read from the git tag; a build past the last tag reports the tag plus the number of
-commits since it, as in `0.1.0+3`. The public API that promise covers is the ten tools
+commits since it, as in `0.1.0+3`. The public API that promise covers is the eleven tools
 in the table below, their parameters and result fields, and the `stlink-mcp` command
 line. At 0.y.z any of it may change. Beta is reached when one user outside this project
-reports a run on a board this README does not list as measured, the ten tool signatures
+reports a run on a board this README does not list as measured, the eleven tool signatures
 and result fields are declared stable, and the Windows question is decided.
 Release candidate follows beta. The two defects that gated it are fixed: two tool
 calls at once could give one GDB port to two probes or start two servers on one probe,
@@ -153,6 +153,7 @@ claude mcp add stlink -- uv --directory /path/to/stlink-mcp run stlink-mcp
 | `read_memory` | Reads 32-bit words without disturbing the target | The words themselves. Connects hotplug-only, and refuses rather than resetting to reach a closed access port. A read that returns fewer words than asked for is `failed`, naming the missing addresses |
 | `core_registers` | Reads the core registers, halting the core for the read | The registers themselves. Reports `target_was_reset` when reaching the core needed a reset. Does not claim the core is still halted afterwards, since a programmer halt does not outlive its command |
 | `read_fault_status` | Reads and decodes the Cortex-M fault registers | The raw registers plus a plain-English diagnosis. Reports the faulting address when the hardware recorded it, and the next step to find the faulting instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers and would read as clean, and refuses a read that did not return all six |
+| `locate_fault` | Finds the instruction that faulted, from the exception frame. Halts the core for the register read | EXC_RETURN in LR names the stack holding the frame, and word 6 of the frame is the stacked PC; with the ELF, its function and line. `unverified` when the words found do not look like a frame, as when a handler pushed registers first; refuses in thread mode or when LR no longer holds EXC_RETURN |
 | `capture_console` | Captures serial output | Reads the port mapped to that probe's serial, or the one `STLINK_MCP_CONSOLE` names for it, and refuses if it cannot resolve one |
 | `reset_target` | Resets the target and checks it restarted | Halts at the reset vector and compares the PC against word 1 of the vector table. The reset is the *connect*, because `-rst` then `-halt` loses the race and lands hundreds of bytes into start-up |
 | `release_probe` | Frees a held GDB server | `unverified` if nothing was held, since then nothing was released |

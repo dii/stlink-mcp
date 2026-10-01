@@ -66,6 +66,7 @@ def missing_registers(words: Mapping[int, int]) -> list[str]:
 _NO_FAULT_REGISTERS = re.compile(r"Cortex-M(?:0|1|23)(?![0-9])")
 _HAS_FAULT_REGISTERS = re.compile(r"Cortex-M(?:3|4|7|33|35P|52|55|85)(?![0-9])")
 _MAY_BANK_BY_SECURITY = re.compile(r"Cortex-M(?:33|35P|52|55|85)(?![0-9])")
+_ARMV8M = re.compile(r"Cortex-M(?:23|33|35P|52|55|85)(?![0-9])")
 
 
 def has_fault_registers(cpu: str | None) -> bool | None:
@@ -279,3 +280,87 @@ def _diagnose(status: FaultStatus) -> str:
             )
 
     return summary or "fault bits set in an unrecognized pattern"
+
+
+# ---------------------------------------------------------------------------
+# Locating the faulting instruction from the exception frame.
+#
+# Used by locate_fault, after core_registers-style halting has read LR, XPSR,
+# MSP and PSP. Pure, so the arithmetic is tested without a board; the steps
+# were first followed by hand on an STM32H7 (Cortex-M7) and an STM32N6
+# (Cortex-M55) on 2026-10-01, and word 6 of the frame at MSP was the `udf`
+# that faulted on both.
+# ---------------------------------------------------------------------------
+
+_EXCEPTIONS = {
+    1: "Reset", 2: "NMI", 3: "HardFault", 4: "MemManage", 5: "BusFault",
+    6: "UsageFault", 7: "SecureFault", 11: "SVCall", 12: "DebugMonitor",
+    14: "PendSV", 15: "SysTick",
+}
+
+
+def exception_name(number: int) -> str:
+    """The name of an exception number as XPSR bits 0-8 give it."""
+    if number == 0:
+        return "thread mode"
+    if number >= 16:
+        return f"IRQ {number - 16}"
+    return _EXCEPTIONS.get(number, f"reserved exception {number}")
+
+
+@dataclass(frozen=True)
+class ExcReturn:
+    """What an EXC_RETURN value in LR says about the frame the exception stacked."""
+
+    value: int
+    stack: str
+    """"MSP" or "PSP": bit 2 (SPSEL)."""
+    fp_frame: bool
+    """True when bit 4 (FType) is clear: the frame also holds FP state, 26 words
+    instead of 8. The stacked PC is still word 6."""
+    extra_state_bytes: int
+    """Armv8-M only: 40 when bit 5 (DCRS) is clear, meaning the integrity
+    signature and R4-R11 were stacked below the basic frame, which then starts
+    40 bytes above the stack pointer."""
+    secure_stack: bool | None
+    """Armv8-M only: bit 6 (S), whether the frame is on a Secure stack. None
+    on cores without the Security Extension's EXC_RETURN layout."""
+
+
+def is_armv8m(cpu: str | None) -> bool:
+    """Armv8-M, Baseline or Mainline: the cores whose EXC_RETURN carries the
+    security bits and the additional-state flag."""
+    return bool(cpu and _ARMV8M.search(cpu))
+
+
+def decode_exc_return(lr: int, armv8m: bool) -> ExcReturn | None:
+    """None when LR is not an EXC_RETURN value, which means the handler has
+    overwritten it and the frame cannot be found this way."""
+    if lr >> 24 != 0xFF:
+        return None
+    return ExcReturn(
+        value=lr,
+        stack="PSP" if lr & (1 << 2) else "MSP",
+        fp_frame=not lr & (1 << 4),
+        extra_state_bytes=40 if armv8m and not lr & (1 << 5) else 0,
+        secure_stack=bool(lr & (1 << 6)) if armv8m else None,
+    )
+
+
+#: The basic frame, word by word, from its lowest address.
+FRAME_WORDS = ("R0", "R1", "R2", "R3", "R12", "LR", "PC", "XPSR")
+
+
+def frame_problems(frame: Mapping[str, int]) -> list[str]:
+    """Reasons a basic frame does not look like one an exception stacked.
+
+    The Thumb bit is the strong check: every Cortex-M executes Thumb only, so a
+    stacked XPSR without bit 24 set was not written by exception entry. The
+    usual cause is a handler that pushed registers before the read, which moves
+    the stack pointer below the frame."""
+    problems = []
+    if not frame["XPSR"] & (1 << 24):
+        problems.append("the stacked XPSR has no Thumb bit (bit 24)")
+    if frame["PC"] & 1:
+        problems.append("the stacked PC is odd, and an exception stacks a halfword-aligned one")
+    return problems

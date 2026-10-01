@@ -60,7 +60,7 @@ from .runner import (
     release_server,
     server_is_held,
 )
-from .toolchain import Toolchain, ToolchainError, find_toolchain
+from .toolchain import Toolchain, ToolchainError, find_toolchain, run_command
 from .vendordb import VendorDbError, seed_from_directory
 
 # The version goes into the initialize handshake, so a client log or a bug
@@ -1537,7 +1537,8 @@ registers.
         # RTOS stacks its frame on PSP, so following it gave a confident, wrong
         # faulting PC. EXC_RETURN in LR says which.
         detail["next_step"] = (
-            "To find WHERE it happened, call core_registers(), which halts the "
+            "locate_fault() finds WHERE it happened in one call. By hand: call "
+            "core_registers(), which halts the "
             "core for the read. XPSR bits 0-8 give the active exception (3 is "
             "HardFault, 0 is thread mode). In a handler, LR holds an EXC_RETURN "
             "value (0xFFxxxxxx) whose bit 2 names the stack holding the "
@@ -1567,6 +1568,193 @@ registers.
         )
 
     return verified("fault status registers read from the target", **detail)
+
+
+@mcp.tool()
+@_serialised
+def locate_fault(
+    probe_serial: str | None = None,
+    elf_path: str | None = None,
+    interface: Interface = "swd",
+) -> dict[str, Any]:
+    """Find the instruction that faulted, from the exception frame. Halts the core
+to read registers.
+
+Call it while the core sits in a fault handler. Uses EXC_RETURN in LR to find
+the stack holding the frame and returns the stacked PC and LR; with `elf_path`,
+their functions and source lines. Refuses when the core is not in a handler or
+LR no longer holds EXC_RETURN, and says when the words found do not look like a
+frame.
+    """
+    elf: Path | None = None
+    if elf_path:
+        elf = Path(elf_path).expanduser()
+        if not elf.is_file():
+            return failed(f"No such ELF: {elf}")
+    probe: Probe | None = None
+    try:
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return failed(error)
+        if server_is_held(serial):
+            return failed(
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials()
+            )
+        probe = Probe(toolchain, serial=serial, interface=interface)
+        info = probe.identify()
+        if not info.connected:
+            return failed(
+                "Could not reach the core.",
+                probe_serial=serial,
+                target_was_reset=probe.target_was_reset,
+                errors=info.errors,
+                **_interface_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
+            )
+        regs = probe.core_registers()
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), target_was_reset=bool(probe and probe.target_was_reset))
+
+    base: dict[str, Any] = {
+        "probe_serial": serial,
+        "cpu": info.cpu,
+        "connect_mode": probe.connect_mode,
+        **_interface_fields(probe, info),
+        "target_was_reset": probe.target_was_reset,
+        "halted_to_read_registers": True,
+        "registers": {
+            name: f"0x{regs[name]:08X}"
+            for name in ("PC", "LR", "XPSR", "MSP", "PSP") if name in regs
+        },
+    }
+    # A reset restarts the program, and with it goes the handler, the frame and
+    # the fault. Whatever is read after one describes the restarted program.
+    if probe.target_was_reset:
+        return failed(
+            "Reaching the core needed a resetting connect, which restarted the "
+            "program, so the fault and its frame are gone.",
+            **base,
+        )
+    missing = [name for name in ("XPSR", "LR", "MSP", "PSP") if name not in regs]
+    if missing:
+        return failed(
+            f"The register read did not return {', '.join(missing)}.", **base
+        )
+
+    number = regs["XPSR"] & 0x1FF
+    base["exception"] = {"number": number, "name": faults_mod.exception_name(number)}
+    if number == 0:
+        return failed(
+            "The core is in thread mode, not in an exception handler, so there is no "
+            "exception frame to read. A fault read_fault_status reports happened "
+            "earlier, and its handler has returned or the core was reset since.",
+            **base,
+        )
+    lr = regs["LR"]
+    exc_return = faults_mod.decode_exc_return(lr, faults_mod.is_armv8m(info.cpu))
+    if exc_return is None:
+        return failed(
+            f"LR is 0x{lr:08X}, not an EXC_RETURN value (0xFFxxxxxx): the handler "
+            "has overwritten it, so the frame cannot be located from it. A handler "
+            "that saves LR first thing keeps this possible.",
+            **base,
+        )
+
+    sp = regs[exc_return.stack]
+    frame_address = sp + exc_return.extra_state_bytes
+    base.update(
+        exc_return=f"0x{lr:08X}",
+        stack=exc_return.stack,
+        frame_address=_hex(frame_address),
+        fp_frame=exc_return.fp_frame,
+    )
+    notes: list[str] = []
+    if exc_return.secure_stack is not None:
+        notes.append(
+            f"EXC_RETURN says the frame is on a {'Secure' if exc_return.secure_stack else 'Non-secure'} "
+            "stack. MSP and PSP here are the current security state's, so if the "
+            "core is in the other state the frame is on the other bank's stack."
+        )
+    try:
+        words = probe.read_memory(frame_address, 32)
+        fault_words = (
+            probe.read_memory(faults_mod.FAULT_REGION_BASE, faults_mod.FAULT_REGION_SIZE)
+            if faults_mod.has_fault_registers(info.cpu) else {}
+        )
+    except Exception as exc:  # noqa: BLE001
+        return failed(f"Reading the frame at 0x{frame_address:08X} failed: {exc}", **base)
+
+    frame = {
+        name: words.get(frame_address + 4 * i)
+        for i, name in enumerate(faults_mod.FRAME_WORDS)
+    }
+    if any(value is None for value in frame.values()):
+        return failed(
+            f"The read at 0x{frame_address:08X} did not return all eight frame words.",
+            **base,
+        )
+    base["frame"] = {name: f"0x{value:08X}" for name, value in frame.items()}
+    base["faulting_pc"] = _hex(frame["PC"])
+    base["stacked_lr"] = _hex(frame["LR"])
+
+    if not faults_mod.missing_registers(fault_words):
+        status = faults_mod.decode(fault_words)
+        if any(bit.name == "IMPRECISERR" for bit in status.faults):
+            notes.append(
+                "The fault registers record an imprecise bus error. The stacked PC "
+                "is then some instructions after the store that failed, not the "
+                "store itself."
+            )
+
+    problems = faults_mod.frame_problems(frame)
+    if elf is not None:
+        try:
+            segments = image_mod.load_segments(elf.read_bytes())
+        except (OSError, image_mod.ImageError) as exc:
+            return failed(f"{elf.name}: {exc}", **base)
+        if not any(seg.vaddr <= frame["PC"] < seg.vaddr + seg.memsz for seg in segments):
+            problems.append(f"the stacked PC is outside every segment of {elf.name}")
+        base["faulting_function"] = _symbol(toolchain, elf, frame["PC"])
+        base["stacked_lr_function"] = _symbol(toolchain, elf, frame["LR"] & ~1)
+    if notes:
+        base["notes"] = notes
+
+    if problems:
+        return unverified(
+            f"The words at 0x{frame_address:08X} do not look like an exception frame: "
+            + "; ".join(problems) + ". A handler that pushes registers before this "
+            "read moves the stack pointer below the frame, which then sits higher "
+            "on the stack.",
+            **base,
+        )
+    return verified(
+        f"the exception frame at 0x{frame_address:08X} on {exc_return.stack}, found "
+        f"from EXC_RETURN 0x{lr:08X} in LR; its stacked XPSR has the Thumb bit set",
+        **base,
+    )
+
+
+def _symbol(toolchain: Toolchain, elf: Path, address: int) -> dict[str, Any]:
+    """The function and source line holding `address`, from the ELF's symbols.
+
+    None for either when the ELF does not say: a stripped image, or an address
+    outside it, gives addr2line's "??"."""
+    try:
+        result = run_command(
+            [str(toolchain.addr2line), "-f", "-C", "-e", str(elf), f"0x{address:08X}"],
+            timeout=30,
+        )
+        lines = result.stdout.strip().splitlines()
+    except ToolchainError as exc:
+        return {"address": _hex(address), "error": str(exc)}
+    function = lines[0].strip() if lines else "??"
+    location = lines[1].strip() if len(lines) > 1 else "??"
+    return {
+        "address": _hex(address),
+        "function": None if function == "??" else function,
+        "location": None if location.startswith("??") else location,
+    }
 
 
 @mcp.tool()
