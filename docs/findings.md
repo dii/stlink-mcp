@@ -269,3 +269,17 @@ The clock. The programmer takes the core clock in MHz and uses a fraction as giv
 
 What it changes on the target, read on the F407 from power-up. The GDB server's run already sets trace enable in DEMCR. The capture adds TRACE_IOEN in DBGMCU_CR, which assigns PB3 to the trace unit, ITM's TCR (0x0001000D) and TER (port 0), and the TPIU's prescaler (7, so 2 MHz at 16 MHz) and protocol. After `reset_target`, trace enable read clear but DBGMCU_CR still read 0x20, and settings left by an earlier session were still in place after several of the tool's resets; a power cycle cleared them. Firmware that uses PB3 as a GPIO loses it until then, so every `capture_swo` result says the trace output was left on. `tools/hwcheck` checks both boards, and a capture at twice the F407's clock: 48 of 48 with `--f4`, `--f4-console`, `--jtag`, `--flash` and `--n6-closed`.
 
+## Measured before building version 1.0 (2026-10-02)
+
+The version 1.0 plan, [v1-plan.md](v1-plan.md), set ten measurements before any code; nine were run on the H7 and the F407 with a program written for them, which has typed globals, a watched variable written by one function, a function reached at tick five and a three-deep call chain that can hang. The results are listed in the plan, under each question. Four of them changed the design.
+
+The stop evidence. The plan meant to verify a stop by the Debug Fault Status Register. ST's GDB server reads that register at every stop and clears it, so through GDB afterwards it read 0x1 or 0x0 every time. The server's own log at level 16 records what it read, 0x3 at each breakpoint and 0x5 at each watchpoint, on both parts, and that log is where the value will come from. GDB itself reports a watchpoint stop as a bare SIGTRAP, because the server's stop reply names no reason.
+
+A breakpoint that cannot fire. The F407's breakpoint unit is the first revision, which covers only addresses below 0x20000000. GDB and the server both accepted a hardware breakpoint in RAM at 0x20000042 without a word, and it never fired in 10 seconds. A software breakpoint at the same address fired, on both parts, as did a hardware one in RAM on the H7, whose unit is the second revision. The tool will count and check the comparators itself rather than trust the acceptance.
+
+Where a watchpoint stops. Never on the writing instruction: on the F407 the core ran one more instruction, the return, every time; on the H7 two to four more, once past a taken branch. A watchpoint result will say the write came before the stop and show what led to it, rather than name an instruction it cannot know.
+
+A read that consumes data. A byte sent to the H7's USART3 set RXNE; a programmer read of RDR returned it and cleared RXNE. The H743 SVD marks no register read as having a side effect, and neither does the F407's; the N657's marks 54. Reading registers by name will say so.
+
+The rest went as hoped: the server's attach mode reads a running program's state without a reset and resumes it on detach; GDB/MI stops a run that never reaches its location at the time limit; stopping the server resumes a halted core, which moves resume into `release_probe`; and pyelftools decoded a whole struct, bitfields and union included, from a non-halting read in 0.01 s, where GDB without a target gives only the layout as text. Device IDs do not name SVD files, and one ID covers several, which agreed with each other on the registers compared. The N6 measurement waits for a power cycle.
+
