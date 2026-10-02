@@ -438,8 +438,12 @@ def bench(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(server.console_mod, "ConsoleCapture", _FakeCapture)
     # As on a machine without udev's port names, so a test takes the same path
-    # here as in CI; the udev path has tests of its own.
+    # here as in CI; the udev path has tests of its own. Without them the
+    # console is looked up in pyserial's port list, which is the machine's own,
+    # so it is emptied here.
     monkeypatch.setattr(server, "_BY_ID_DIR", tmp_path / "no-by-id")
+    from serial.tools import list_ports
+    monkeypatch.setattr(list_ports, "comports", lambda *a, **k: [])
 
     server._held.clear()
     server._held_by.clear()
@@ -1031,6 +1035,36 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert out["status"] == result.VERIFIED and out["call_stack"] == [{"function": "writer"}]
         assert out["core_after"].startswith("still halted")
         assert self._Session.closes == [False, False]
+
+
+class TestWithoutUdevTheConsoleIsFoundByUsbSerial:
+    """On Windows, which has no /dev/serial/by-id, pyserial reported the
+    ST-LINK's serial for its COM port: COM3, 003E00463234510337333934, an
+    STLINK-V3 on the Windows laptop, 2026-10-02. The port objects here carry what it
+    reported."""
+
+    SERIAL = "003E00463234510337333934"
+
+    def _ports(self, monkeypatch, *ports):
+        from serial.tools import list_ports
+        monkeypatch.setattr(list_ports, "comports", lambda *a, **k: [
+            SimpleNamespace(device=device, serial_number=serial) for device, serial in ports
+        ])
+
+    def test_the_port_with_the_probes_serial_is_its_console(self, bench, monkeypatch) -> None:
+        self._ports(monkeypatch, ("COM3", self.SERIAL), ("COM7", None))
+        def no_listing(tc):
+            raise AssertionError("a named probe's console must not need a listing")
+        monkeypatch.setattr(server, "_list_probes", no_listing)
+        bench.console_text = "tick 0\n"
+        out = call("capture_console", probe_serial=self.SERIAL)
+        assert_contract(out)
+        assert out["port"] == "COM3" and out["port_source"] == "USB serial number"
+
+    def test_two_ports_with_one_serial_are_not_chosen_between(self, bench, monkeypatch) -> None:
+        self._ports(monkeypatch, ("COM3", self.SERIAL), ("COM4", self.SERIAL.lower()))
+        out = call("capture_console", probe_serial=self.SERIAL)
+        assert out["status"] == result.FAILED and "COM3, COM4" in out.get("console_note", "")
 
 
 class TestAddressesAndSizesAreCheckedAtTheBoundary:
@@ -2183,7 +2217,9 @@ class TestTheConsoleIsFoundByTheProbesSerial:
         d = tmp_path / "by-id"
         d.mkdir()
         for name in names:
-            (d / name).symlink_to("/dev/ttyACM9")
+            # Only the name is read. A symlink needs a privilege Windows does not
+            # give an ordinary process (WinError 1314 on the Windows laptop, 2026-10-02).
+            (d / name).touch()
         monkeypatch.setattr(server, "_BY_ID_DIR", d)
         return d
 
@@ -2318,7 +2354,7 @@ class TestEveryCallIsTracedToWhoAsked:
     def test_a_held_probe_says_who_holds_it(self, bench, monkeypatch, tmp_path) -> None:
         by_id = tmp_path / "by-id"
         by_id.mkdir()
-        (by_id / "usb-STMicroelectronics_STLINK-V3_AAAA0001-if02").symlink_to("/dev/ttyACM9")
+        (by_id / "usb-STMicroelectronics_STLINK-V3_AAAA0001-if02").touch()
         monkeypatch.setattr(server, "_BY_ID_DIR", by_id)
         monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
         monkeypatch.setattr(server, "release_server", lambda serial=None: True)

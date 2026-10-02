@@ -4,6 +4,15 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+
+- Without udev's `/dev/serial/by-id`, a named probe's console is found by the USB serial number pyserial reports for each port, instead of by listing every probe. On Windows that found COM3 for an STLINK-V3 on the first try.
+- On Windows the toolchain's executables are looked for with `.exe`, and `C:\ST` is searched for an install.
+
+### Fixed
+
+- Tests that assumed POSIX path separators, symlinks or chmod now pass or skip on Windows, and `.gitattributes` keeps git from rewriting the line endings of captured fixtures on checkout.
+
 ## [0.6.0] - 2026-10-02
 
 Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-02: `tools/hwcheck` passed 68 of 68 checks with `--f4`, `--f4-console`, `--jtag` and `--flash`. docs/findings.md has what was run and what each README promise rests on.

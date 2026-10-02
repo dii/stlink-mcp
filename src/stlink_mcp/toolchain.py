@@ -22,6 +22,10 @@ class ToolchainError(RuntimeError):
     you end up debugging the wrong layer."""
 
 
+#: What the executables end in: ".exe" on Windows, nothing elsewhere.
+_EXE = ".exe" if os.name == "nt" else ""
+
+
 @dataclass(frozen=True)
 class Toolchain:
     """Paths to the CubeCLT executables this server drives."""
@@ -38,7 +42,7 @@ class Toolchain:
 
     @property
     def programmer(self) -> Path:
-        return self.root / "STM32CubeProgrammer" / "bin" / "STM32_Programmer_CLI"
+        return self.root / "STM32CubeProgrammer" / "bin" / f"STM32_Programmer_CLI{_EXE}"
 
     # No signing_tool property. STM32_SigningTool_CLI sits next to the
     # programmer, and it is tempting to expose it, but this project does not
@@ -47,16 +51,16 @@ class Toolchain:
 
     @property
     def gdb_server(self) -> Path:
-        return self.root / "STLink-gdb-server" / "bin" / "ST-LINK_gdbserver"
+        return self.root / "STLink-gdb-server" / "bin" / f"ST-LINK_gdbserver{_EXE}"
 
     @property
     def gdb(self) -> Path:
-        return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-gdb"
+        return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-gdb{_EXE}"
 
     @property
     def addr2line(self) -> Path:
         """Turns an address into a function and source line, given the ELF."""
-        return self.root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-addr2line"
+        return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-addr2line{_EXE}"
 
     @property
     def programmer_bin_dir(self) -> Path:
@@ -113,7 +117,7 @@ _CLT_ROOT_ENV = "STLINK_MCP_CLT_ROOT"
 
 #: Where an install is looked for, as stm32cubeclt* directories inside each.
 #: "~" is expanded when searched; a machine with no home directory skips it.
-_SEARCH_BASES = ("/opt/st", "~/st", "/usr/local/st")
+_SEARCH_BASES = ("/opt/st", "~/st", "/usr/local/st") + (("C:/ST",) if os.name == "nt" else ())
 
 #: A macOS location, searched as-is. Not tried on a Mac by this project.
 _MAC_ROOT = Path("/Applications/STMicroelectronics/STM32CubeCLT")
@@ -158,7 +162,7 @@ def find_toolchain() -> Toolchain:
     if env:
         raise ToolchainError(
             f"{_CLT_ROOT_ENV} is {env}, and there is no "
-            "STM32CubeProgrammer/bin/STM32_Programmer_CLI under it. Point it at "
+            f"STM32CubeProgrammer/bin/STM32_Programmer_CLI{_EXE} under it. Point it at "
             "the STM32CubeCLT install directory itself."
         )
     # Every place searched is named, not only the ones that existed. The

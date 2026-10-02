@@ -279,7 +279,7 @@ def _listing_needed(probe_serial: str | None, console: bool) -> bool:
         return True
     if not console:
         return False
-    return not _BY_ID_DIR.is_dir() or settings.console_is_bare_path()
+    return settings.console_is_bare_path()
 
 
 def _serialised(tool: _Tool) -> _Tool:
@@ -392,10 +392,10 @@ def _resolve_probe(
             )
         info = ProbeInfo(serial=probe_serial)
         if console:
-            port, note = _udev_console(probe_serial)
+            port, note, source = _console_by_serial(probe_serial)
             info = dataclasses.replace(
                 info, console_port=port,
-                console_source=_UDEV if port else None, console_note=note,
+                console_source=source if port else None, console_note=note,
             )
         try:
             # STLINK_MCP_CONSOLE pairs still win. The count matters only to a
@@ -441,6 +441,32 @@ _SERIAL_SHAPE = re.compile(r"[0-9A-Fa-f]{8,32}")
 
 #: console_source for a port found by the probe's serial in udev's names.
 _UDEV = "udev serial name"
+_USB_SERIAL = "USB serial number"
+
+
+def _console_by_serial(serial: str) -> tuple[str | None, str | None, str]:
+    """(port, note, source): the serial port that carries this probe's USB serial.
+
+    udev's /dev/serial/by-id names where Linux has them. Elsewhere pyserial's
+    port list, which on Windows reported the ST-LINK's serial for its COM port
+    (COM3, serial 003E00463234510337333934, STLINK-V3, 2026-10-02)."""
+    if _BY_ID_DIR.is_dir():
+        port, note = _udev_console(serial)
+        return port, note, _UDEV
+    try:
+        from serial.tools import list_ports
+        ports = sorted(p.device for p in list_ports.comports()
+                       if (p.serial_number or "").upper() == serial.upper())
+    except Exception:  # noqa: BLE001 - a port list that cannot be read finds nothing
+        return None, None, _USB_SERIAL
+    if len(ports) == 1:
+        return ports[0], None, _USB_SERIAL
+    if len(ports) > 1:
+        return None, (
+            f"Several serial ports carry probe {serial}'s serial ({', '.join(ports)}), so "
+            f"none was chosen. Name one with {settings.CONSOLE}=<probe serial>=<port>."
+        ), _USB_SERIAL
+    return None, None, _USB_SERIAL
 
 
 def _udev_console(serial: str) -> tuple[str | None, str | None]:

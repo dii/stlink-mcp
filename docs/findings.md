@@ -303,3 +303,9 @@ The first hardware run found two things the tests had not. GDB reports the stop 
 
 GDB decides by itself to use a hardware breakpoint where its memory map, from the server, says flash, and reports both kinds as "breakpoint", so the tool reads the map with `info mem` rather than the type. On the H7 the map is read-write except the 2 MB of flash at 0x08000000.
 
+## First contact with Windows (2026-10-02)
+
+A Claude Code session on a Windows 11 laptop ran the steps this session sent it over Remote Control, read-only first. Native Windows, PowerShell 7.6, Python 3.12.10 in a venv outside the clone, no STM32CubeCLT yet, an STLINK-V3 attached as COM3 with Windows' inbox WinUSB and usbser drivers. The suite at v0.6.0: 9 failed, 701 passed, 30 skipped, every skip for want of STM32CubeCLT. Three failures compared output against POSIX paths that Windows prints with backslashes; five built a fake `/dev/serial/by-id` with symlinks, which an ordinary Windows process may not create (WinError 1314); one made a file unreadable with chmod, which on Windows only sets the read-only attribute; and one compared a captured SWO log byte for byte after git's line-ending conversion had turned its LF into CRLF on checkout. `--check` failed as expected: the search covered `/opt/st`, `~/st`, `/usr/local/st` and a macOS path, and the executables were named without `.exe`.
+
+Two of those were the tool, not the tests. Windows has no `/dev/serial/by-id`, so a probe's console was found only through the probe listing, if at all. pyserial's port list on the Windows laptop gave `COM3` with serial number `003E00463234510337333934`, the probe's own, so a named probe's console is now found by that wherever udev's names are missing. And the toolchain is now looked for with `.exe` names and in `C:\ST`, which is the guess this entry records until the installer is run there.
+

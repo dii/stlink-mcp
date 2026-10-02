@@ -88,7 +88,8 @@ class TestTheNotFoundMessageNamesWhereItLooked:
         with pytest.raises(toolchain.ToolchainError) as raised:
             toolchain.find_toolchain()
         message = str(raised.value)
-        for place in ("/opt/st", "~/st", "/usr/local/st", "/Applications"):
+        # The macOS root is a Path, so it prints with the system's separator.
+        for place in ("/opt/st", "~/st", "/usr/local/st", str(Path("/Applications"))):
             assert place in message
 
     def test_a_wrong_root_setting_says_what_is_missing(self, monkeypatch, tmp_path) -> None:

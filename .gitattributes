@@ -1,0 +1,4 @@
+# Fixtures are captured output and compiled images: git must check them out
+# byte for byte. On Windows its line-ending conversion turned a captured SWO
+# log's LF into CRLF and broke a test that compares bytes (2026-10-02).
+tests/fixtures/** -text

@@ -61,7 +61,7 @@ class TestCheck:
             entry.main(["--check"])
         assert stopped.value.code == 0
         out = capsys.readouterr().out
-        assert "/opt/st/clt" in out
+        assert str(Path("/opt/st/clt")) in out
         assert "0038004C3335510735383531" in out and "/dev/ttyACM0 (probe list)" in out
 
     def test_no_toolchain_exits_1_and_says_so(self, machine, monkeypatch, capsys) -> None:
