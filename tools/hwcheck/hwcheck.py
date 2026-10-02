@@ -237,6 +237,7 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
                  "H7: capture_swo reads ITM port 0 over SWO at the core's 64 MHz, and says trace stays on", _why(swo))
 
     await check_names(server, "H7", s, images, report, "h7_vars", "f4_vars", "0x58024400", "board name")
+    await check_stops(server, "H7", s, images, report, "h7_vars", "f4_vars", "h7_vars_hang")
 
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
@@ -270,6 +271,47 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
                  and reg.get("value") == raw.get("words", {}).get(register_address),
                  f"{label}: read_memory reads RCC.CR by name and agrees with the raw word",
                  f"{_why(reg)}; {reg.get('value')} against {raw.get('words', {}).get(register_address)}; {reg.get('svd_source')}")
+
+
+async def check_stops(server: Server, label: str, serial: str, images: Built, report: Report,
+                      own: str, other: str, hang: str | None) -> None:
+    """run_until, the call stack in core_registers, and release resuming the core."""
+    s, elf = serial, str(images.elf[own])
+    await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=1)
+    stop = await server.call("run_until", probe_serial=s, elf_path=elf, location="writer", seconds=5)
+    report.check(stop["status"] == "verified" and any("BKPT" in r for r in stop.get("stop_reason_from_chip", []))
+                 and stop.get("stopped_at", {}).get("function") == "writer" and stop.get("target_halted") is True,
+                 f"{label}: run_until stops at a function, verified by the chip's DFSR", _why(stop))
+    regs = await server.call("core_registers", probe_serial=s, elf_path=elf)
+    report.check(regs["status"] == "verified" and regs.get("core_after", "").startswith("still halted")
+                 and [f.get("function") for f in regs.get("call_stack", [])][:2] == ["writer", "reset_handler"],
+                 f"{label}: core_registers gives the call stack and leaves a stopped core halted", _why(regs))
+    # The fault handler runs only on a fault. reached_tick_five was the first
+    # choice, and the F407 ticks fast enough to reach it within the two seconds.
+    never = await server.call("run_until", probe_serial=s, elf_path=elf, location="default_handler", seconds=2)
+    report.check(never["status"] == "unverified" and "was not reached" in never.get("unverified_because", ""),
+                 f"{label}: a location not reached in time is unverified, and says where the core is", _why(never))
+    watch = await server.call("run_until", probe_serial=s, elf_path=elf, watch="g_watched", seconds=5)
+    report.check(watch["status"] == "verified" and any("DWTTRAP" in r for r in watch.get("stop_reason_from_chip", []))
+                 and watch.get("called_just_before") == "writer" and "before this stop" in watch.get("write_note", ""),
+                 f"{label}: run_until stops after a write to a variable, and names the writer", _why(watch))
+    released = await server.call("release_probe", probe_serial=s)
+    report.check("running again" in json.dumps(released.get("core_after_release", {})),
+                 f"{label}: release_probe resumes a core run_until held, read from DHCSR",
+                 json.dumps(released.get("core_after_release"))[:160])
+    refused = await server.call("run_until", probe_serial=s, elf_path=str(images.elf[other]), location="writer", seconds=2)
+    after = await server.call("read_memory", probe_serial=s, symbol="g_ticks", elf_path=elf)
+    report.check(refused["status"] == "failed" and "another program's code" in refused.get("error", "")
+                 and after["status"] == "verified",
+                 f"{label}: run_until refuses an ELF the target does not run, and leaves the probe free", _why(refused))
+    if hang:
+        await server.call("run_firmware", elf_path=str(images.elf[hang]), probe_serial=s, console_seconds=1)
+        await server.call("release_probe", probe_serial=s)
+        where = await server.call("core_registers", probe_serial=s, elf_path=str(images.elf[hang]))
+        report.check(where["status"] == "verified"
+                     and [f.get("function") for f in where.get("call_stack", [])] == ["level3", "level2", "level1", "reset_handler"]
+                     and where.get("core_after", "").startswith("resumed"),
+                     f"{label}: core_registers finds a hang three calls deep, and lets it run on", _why(where))
 
 
 async def check_flash(server: Server, label: str, serial: str, flash_size: int,
@@ -349,6 +391,7 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     report.check(double["status"] == "unverified" and "32000000" in double.get("unverified_because", ""),
                  "F4: capture_swo at twice the core clock hears nothing and says the clock may be wrong", _why(double))
     await check_names(server, "F4", s, images, report, "f4_vars", "h7_vars", "0x40023800", "all 4 files")
+    await check_stops(server, "F4", s, images, report, "f4_vars", "h7_vars", "f4_vars_hang")
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "F4: reset_target halts at the reset handler", _why(reset))
     return True
@@ -399,6 +442,22 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     report.check(where["status"] == "verified" and where.get("faulting_pc") == f"0x{_udf_address(elf):08X}",
                  "N6: locate_fault finds the udf on its Secure stack",
                  f"{_why(where)}; pc {where.get('faulting_pc')}")
+
+    vars_elf = str(images.elf["n6_vars"])
+    await server.call("run_firmware", elf_path=vars_elf, probe_serial=s, console_seconds=1)
+    kept = await server.call("run_until", probe_serial=s, elf_path=vars_elf, location="writer", seconds=5)
+    report.check(kept["status"] == "unverified" and "without the log" in kept.get("unverified_because", ""),
+                 "N6: a stop through run_firmware's server, kept because the port can close, is unverified", _why(kept))
+    await server.call("release_probe", probe_serial=s)
+    stop = await server.call("run_until", probe_serial=s, elf_path=vars_elf, location="writer", seconds=5)
+    watch = await server.call("run_until", probe_serial=s, elf_path=vars_elf, watch="g_watched", seconds=5)
+    report.check(stop["status"] == "verified" and watch["status"] == "verified"
+                 and watch.get("called_just_before") == "writer",
+                 "N6: after a release, run_until stops at a function and after a write, both verified",
+                 f"{_why(stop)}; {_why(watch)}")
+    released = await server.call("release_probe", probe_serial=s)
+    report.check("running again" in json.dumps(released.get("core_after_release", {})),
+                 "N6: release_probe resumes the core run_until held", json.dumps(released.get("core_after_release"))[:160])
     return True
 
 

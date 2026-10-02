@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import atexit
 import collections
+import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -111,9 +113,17 @@ class GdbServer:
         port: int = 61234,
         serial: str | None = None,
         interface: str = "swd",
+        attach: bool = False,
     ) -> None:
         self.toolchain = toolchain
         self.interface = interface
+        # A server for debugging: attaches to what runs without a reset, and logs
+        # at level 16, the lowest that records the Debug Fault Status Register it
+        # reads at each stop and then clears (measured 2026-10-02). Not for the
+        # run_firmware server, because that log grows by about four times the
+        # image at every load: 271 KB for a 64 KB image.
+        self.attach = attach
+        self.log_path: Path | None = None
         self.access_port = access_port
         self.port = port
         self.serial = serial
@@ -161,9 +171,15 @@ class GdbServer:
             "-z", str(self.port + 1),   # SWO; explicit so the pair is documented
                                         # rather than relying on the +1 default
             "--apid", str(self.access_port),
-            "--halt",                  # reset and halt, so every run starts clean
+            # --halt resets and halts, so every run starts clean; -g attaches to
+            # what is running, halting it without a reset (measured on the H7,
+            # the F407 and the N6).
+            "-g" if self.attach else "--halt",
             "-cp", str(self.toolchain.programmer_bin_dir),
         ]
+        if self.attach:
+            self.log_path = Path(tempfile.mkdtemp(prefix="stlink-mcp-gdbserver-")) / "server.log"
+            argv += ["-l", "16", "-f", str(self.log_path)]
         if self.serial:
             argv += ["-i", self.serial]
         self._proc = subprocess.Popen(
@@ -233,6 +249,26 @@ class GdbServer:
             return False
         return port_is_taken(self.port)
 
+    def log_size(self) -> int:
+        try:
+            return self.log_path.stat().st_size if self.log_path else 0
+        except OSError:
+            return 0
+
+    def halt_reasons_since(self, offset: int) -> list[int]:
+        """The Debug Fault Status Register values the server logged after
+        `offset`, one per stop, as "NVIC_DFSR_REG = 0x00000003" (ST-LINK GDB
+        server 7.14.0 at level 16). Empty without a log."""
+        if self.log_path is None:
+            return []
+        try:
+            with open(self.log_path, "rb") as handle:
+                handle.seek(offset)
+                text = handle.read().decode(errors="replace")
+        except OSError:
+            return []
+        return [int(v, 16) for v in _DFSR_LOGGED.findall(text)]
+
     def __exit__(self, *exc_info: object) -> None:
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
@@ -242,6 +278,12 @@ class GdbServer:
                 self._proc.kill()
                 self._proc.wait(timeout=5)
         self._proc = None
+        if self.log_path is not None:
+            shutil.rmtree(self.log_path.parent, ignore_errors=True)
+            self.log_path = None
+
+
+_DFSR_LOGGED = re.compile(r"NVIC_DFSR_REG = 0x([0-9A-Fa-f]+)")
 
 
 # ---------------------------------------------------------------------------
@@ -307,8 +349,10 @@ def acquire_server(
     port: int = 61234,
     serial: str | None = None,
     interface: str = "swd",
+    attach: bool = False,
 ) -> GdbServer:
-    """The live server for one probe, starting it if needed."""
+    """The live server for one probe, starting it if needed: in attach mode,
+    with its log, when `attach` is set."""
     global _atexit_registered
     with _REGISTRY:
         prune_dead_servers()
@@ -344,7 +388,7 @@ def acquire_server(
                 "Give each board its own GDB port."
             )
 
-        server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface)
+        server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface, attach=attach)
         server.__enter__()
         _sessions[serial] = server
         return server
@@ -364,6 +408,13 @@ def server_is_held(serial: str | None = None) -> bool:
         if serial is None:
             return bool(_sessions)
         return serial in _sessions
+
+
+def held_server(serial: str | None) -> GdbServer | None:
+    """The live server holding this probe, if any."""
+    with _REGISTRY:
+        prune_dead_servers()
+        return _sessions.get(serial)
 
 
 def held_serials() -> list[str | None]:

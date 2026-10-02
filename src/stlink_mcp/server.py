@@ -43,6 +43,8 @@ from mcp.server.mcpserver import Context
 
 from . import __version__
 from . import console as console_mod
+from . import debugger as debugger_mod
+from . import gdbmi
 from . import faults as faults_mod
 from . import image as image_mod
 from . import quirks as quirks_mod
@@ -66,6 +68,7 @@ from .runner import (
     port_is_taken,
     acquire_server,
     held_serials,
+    held_server,
     load_and_run,
     release_server,
     server_is_held,
@@ -884,6 +887,7 @@ the image says. Resets the target first and keeps the GDB server; see
         with _STATE:
             _held[serial] = (probe, info, probe_info)
             _held_by.setdefault(serial, current_caller())
+            _stopped.pop(serial, None)
 
         if port:
             with console_mod.ConsoleCapture(port, settings.console_baud()) as cap:
@@ -1105,6 +1109,7 @@ nothing was held.
     with _STATE:
         affected = [probe_serial] if probe_serial is not None else list(_held)
         quirks = [_held[s][1].quirks for s in affected if s in _held]
+        stops = {s: _stopped.pop(s) for s in affected if s in _stopped}
 
     released = release_server(probe_serial)
     with _STATE:
@@ -1115,6 +1120,8 @@ nothing was held.
     detail: dict[str, Any] = {"released": released, "probes": affected}
     if holders:
         detail["held_by"] = holders
+    if released and stops:
+        detail["core_after_release"] = {s: _core_state_after_release(s, stop) for s, stop in stops.items()}
     if released and any(q.debug_closes_on_run for q in quirks):
         detail["warning"] = (
             "The debug access port cannot be re-acquired now that firmware has "
@@ -1131,6 +1138,29 @@ nothing was held.
         )
 
     return verified("gdb server shut down and the probe freed", **detail)
+
+
+def _core_state_after_release(serial: str | None, stop: dict[str, Any]) -> str:
+    """Whether a core run_until left halted runs again once its server is gone,
+    from DHCSR's S_HALT bit, read without a reset. Stopping the server resumed
+    it on the H7, the F407 and the N6 (measured 2026-10-02); this observes it."""
+    where = f"halted by run_until at {stop.get('address')} ({stop.get('function') or 'unknown function'})"
+    try:
+        probe = Probe(_toolchain(), serial=serial, try_first=_settled_port(serial))
+        info = probe.identify(allow_reset=False)
+        if not info.connected:
+            return f"{where}; whether it runs now could not be read without a reset"
+        dhcsr = probe.read_memory(_DHCSR, 4).get(_DHCSR)
+    except Exception as exc:  # noqa: BLE001
+        return f"{where}; whether it runs now could not be read: {exc}"
+    if dhcsr is None:
+        return f"{where}; whether it runs now could not be read"
+    if dhcsr & _S_HALT:
+        return f"{where}, and still halted: DHCSR reads 0x{dhcsr:08X}"
+    return f"{where}, and running again: DHCSR reads 0x{dhcsr:08X}, S_HALT clear"
+
+
+_DHCSR, _S_HALT = 0xE000EDF0, 1 << 17
 
 
 @mcp.tool()
@@ -1550,6 +1580,280 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
     return verified(f"the register read from the target and decoded with {file_name}", **detail)
 
 
+#: Where run_until left a core halted, per probe. release_probe and run_firmware
+#: clear it; core_registers reads it to leave such a core halted.
+_stopped: dict[str | None, dict[str, Any]] = {}
+
+_HALTED_NOTE = (
+    "The core is held here; the rest of the chip is not. Timers, DMA, USB and "
+    "watchdogs keep running, so what happens around the core afterwards can look "
+    "like a firmware fault. run_until again continues from here; release_probe "
+    "resumes it."
+)
+
+_WRITE_NOTE = (
+    "The write came before this stop, not at it: a watchpoint stopped one to four "
+    "instructions after the writing instruction on the parts measured, past a "
+    "return or a branch. called_just_before names the function the instruction "
+    "before LR called, which on the boards measured was the one that wrote."
+)
+
+
+def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
+    """(server, why the stop cause is unreadable or None, failure or None, started).
+
+    The held server when it was started for debugging. A run_firmware server
+    has no log, because its log grows with every load, so it is replaced with
+    one in attach mode, which halts the core without a reset; stopping it lets
+    the program run on (measured). The exception is a family whose typical image
+    closes the port once it runs, where a new server may not reach the core: its
+    server is kept, and a stop through it cannot be verified."""
+    held = held_server(serial)
+    if held is not None and held.attach:
+        return held, None, None, False
+    if held is not None:
+        with _STATE:
+            cached = _held.get(serial)
+        if cached is not None and cached[1].quirks.debug_closes_on_run:
+            return held, (
+                "the GDB server holding the probe is run_firmware's, which runs without "
+                "the log that records the chip's own reason for a stop, and on this "
+                "family a new server may not reach the core once firmware has run"
+            ), None, False
+        release_server(serial)
+        with _STATE:
+            _held.pop(serial, None)
+            _held_by.pop(serial, None)
+    probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
+    info = probe.identify(allow_reset=False)
+    _remember_port(serial, probe, info)
+    if not info.connected:
+        return None, None, failed(
+            "Could not reach the core without resetting it, and this tool does not reset.",
+            probe_serial=serial, **_connection_fields(probe, info),
+            hint=explain_connect_failure(info, interface),
+        ), False
+    server = acquire_server(
+        toolchain, probe.gdb_access_port(info), _gdb_port_for(serial),
+        serial=serial, interface=interface, attach=True,
+    )
+    with _STATE:
+        _held[serial] = (probe, info, None)
+        _held_by.setdefault(serial, current_caller())
+    return server, None, None, True
+
+
+def _drop_debug_server(serial: str | None) -> None:
+    """Stop a server a refused call started, so the probe is left as it was
+    found; stopping it lets the program run on (measured)."""
+    release_server(serial)
+    with _STATE:
+        _held.pop(serial, None)
+        _held_by.pop(serial, None)
+
+
+def _elf_on_target(session: gdbmi.Session, elf_path: str) -> str | None:
+    """None when the target holds the start of this ELF's code; otherwise why not."""
+    code = symbols_mod.first_code(elf_path, _IMAGE_CHECK_BYTES)
+    if code is None:
+        return "the ELF has no code segment to compare with the target"
+    if debugger_mod.read_bytes(session, code[0], len(code[1])) != code[1]:
+        return (f"the target is not running this ELF: its first {len(code[1])} bytes of code "
+                f"at 0x{code[0]:08X} differ from the ELF's")
+    return None
+
+
+def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
+                       elf_path: str | None) -> dict[str, Any]:
+    if elf_path is not None:
+        try:
+            symbols_mod.first_code(elf_path, 4)
+        except symbols_mod.SymbolError as exc:
+            return failed(str(exc))
+    server = held_server(serial)
+    temporary = server is None
+    session: gdbmi.Session | None = None
+    with _STATE:
+        was_halted = serial in _stopped
+    try:
+        if temporary:
+            server, _, refusal, _started = _debug_server(toolchain, serial, interface)
+            if refusal:
+                return refusal
+        session = gdbmi.Session(toolchain.gdb, elf_path, server.port)
+        mismatch = _elf_on_target(session, elf_path) if elf_path else None
+        regs = debugger_mod.registers(session)
+        stack, cut = debugger_mod.frames(session) if elf_path and not mismatch else ([], False)
+        session.close(detach=not was_halted)
+        session = None
+    except (gdbmi.MiError, RunError, ProbeError, OSError) as exc:
+        if session is not None:
+            session.close(detach=not was_halted)
+        return failed(str(exc), probe_serial=serial)
+    finally:
+        if temporary and server is not None:
+            _drop_debug_server(serial)
+
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        "halted_to_read_registers": True,
+        "core_after": (
+            "still halted where run_until stopped it" if was_halted else
+            "resumed: GDB's detach resumed the core on the H7, the F407 and the N6; "
+            "not observed for this call"
+        ),
+        "target_was_reset": False,
+        "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
+    }
+    if elf_path is not None:
+        detail["elf_path"] = elf_path
+        detail["call_stack"] = stack
+        if cut:
+            detail["call_stack_cut"] = f"deeper than {debugger_mod.MAX_FRAMES} frames; the rest is not shown"
+    if mismatch:
+        return unverified(f"The registers were read, but {mismatch}, so no call stack is given.", **detail)
+    return verified(
+        "registers read through GDB from the halted core"
+        + (", with the call stack from this ELF's debug information" if elf_path else ""),
+        **detail,
+    )
+
+
+@mcp.tool()
+@_serialised
+def run_until(
+    elf_path: str,
+    location: str | None = None,
+    watch: str | None = None,
+    seconds: float = 10.0,
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Run the target until it reaches `location` (a function, "file.c:line" or an
+address) or writes `watch` (a variable or an address), for at most `seconds`,
+and leave the core halted there, with the call stack. Needs the ELF the target
+runs, and refuses another. Verified only when the chip's debug status register
+names the stop; a watchpoint stops just after the write. The rest of the chip
+keeps running. release_probe resumes the core.
+    """
+    if (location is None) == (watch is None):
+        return failed("Give one of location or watch.")
+    too_long = _capture_seconds_problem(seconds, "seconds")
+    if too_long:
+        return failed(too_long)
+    try:
+        symbols_mod.first_code(elf_path, 4)
+    except symbols_mod.SymbolError as exc:
+        return failed(str(exc))
+
+    serial: str | None = None
+    session: gdbmi.Session | None = None
+    try:
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return failed(error)
+        server, no_log, refusal, started = _debug_server(toolchain, serial, interface)
+        if refusal:
+            return refusal
+        with _STATE:
+            was_halted = serial in _stopped
+        session = gdbmi.Session(toolchain.gdb, elf_path, server.port)
+        mismatch = _elf_on_target(session, elf_path)
+        if mismatch:
+            session.close(detach=not was_halted)
+            session = None
+            if started:
+                _drop_debug_server(serial)
+            return failed(
+                f"Refused: {mismatch}, so a breakpoint would land in another program's code. "
+                "Load this ELF, or give the one the target runs.", probe_serial=serial,
+            )
+        try:
+            stop = debugger_mod.run_until(session, server, location=location, watch=watch, seconds=seconds)
+        except debugger_mod.DebugError as exc:
+            session.close(detach=not was_halted)
+            session = None
+            if started:
+                _drop_debug_server(serial)
+            return failed(str(exc), probe_serial=serial)
+        regs = debugger_mod.registers(session)
+        session.close(detach=False)
+        session = None
+    except (gdbmi.MiError, RunError, ProbeError, ToolchainError, OSError) as exc:
+        if session is not None:
+            session.close(detach=False)
+        return failed(str(exc), probe_serial=serial,
+                      **({"gdb_server_held": True} if serial and server_is_held(serial) else {}))
+
+    top = stop.frames[0] if stop.frames else {}
+    where = {"address": f"0x{stop.pc:08X}" if stop.pc is not None else None,
+             "function": top.get("function"), "file": top.get("file"), "line": top.get("line")}
+    with _STATE:
+        _stopped[serial] = {"address": where["address"], "function": where["function"]}
+    exception = regs.get("XPSR", 0) & 0x1FF
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        "elf_path": elf_path,
+        **stop.detail,
+        "stopped_at": where,
+        "call_stack": stop.frames,
+        "seconds_waited": round(stop.seconds, 2),
+        "stop_reason_from_chip": [
+            f"0x{v:08X} ({'+'.join(debugger_mod.dfsr_names(v))})" for v in stop.dfsr
+        ],
+        "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
+        "target_halted": True,
+        "halted_note": _HALTED_NOTE,
+    }
+    if stop.frames_cut:
+        detail["call_stack_cut"] = f"deeper than {debugger_mod.MAX_FRAMES} frames; the rest is not shown"
+    if exception:
+        detail["in_exception"] = f"{exception} ({faults_mod.exception_name(exception)})"
+    what = location if location is not None else f"a write to {watch}"
+    place = f"{where['function'] or where['address']}" + (f" ({where['file']}:{where['line']})" if where["file"] else "")
+    if not stop.reached:
+        reason = f"{what} was not reached in {seconds:g} s. The core was interrupted and is halted in {place}."
+        if exception:
+            reason += (f" It is in the {faults_mod.exception_name(exception)} handler: release_probe, "
+                       "then read_fault_status and locate_fault, say why.")
+        return unverified(reason, **detail)
+    if no_log:
+        return unverified(f"The core stopped in {place} by GDB's account, but {no_log}.", **detail)
+    if not stop.dfsr:
+        return unverified(
+            f"The core stopped in {place}, but the GDB server's log has no stop reason for it, "
+            "so the chip's own account of the stop is missing.", **detail
+        )
+    bits = 0
+    for value in stop.dfsr:
+        bits |= value
+    logged = ", ".join(f"0x{v:08X}" for v in stop.dfsr)
+    if location is not None:
+        if bits & debugger_mod.DFSR_BKPT and stop.detail.get("at_location"):
+            return verified(
+                f"the core stopped at {location}, {where['address']}, and the chip's Debug Fault "
+                f"Status Register, as the GDB server read it at the stop, names a breakpoint ({logged})",
+                **detail,
+            )
+        return failed(
+            f"The core stopped at {where['address']} in {place}, not at {location}; the chip's Debug "
+            f"Fault Status Register read {logged}.", **detail
+        )
+    if bits & debugger_mod.DFSR_DWTTRAP:
+        detail["write_note"] = _WRITE_NOTE
+        return verified(
+            f"the core stopped after a write to {watch}, and the chip's Debug Fault Status Register, "
+            f"as the GDB server read it at the stop, names a watchpoint ({logged})",
+            **detail,
+        )
+    return failed(
+        f"The core stopped in {place}, but not for the watchpoint: the chip's Debug Fault Status "
+        f"Register read {logged}.", **detail
+    )
+
+
 #: Where a user describes boards this project has not characterised.
 _BOARDS_ENV = "STLINK_MCP_BOARDS"
 
@@ -1871,15 +2175,15 @@ target stopped, use the GDB server that run_firmware keeps alive.
 def core_registers(
     probe_serial: str | None = None,
     interface: Interface = "swd",
+    elf_path: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Read the core registers, halting the core for the read.
+    """Read the core registers, halting the core for the read; with `elf_path`,
+also the call stack with each frame's arguments and locals.
 
-The direct way to find out what a program is doing, and what settles "did it
-start" when there is no console. Does not claim the core is still halted
-afterwards: a programmer halt did not outlive its command on the boards
-measured. Reports `target_was_reset` when reaching the core needed a reset.
-Perturbing, so never used inside routine checks.
+Says whether the core runs again afterwards. Works while run_until holds the
+core, and leaves it halted there. Reports `target_was_reset` when reaching the
+core needed a reset. Perturbing, so never used inside routine checks.
     """
     probe: Probe | None = None
     try:
@@ -1887,10 +2191,8 @@ Perturbing, so never used inside routine checks.
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        if server_is_held(serial):
-            return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-            )
+        if elf_path is not None or held_server(serial) is not None:
+            return _registers_via_gdb(toolchain, serial, interface, elf_path)
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         # The connect is checked before the read. It used to be discarded, so a
         # target nothing could reach surfaced as a bare parse failure from the

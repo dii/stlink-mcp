@@ -1,0 +1,65 @@
+[0.292] handleTargetDeviceEvent():  GDB session, device event: 2
+[0.296] Device_GetStatus():  ST-LINK device status: RUN_MODE
+[0.551] Device_GetStatus():  ST-LINK device status: HALT_MODE
+[0.552] Device_GetHaltReason():  NVIC_DFSR_REG = 0x00000005 
+[0.552] Device_GetHaltReason():  Stm32Device, getHaltReason, code: 2
+[0.552] handleTargetDeviceEvent():  GDB session, device event: 1
+[0.555] write():  <12> Tx: $T05#b9
+[0.555] read():  <12> Rx: $g#67
+[0.560] write():  <12> Tx: $46080000000000007f841e00230400004c0100240000000028010024000000000000000000000000000000000000000000000000e8ff0724fb000024b600002400000021000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0000000000000000000000000000000000000000e8ff072400000000#64
+[0.560] read():  <12> Rx: $qXfer:threads:read::0,1000#92
+[0.560] write():  <12> Tx: $l<?xml version="1.0"?><threads><thread id="1" core="0" name="main"></thread></threads>#f7
+[0.560] read():  <12> Rx: $z2,2400014c,4#f6
+[0.560] write():  <12> Tx: $OK#9a
+[0.560] read():  <12> Rx: $m240000b6,4#8b
+[0.560] handlePacket():  Reading 0x4 bytes of memory from addr 0x240000b6 
+[0.561] write():  <12> Tx: $a36803f0#fb
+[0.561] read():  <12> Rx: $m2400014c,4#8b
+[0.561] handlePacket():  Reading 0x4 bytes of memory from addr 0x2400014c 
+[0.562] write():  <12> Tx: $46080000#92
+[0.562] read():  <12> Rx: $m2400014c,4#8b
+[0.562] handlePacket():  Reading 0x4 bytes of memory from addr 0x2400014c 
+[0.562] write():  <12> Tx: $46080000#92
+[0.562] read():  <12> Rx: $m2400014c,4#8b
+[0.562] handlePacket():  Reading 0x4 bytes of memory from addr 0x2400014c 
+[0.562] write():  <12> Tx: $46080000#92
+[0.562] read():  <12> Rx: $Z2,2400014c,4#d6
+[0.564] write():  <12> Tx: $OK#9a
+[0.564] read():  <12> Rx: $c#63
+[0.569] handleTargetDeviceEvent():  GDB session, device event: 4
+[0.570] handleTargetDeviceEvent():  GDB session, device event: 2
+[0.573] Device_GetStatus():  ST-LINK device status: RUN_MODE
+[0.990] Device_GetStatus():  ST-LINK device status: HALT_MODE
+[0.991] Device_GetHaltReason():  NVIC_DFSR_REG = 0x00000005 
+[0.991] Device_GetHaltReason():  Stm32Device, getHaltReason, code: 2
+[0.991] handleTargetDeviceEvent():  GDB session, device event: 1
+[0.993] write():  <12> Tx: $T05#b9
+[0.993] read():  <12> Rx: $g#67
+[0.998] write():  <12> Tx: $48080000000000007f841e00240400004c0100240000000028010024000000000000000000000000000000000000000000000000e8ff0724fb000024b600002400000021000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0000000000000000000000000000000000000000e8ff072400000000#67
+[0.998] read():  <12> Rx: $qXfer:threads:read::0,1000#92
+[0.998] write():  <12> Tx: $l<?xml version="1.0"?><threads><thread id="1" core="0" name="main"></thread></threads>#f7
+[0.999] read():  <12> Rx: $z2,2400014c,4#f6
+[0.999] write():  <12> Tx: $OK#9a
+[0.999] read():  <12> Rx: $m240000b6,4#8b
+[0.999] handlePacket():  Reading 0x4 bytes of memory from addr 0x240000b6 
+[0.999] write():  <12> Tx: $a36803f0#fb
+[1.000] read():  <12> Rx: $m2400014c,4#8b
+[1.000] handlePacket():  Reading 0x4 bytes of memory from addr 0x2400014c 
+[1.000] write():  <12> Tx: $48080000#94
+[1.000] read():  <12> Rx: $m2400014c,4#8b
+[1.000] handlePacket():  Reading 0x4 bytes of memory from addr 0x2400014c 
+[1.000] write():  <12> Tx: $48080000#94
+[1.001] read():  <12> Rx: $m2400014c,4#8b
+[1.001] handlePacket():  Reading 0x4 bytes of memory from addr 0x2400014c 
+[1.001] write():  <12> Tx: $48080000#94
+[1.001] read():  <12> Rx: $Z2,2400014c,4#d6
+[1.002] write():  <12> Tx: $OK#9a
+[1.002] read():  <12> Rx: $c#63
+[1.008] handleTargetDeviceEvent():  GDB session, device event: 4
+[1.008] handleTargetDeviceEvent():  GDB session, device event: 2
+[1.013] Device_GetStatus():  ST-LINK device status: RUN_MODE
+[1.431] Device_GetStatus():  ST-LINK device status: HALT_MODE
+[1.431] Device_GetHaltReason():  NVIC_DFSR_REG = 0x00000005 
+[1.431] Device_GetHaltReason():  Stm32Device, getHaltReason, code: 2
+[1.431] handleTargetDeviceEvent():  GDB session, device event: 1
+[1.432] write():  <12> Tx: $T05#b9

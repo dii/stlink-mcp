@@ -20,7 +20,7 @@ from stlink_mcp import __version__
 TOOLS = {
     "board_state", "capture_console", "capture_swo", "core_registers", "flash_firmware",
     "list_probes", "locate_fault", "read_fault_status", "read_memory",
-    "release_probe", "reset_target", "run_firmware",
+    "release_probe", "reset_target", "run_firmware", "run_until",
 }
 
 
@@ -67,7 +67,8 @@ def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
     # N8: every tool that connects offers the interface as a choice of two, so
     # a client sees the options without reading a docstring.
     connecting = {"board_state", "run_firmware", "flash_firmware", "read_memory",
-                  "reset_target", "core_registers", "read_fault_status", "locate_fault"}
+                  "reset_target", "core_registers", "read_fault_status", "locate_fault",
+                  "run_until"}
     for name, tool in seen["tools"].items():
         prop = tool.input_schema.get("properties", {}).get("interface")
         if name in connecting:

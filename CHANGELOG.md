@@ -8,7 +8,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 - `read_memory` reads a variable by name, decoded with the ELF's types, and `verified` only when the target runs that ELF; and a peripheral register by name, decoded into its fields from ST's SVD files, with the file chosen from the board name or the device name and used only where every candidate file agrees. Measured on an STM32H7 and an STM32F407.
 - `pyelftools` is a dependency, for reading types from an ELF's DWARF.
-- `tools/hwcheck` reads a variable and a register by name on the H7 and the F407.
+- `run_until`, which runs the target until it reaches a location or writes a variable and holds the core there, with the call stack, `verified` only on the Debug Fault Status Register the GDB server read at the stop. Measured on an STM32H7, an STM32F407 and an STM32N6.
+- `core_registers` takes `elf_path` and returns the call stack with each frame's arguments and locals, through GDB, and works while `run_until` holds the core.
+- `release_probe` reads DHCSR after releasing a core `run_until` held, and says whether it runs again.
+- `tools/hwcheck` reads a variable and a register by name on the H7 and the F407, and checks `run_until`, the call stack and the resume on all three boards.
 
 ## [0.5.0] - 2026-10-02
 

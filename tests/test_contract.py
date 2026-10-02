@@ -42,6 +42,7 @@ TOOL_CALLS: dict[str, dict] = {
     "reset_target": {},
     "read_fault_status": {},
     "locate_fault": {},
+    "run_until": {"elf_path": "/nonexistent.elf", "location": "main"},
 }
 
 
@@ -918,6 +919,118 @@ class TestReadingByName:
         out = call("read_memory", address=None, register="ETH.MACISR")
         assert_contract(out)
         assert out["status"] == result.FAILED and "changing state" in out["error"]
+
+
+class TestRunUntilClaimsOnlyWhatTheChipSaid:
+    """run_until's verdicts, with the GDB side faked. What the fakes return is
+    what the H7, the F407 and the N6 gave on 2026-10-02: the server logs the
+    Debug Fault Status Register at each stop, 0x3 for a breakpoint and 0x5 for a
+    watchpoint; GDB alone cannot tell a watchpoint stop from any other."""
+
+    ELF = str(Path(__file__).parent / "fixtures" / "elf" / "h7_vars_dwarf5.elf")
+
+    class _Server:
+        port = 61234
+        attach = True
+
+    class _Session:
+        closes: list[bool] = []
+
+        def __init__(self, gdb, elf, port) -> None:
+            pass
+
+        def close(self, detach: bool) -> None:
+            type(self).closes.append(detach)
+
+    def _rig(self, monkeypatch, *, stop=None, no_log=None, mismatch=None, xpsr=0x01000000):
+        from stlink_mcp import debugger
+        type(self)._Session.closes = []
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(gdb=Path("arm-none-eabi-gdb"), root=Path("/")))
+        type(self).dropped = []
+        monkeypatch.setattr(server, "_debug_server", lambda t, s, i: (self._Server(), no_log, None, True))
+        monkeypatch.setattr(server, "_drop_debug_server", lambda serial: type(self).dropped.append(serial))
+        monkeypatch.setattr(server.gdbmi, "Session", self._Session)
+        monkeypatch.setattr(server, "_elf_on_target", lambda session, elf: mismatch)
+        monkeypatch.setattr(server.debugger_mod, "registers", lambda session: {"PC": 0x24000042, "XPSR": xpsr})
+        if stop is not None:
+            monkeypatch.setattr(server.debugger_mod, "run_until", lambda session, srv, **kw: stop)
+        monkeypatch.setattr(server, "_stopped", {})
+        return debugger
+
+    def _stop(self, debugger, *, reached=True, dfsr=(0x3,), at=True, watch=False):
+        frames = [{"function": "writer", "file": "images/debug_target.c", "line": 39, "address": "0x24000042"}]
+        detail = {"watched": {"expression": "g_watched"}} if watch else {"at_location": at}
+        return debugger.Stop(reached, 0.4, 0x24000042, "breakpoint-hit", list(dfsr), frames, False, detail)
+
+    def test_a_breakpoint_the_chip_names_is_verified_and_held(self, bench, monkeypatch) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger))
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and "names a breakpoint (0x00000003)" in out["verified_by"]
+        assert out["target_halted"] is True and "watchdogs" in out["halted_note"]
+        assert self._Session.closes == [False], "disconnected, leaving the core halted"
+
+    def test_a_watchpoint_says_the_write_came_before(self, bench, monkeypatch) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger, dfsr=(0x5,), watch=True))
+        out = call("run_until", elf_path=self.ELF, location=None, watch="g_watched")
+        assert out["status"] == result.VERIFIED and "watchpoint" in out["verified_by"]
+        assert "before this stop" in out["write_note"]
+
+    @pytest.mark.parametrize("kw, says", [
+        ({"reached": False}, "was not reached in"),
+        ({"dfsr": ()}, "no stop reason for it"),
+    ])
+    def test_what_the_chip_did_not_say_is_unverified(self, bench, monkeypatch, kw, says) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger, **kw))
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED and says in out["unverified_because"]
+
+    def test_a_server_without_its_log_cannot_verify(self, bench, monkeypatch) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger), no_log="the server runs without its log")
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert out["status"] == result.UNVERIFIED and "without its log" in out["unverified_because"]
+
+    def test_interrupted_in_a_fault_handler_points_at_the_fault_tools(self, bench, monkeypatch) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger, reached=False), xpsr=0x01000003)
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert out["status"] == result.UNVERIFIED and "HardFault" in out["unverified_because"]
+        assert out["in_exception"].startswith("3 ")
+
+    def test_a_stop_somewhere_else_is_failed(self, bench, monkeypatch) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger, at=False, dfsr=(0x1,)))
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert out["status"] == result.FAILED and "not at writer" in out["error"]
+
+    def test_another_program_on_the_target_is_refused_and_resumed(self, bench, monkeypatch) -> None:
+        self._rig(monkeypatch, mismatch="the target is not running this ELF")
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert out["status"] == result.FAILED and "another program's code" in out["error"]
+        assert self._Session.closes == [True], "detached, so the core it halted runs on"
+        assert self.dropped, "the server it started is stopped, leaving the probe as it was"
+
+    @pytest.mark.parametrize("args", [{"location": None}, {"watch": "g_watched"}])
+    def test_one_of_location_or_watch(self, bench, args) -> None:
+        out = call("run_until", elf_path=self.ELF, **args)
+        assert out["status"] == result.FAILED and "one of location or watch" in out["error"]
+
+    def test_core_registers_leaves_a_stopped_core_halted(self, bench, monkeypatch) -> None:
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger))
+        monkeypatch.setattr(server, "held_server", lambda serial: self._Server())
+        monkeypatch.setattr(server.debugger_mod, "frames", lambda session, depth=8: ([{"function": "writer"}], False))
+        call("run_until", elf_path=self.ELF, location="writer")
+        out = call("core_registers", elf_path=self.ELF)
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and out["call_stack"] == [{"function": "writer"}]
+        assert out["core_after"].startswith("still halted")
+        assert self._Session.closes == [False, False]
 
 
 class TestAddressesAndSizesAreCheckedAtTheBoundary:
