@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-02
+
+Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-02: `tools/hwcheck` passed 42 of 42 checks with `--f4`, `--f4-console`, `--jtag` and `--flash`. docs/findings.md has what was run and what each README promise rests on.
+
 ### Added
 
 - STM32F4 (device 0x413) is a measured family: run on an STM32F407IGT6 board through an ST-LINK/V2, RAM run, faults, flash written and read back, reset to it.
@@ -87,7 +91,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/dii/stlink-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dii/stlink-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dii/stlink-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dii/stlink-mcp/releases/tag/v0.1.0
