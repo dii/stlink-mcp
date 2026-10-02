@@ -117,10 +117,12 @@ _CLT_ROOT_ENV = "STLINK_MCP_CLT_ROOT"
 
 #: Where an install is looked for, as stm32cubeclt* directories inside each.
 #: "~" is expanded when searched; a machine with no home directory skips it.
-_SEARCH_BASES = ("/opt/st", "~/st", "/usr/local/st") + (("C:/ST",) if os.name == "nt" else ())
+#: On Windows only C:\ST, which is where the installer is expected to put it.
+_SEARCH_BASES = ("C:/ST",) if os.name == "nt" else ("/opt/st", "~/st", "/usr/local/st")
 
-#: A macOS location, searched as-is. Not tried on a Mac by this project.
-_MAC_ROOT = Path("/Applications/STMicroelectronics/STM32CubeCLT")
+#: A macOS location, searched as-is. Not tried on a Mac by this project, and
+#: not searched or named on Windows.
+_MAC_ROOT: Path | None = None if os.name == "nt" else Path("/Applications/STMicroelectronics/STM32CubeCLT")
 
 
 def _candidate_roots() -> list[Path]:
@@ -138,7 +140,7 @@ def _candidate_roots() -> list[Path]:
             continue
         if base.is_dir():
             roots.extend(sorted(base.glob("stm32cubeclt*"), key=_version_key, reverse=True))
-    if _MAC_ROOT.is_dir():
+    if _MAC_ROOT is not None and _MAC_ROOT.is_dir():
         roots.append(_MAC_ROOT)
     return roots
 
@@ -171,7 +173,8 @@ def find_toolchain() -> Toolchain:
     found = ", ".join(str(c) for c in candidates)
     raise ToolchainError(
         "No STM32CubeCLT install found. Looked for stm32cubeclt* directories in "
-        f"{', '.join(_SEARCH_BASES)}, and at {_MAC_ROOT}"
+        f"{', '.join(str(Path(b)) for b in _SEARCH_BASES)}"
+        + (f", and at {_MAC_ROOT}" if _MAC_ROOT is not None else "")
         + (f"; found {found}, none with STM32_Programmer_CLI" if found else "")
         + f". Set {_CLT_ROOT_ENV} to the install directory."
     )

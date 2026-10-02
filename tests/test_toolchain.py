@@ -88,9 +88,13 @@ class TestTheNotFoundMessageNamesWhereItLooked:
         with pytest.raises(toolchain.ToolchainError) as raised:
             toolchain.find_toolchain()
         message = str(raised.value)
-        # The macOS root is a Path, so it prints with the system's separator.
-        for place in ("/opt/st", "~/st", "/usr/local/st", str(Path("/Applications"))):
-            assert place in message
+        # Each place prints as a Path, with the system's separator; Windows
+        # searches C:\ST alone and names no macOS folder.
+        places = [str(Path(b)) for b in toolchain._SEARCH_BASES]
+        places += [str(toolchain._MAC_ROOT)] if toolchain._MAC_ROOT is not None else []
+        assert places and all(place in message for place in places)
+        if toolchain.os.name != "nt":
+            assert "/opt/st" in message and "/Applications" in message
 
     def test_a_wrong_root_setting_says_what_is_missing(self, monkeypatch, tmp_path) -> None:
         import pytest
@@ -98,7 +102,7 @@ class TestTheNotFoundMessageNamesWhereItLooked:
         from stlink_mcp import toolchain
 
         monkeypatch.setenv("STLINK_MCP_CLT_ROOT", str(tmp_path))
-        with pytest.raises(toolchain.ToolchainError, match="STM32_Programmer_CLI under it"):
+        with pytest.raises(toolchain.ToolchainError, match=r"STM32_Programmer_CLI(\.exe)? under it"):
             toolchain.find_toolchain()
 
     def test_a_missing_home_does_not_stop_the_search(self, monkeypatch) -> None:
@@ -118,12 +122,13 @@ class TestTheNewestCompleteInstallIsChosen:
 
     @staticmethod
     def _install(base, name, *, gdb_server=True):
+        from stlink_mcp.toolchain import _EXE  # ".exe" on Windows, as the installer names them
         root = base / name
         for rel in ("STM32CubeProgrammer/bin/STM32_Programmer_CLI",
                     "GNU-tools-for-STM32/bin/arm-none-eabi-gdb",
                     *(["STLink-gdb-server/bin/ST-LINK_gdbserver"] if gdb_server else [])):
-            (root / rel).parent.mkdir(parents=True, exist_ok=True)
-            (root / rel).write_text("")
+            (root / f"{rel}{_EXE}").parent.mkdir(parents=True, exist_ok=True)
+            (root / f"{rel}{_EXE}").write_text("")
         return root
 
     @pytest.fixture
