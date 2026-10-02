@@ -177,7 +177,7 @@ class GdbServer:
                 return self
             if self._proc.poll() is not None:
                 out = strip_ansi(self._proc.stdout.read() if self._proc.stdout else "")
-                raise RunError(f"GDB server exited before listening:\n{out.strip()}")
+                raise RunError(server_exit_message(out))
             time.sleep(0.2)
 
         # Its output says why, and used to be thrown away here: the server was
@@ -397,6 +397,26 @@ def release_all_servers() -> bool:
             released = True
         _sessions.clear()
         return released
+
+
+def server_exit_message(output: str) -> str:
+    """Why the GDB server stopped before it listened, with its own output.
+
+    "Error in initializing ST-LINK device. Reason: Unknown. Please check power
+    and cabling to target." is what it printed for an STM32N6 whose debug
+    access port an image had closed, with the cabling fine and the part still
+    identifying to the programmer (measured 2026-10-02)."""
+    message = f"GDB server exited before listening:\n{output.strip()}"
+    if "Error in initializing ST-LINK device" in output:
+        message = (
+            "The GDB server could not attach to the core, and its advice to check "
+            "power and cabling is a guess. A debug access port that an image has "
+            "closed fails exactly this way, as on an STM32N6 after its start-up "
+            "code turns the SYSCFG clock off; board_state then reports that port "
+            "unreachable even with a resetting connect, and only a power cycle "
+            "reopens it.\n" + message
+        )
+    return message
 
 
 _GDB_SCRIPT = """\

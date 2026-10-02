@@ -182,6 +182,27 @@ def reset_landed_at_vector(pc: int | None, reset_handler: int | None) -> bool:
     return pc == (reset_handler & ~1)
 
 
+def no_data_read(address: int, output: str) -> ProbeError:
+    """A read that connected and identified the target, and then returned nothing.
+
+    The programmer's line for it is the same for two different causes, measured
+    on 2026-10-02: a read across the end of flash or RAM on an STM32F407 (and
+    on an STM32H7 the day before) fails whole, and so does any read on an
+    STM32N6 whose image has turned the SYSCFG clock off and closed AP1, though
+    the part still identifies on that port."""
+    message = f"No data read at 0x{address:08X}."
+    if "failed to read the requested memory content" in output:
+        message += (
+            " The programmer connected and identified the target, and the read "
+            "itself failed. Two things fail this way: a range that runs past the "
+            "end of flash or RAM, which fails whole rather than returning the part "
+            "that exists; and a debug access port that has closed although the part "
+            "still identifies, as on an STM32N6 once its image's start-up code has "
+            "turned the SYSCFG clock off, where only a power cycle reopens it."
+        )
+    return ProbeError(f"{message} Output was:\n{output.strip()}")
+
+
 def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     """Turn an unhelpful CLI error into the two things it usually means.
 
@@ -499,9 +520,7 @@ class Probe:
         result = self._run(argv, timeout=90)
         words = parse_memory(result.stdout)
         if not words:
-            raise ProbeError(
-                f"No data read at 0x{address:08X}. Output was:\n{result.stdout.strip()}"
-            )
+            raise no_data_read(address, result.stdout)
         return words
 
     def identify_and_read(
@@ -533,9 +552,7 @@ class Probe:
         self.access_port_provenance = quirks.provenance_of("access_port")
         words = parse_memory(result.stdout)
         if not words:
-            raise ProbeError(
-                f"No data read at 0x{address:08X}. Output was:\n{result.stdout.strip()}"
-            )
+            raise no_data_read(address, result.stdout)
         return info, words
 
     def core_registers(self) -> dict[str, int]:

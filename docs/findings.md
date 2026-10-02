@@ -170,20 +170,20 @@ Skipping the listing exposed something it had been hiding. The programmer ignore
 | --- | --- | --- |
 | No tool reports success it did not observe; `ok` is never set by hand | Every tool's verified path, on the H7 and N6, 2026-10-01 | The no-literal-`ok` rule is a test |
 | ST's tools overstate (the three examples) | N6, 2026-08-14 to 08-16 | |
-| `board_state` scans ports 0 and 1, and retries with a resetting connect | Three probes by hotplug, 2026-10-01; the reset retry on the N6 with AP1 closed, 2026-08-15 | `target_was_reset` after a resetting connect that then fails: fake |
+| `board_state` scans ports 0 and 1, and retries with a resetting connect | Three probes by hotplug, 2026-10-01; the reset retry on the N6 with AP1 closed, 2026-08-15 and 2026-10-02, `unverified` on AP0 with `target_was_reset` true | |
 | `board_state` is `unverified` while a server holds the probe | H7, 2026-10-01 | |
 | `run_firmware` refuses an image not linked for RAM, or with a segment outside SRAM | H7, a flash-linked ELF and one with a flash segment beside a RAM vector table, 2026-10-01 | |
 | `run_firmware` is verified by the new image's console, and output from before the run never counts | H7, 2026-10-01; an F407 through a USB serial adapter named by a setting, 2026-10-02; the N6's silent image `unverified` | |
 | `run_firmware` is `failed` when the GDB batch does not reach its end markers | H7, an image with a segment at 0x2C000000, where nothing answers, 2026-10-01; GDB's own output in the result | |
 | `flash_firmware` reads back and compares, and takes only a `.bin` | H7 at 0x08000000, 2026-10-01; F407 at 0x08000000, 2026-10-01 and through `tools/hwcheck` 2026-10-02 | A mismatch, and a failed readback: fake; a write-protected sector fails at the erase, before any readback (F407, 2026-10-02). The N6 path through its external loader: not measured |
-| `read_memory` connects hotplug-only and refuses rather than reset at a closed port | Hotplug reads throughout, 2026-10-01 | The refusal at a closed port: fake; the closing itself measured 2026-08-14 |
+| `read_memory` connects hotplug-only and fails rather than reset at a closed port | Hotplug reads throughout, 2026-10-01; the N6 with AP1 closed, 2026-10-02: `failed`, no reset, naming the closed port as a cause | |
 | A short read is `failed`, naming what is missing | | Fake. On the H7 a read across the end of RAM failed whole instead (2026-10-01), and on the F407 reads across the ends of flash, SRAM and CCM RAM, up to 16 KB with the end 8 KB in (2026-10-02), so no board has produced a short read |
 | `core_registers` halts for the read and claims nothing after | H7, 2026-08-17 and 2026-10-01; N6, 2026-10-01 | |
 | `read_fault_status` decodes the registers | An undefined instruction on the H7 and the N6, 2026-10-01 | Refusing Cortex-M0, M0+, M1 and M23: fake, no such board here. A partial read: fake |
 | `locate_fault` finds the faulting instruction, and says when the frame does not look like one | H7 on MSP, on PSP and with an FP frame; N6 on its Secure MSP; a handler that pushed first; thread mode refused; 2026-10-01. An overwritten LR refused, and an imprecise bus error noted, 2026-10-01 | The Armv8-M extra state: fake |
 | `capture_console` reads the port mapped to the probe | Probe list and udev names, 2026-10-01; a setting pair through the V2 | |
 | A capture that hears nothing is `unverified` | An F407 sending on a pin no adapter was wired to, 2026-10-01 | |
-| `reset_target` halts at the reset handler and compares it with the vector table | H7 through the V3E, 2026-08-16 and 2026-10-01; through the V2 over JTAG, 2026-10-01 | The N6 was not reset today |
+| `reset_target` halts at the reset handler and compares it with the vector table | H7 through the V3E, 2026-08-16 and 2026-10-01; through the V2 over JTAG, 2026-10-01; F407, 2026-10-01. The N6, 2026-10-02: `unverified`, since its post-reset PC is not predictable, and its port stayed open | |
 | `release_probe` is `unverified` when nothing was held | 2026-10-01 | |
 | `list_probes` lists each probe once and works while others are held | 2026-08-15; 2026-10-01, at 11 s while held | |
 | The server is held because the N6's stock start-up closes AP1 | 2026-08-14 to 08-16 | |
@@ -247,4 +247,14 @@ Both rows were tried on the F407 board, and both stay fake, for reasons now meas
 A short read. `read_memory` refuses a read that returns fewer words than asked for, and no board had produced one. On the F407, reads that cross the end of flash (0x08100000), of SRAM (0x20020000) and of the CCM RAM (0x10010000) all failed whole, with "failed to read the requested memory content", as on the H7; so did reads of 8 KB and 16 KB placed with the end 4 KB and 8 KB in, so the programmer does not hand back the blocks it read before the fault. The guard stays, because what it guards against is a parser or format change rather than the target.
 
 A flash write the readback rejects. With sector 11 write-protected in the option bytes, `flash_firmware` of 256 bytes at 0x080F0000 failed in 0.3 seconds: the programmer stopped at "Erasing internal memory sector 11 / Error: failed to erase memory", so the write was refused before anything could be read back. Its output never says why an erase failed, so the tool now puts write protection first in that error, with the programmer's command to show it. The protection was then removed, the option bytes read back with no sector protected and read protection still at Level 0, and sector 11 read back identical to the copy taken before.
+
+## The N6 with its port closed on purpose (2026-10-02)
+
+The rows that needed the N6's debug port closed had only been checked against fakes. `tools/hwcheck` now builds `n6_close`, which makes the one write that closes the port in ST's start-up code, `RCC->APB4ENCR2 = SYSCFGENC` (0x56029278, bit 0), and nothing else. Before it, `reset_target` on the N6 came back `unverified`, saying the part's post-reset PC is not predictable from the table, and the port stayed open: `board_state` and a run worked straight after.
+
+After it ran, through the server: a held probe refused `read_memory` as before. Released, `read_memory` and `read_fault_status` connected without reset, the programmer identified the part on AP1, and the read failed with "failed to read the requested memory content". `board_state` was `unverified`, AP1 "unreachable even with a resetting connect", falling back to AP0, with `target_was_reset` true. `core_registers` failed with `target_was_reset` true. `run_firmware` failed because the GDB server exited before it listened: "Target unknown error 32 / Error in initializing ST-LINK device. Reason: Unknown. Please check power and cabling to target." A power cycle reopened the port.
+
+Two of those answers were the programmer's or the server's words alone. The read's line is also what a read across the end of a memory region gives on the F407 and the H7, so the read now names both causes; the server's points at cabling, so its failure now says first that a closed port looks exactly like this and that `board_state` tells them apart. The captures are fixtures.
+
+The order of a JTAG session and SWD loads on the H7 was also tried, as the cause of its two failed loads on 2026-10-01: three rounds of a JTAG run through the ST-LINK/V2 followed by two SWD runs through the V3E all came back as expected. That ordering is not the cause, and the cause is not known.
 

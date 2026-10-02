@@ -178,3 +178,39 @@ class TestAFlashWriteThatCannotEraseSaysWhy:
         with pytest.raises(pm.ProbeError) as raised:
             probe.program_flash("image.bin", 0x08000000)
         assert "Write protection" not in str(raised.value)
+
+
+class TestAClosedPortIsNamedAsACause:
+    """Captured on 2026-10-02 from a NUCLEO-N657X0-Q after an image turned the
+    SYSCFG clock off, as ST's stock start-up code does: the programmer still
+    connects and identifies the part on AP1, and the read itself fails; the GDB
+    server will not start, and blames power and cabling. The F407 and the H7
+    fail a read across the end of a memory region with the same line."""
+
+    def test_the_one_call_read_names_both_causes(self, monkeypatch) -> None:
+        output = _banner("read_n6_ap1_closed.txt")
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 1, output))
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"),
+                         serial="003C002C3335510535383531", try_first=1)
+        with pytest.raises(pm.ProbeError) as raised:
+            probe.identify_and_read(0x341B0000, 32)
+        message = str(raised.value)
+        assert "end of" in message and "power cycle" in message
+        assert message.index("power cycle") < message.index("Output was")
+
+    def test_the_two_call_read_says_it_too(self, monkeypatch) -> None:
+        output = _banner("read_n6_ap1_closed.txt")
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 1, output))
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="003C002C3335510535383531")
+        with pytest.raises(pm.ProbeError) as raised:
+            probe.read_memory(0x341B0000, 32)
+        assert "power cycle" in str(raised.value)
+
+    def test_a_server_that_cannot_attach_is_not_blamed_on_cabling(self) -> None:
+        message = runner.server_exit_message(_banner("gdbserver_n6_ap1_closed.txt"))
+        assert message.index("closed") < message.index("Please check power and cabling")
+        assert "board_state" in message and "power cycle" in message
+
+    def test_other_server_exits_carry_no_such_claim(self) -> None:
+        message = runner.server_exit_message("Error: port 61234 already in use\n")
+        assert "closed" not in message and message.startswith("GDB server exited before listening")

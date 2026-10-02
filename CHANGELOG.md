@@ -6,6 +6,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Changed
 
+- A read that connects and then fails names its two measured causes: a range past the end of flash or RAM, and a debug access port that has closed, as an STM32N6 image's start-up code does. A GDB server that cannot attach no longer leaves its "check power and cabling" as the only explanation.
 - A `flash_firmware` that fails because the programmer could not erase now says first that write protection in the option bytes fails this way, and how to show it. Measured on an STM32F407 with one sector protected.
 
 ## [0.4.0] - 2026-10-02

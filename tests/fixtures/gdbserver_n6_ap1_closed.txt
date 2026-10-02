@@ -1,0 +1,16 @@
+STMicroelectronics ST-LINK GDB server. Version 7.14.0
+Copyright (c) 2026, STMicroelectronics. All rights reserved.
+
+Starting server with the following options:
+        Persistent Mode            : Enabled
+        Logging Level              : 1
+        Listen Port Number         : 61234
+        Status Refresh Delay       : 15s
+        Verbose Mode               : Disabled
+        SWD Debug                  : Enabled
+
+ST-LINK firmware update available. Upgrade the ST-LINK firmware using the upgrade tool.
+Target unknown error 32
+
+Error in initializing ST-LINK device.
+Reason: Unknown. Please check power and cabling to target.

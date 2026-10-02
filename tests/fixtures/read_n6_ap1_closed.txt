@@ -1,0 +1,23 @@
+-------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 003C002C3335510535383531
+ST-LINK FW  : V3J15M6
+Board       : NUCLEO-N657X0-Q
+Voltage     : 3.28V
+SWD freq    : 8000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x486
+Revision ID : Rev Z
+Device name : STM32N6xx
+Device type : MCU
+Device CPU  : Cortex-M55
+BL Version  : --
+
+
+Reading 32-bit memory content
+  Size          : 32 Bytes
+  Address:      : 0x341B0000
+Error: failed to read the requested memory content
