@@ -38,7 +38,7 @@ Each answers a design question, and none needs hardware that is not already atta
 - **M9. Types.** Decode a global's type with pyelftools reading DWARF, and with GDB's `ptype /o` output parsed, on the test images and one project built by STM32CubeIDE. Decides D1.
 - **M10. The N6.** Breakpoints, watchpoints and the call stack on the N6's Secure code through AP1, and whether a stop interacts with the port closing.
 
-## Results (2026-10-02, on the H7 and the F407)
+## Results (2026-10-02, on the H7 and the F407, and M10 on the N6)
 
 - **M1.** Started with `-g` (attach) and without `--halt`, the server connected in "Attach" mode, did not reset, and halted the core as it started. GDB read the state, the program's tick counter carried on from where it was, and detach resumed it. DFSR read 0x1 (halted by request) at the attach. GDB adds a frame "<signal handler called>" below the reset handler, from the reset value of LR; the stack is cut there.
 - **M2.** GDB/MI, with `mi-async` set before connecting: `-exec-continue`, no stop in 3 s, `-exec-interrupt`, and a `*stopped` record with SIGINT at 3.0 s. Set after connecting, the interrupt is never sent.
@@ -49,7 +49,7 @@ Each answers a design question, and none needs hardware that is not already atta
 - **M7.** On the H7, a byte sent to USART3 set RXNE (ISR 0xD0 to 0xF0); a programmer read of RDR returned it (0x5A) and cleared RXNE (ISR back to 0xD0). A read by name can consume data, and the H743 file does not mark it.
 - **M8.** The device database names no SVD file, and one device ID covers several: 0x413 is "STM32F405xx/F407xx/F415xx/F417xx", four files; 0x450 is "STM32H7xx". The candidate files agreed on RCC.CR (F405 with F407, H743 with H753). Parsing took 0.06 to 0.11 s for F4 and H7 files and 0.57 s for the 23 MB N657 file, whose RCC.CR has no fields of its own, so inherited and repeated definitions must be followed.
 - **M9.** pyelftools found `g_state` and decoded all 36 bytes of a non-halting read: integer, float, enum, bitfields, array, union, pointer and nested struct, at -O0, -O1, -O2 and -Os with -g3, DWARF 5, in 0.01 s. GDB without a target gives the layout as text and no values. A large project's DWARF has not been tried; the lookup will be cached per file.
-- **M10.** Not yet run: it needs the N6 power-cycled.
+- **M10.** On the N6 through AP1, after a power cycle: breakpoint unit revision 2 with 8 comparators and 8 watchpoints; attach without reset, a time limit at 3.0 s, a software and a hardware breakpoint in RAM (the server logged 0x3 at each), and a watchpoint (0x5) that stopped after the return from `writer`, one instruction after the store, as on the F407. The bottom of the call stack is in the boot ROM, at 0x180005F4, not GDB's made-up frame. Stopping the server resumed the core, and the port stayed open. Reading by name worked too: `g_state` in 2.3 s, RCC.CR from STM32N657.svd in 4.0 s, slow because each N6 connect costs about a second.
 
 What changed in the plan: the stop evidence comes from the server's log; GDB chooses between software and hardware breakpoints, and the tool refuses a hardware one the part cannot cover; a watchpoint result names the cause and gives the stop address, the instructions before it and LR, and says the writing instruction is before the stop, not at it; `resume` is folded into `release_probe`; an SVD register is used only when every candidate file for the part agrees on it, otherwise the caller names the file.
 

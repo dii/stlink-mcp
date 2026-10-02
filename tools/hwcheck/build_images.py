@@ -82,6 +82,8 @@ VARIANTS: list[Image] = [
           notes="typed globals, a watched variable, a call chain; prints nothing"),
     Image("f4_vars_hang", ["-mcpu=cortex-m4", "-DDELAY=500000", "-DHANG"] + _SOFT, "f4_data.ld",
           source="debug_target.c", notes="hangs three calls deep"),
+    Image("n6_vars", ["-mcpu=cortex-m55", "-DDELAY=300000"] + _SOFT, "n6_data.ld", source="debug_target.c",
+          notes="typed globals, a watched variable, a call chain; prints nothing"),
     Image("n6_ram", _N6 + _SOFT, "n6_ram.ld", notes="counts in AXISRAM2, prints nothing"),
     Image("n6_fault", _N6 + _SOFT + _FAULT, "n6_ram.ld", notes="udf after four ticks"),
     Image("n6_close", _N6 + _SOFT + ["-DCLOSE_AP1"], "n6_ram.ld",
