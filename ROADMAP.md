@@ -37,7 +37,7 @@ An agent can load, run, flash and reset a board, read its output, and find where
 1. **Names instead of addresses**: `read_memory` reads a variable by name from the ELF, or a peripheral register by name from ST's SVD file, decoded into its type or its fields, without halting.
 2. **The call stack**: `core_registers`, given the ELF, returns every frame with its function, line and local variables.
 3. **Stop at a condition**: `run_until` runs until a location is reached or an address is written, within a time limit, and is `verified` only when the chip's own debug status register names the stop.
-4. **Resume**: `resume`, unless `release_probe` can carry it.
+4. **Resume**: `release_probe` resumes a core a stop left halted, and says so; stopping the GDB server was measured to resume it (2026-10-02), so there is no separate tool.
 
 Not in 1.0: single-stepping, memory writes, RTT, breakpoint lists and conditions. Each new promise is measured on the H7 and the F407, and the N6 where it differs, before it is claimed. Then the gates the README names: the tool signatures declared stable, one outside user's report on an unlisted board, the Windows question decided, and the README read before the repository goes public. How it is built, the measurements that come first, and three decisions it needs are in [docs/v1-plan.md](docs/v1-plan.md).
 
