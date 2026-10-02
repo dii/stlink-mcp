@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-02
+
+Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-02: `tools/hwcheck` passed 68 of 68 checks with `--f4`, `--f4-console`, `--jtag` and `--flash`. docs/findings.md has what was run and what each README promise rests on.
+
 ### Added
 
 - `read_memory` reads a variable by name, decoded with the ELF's types, and `verified` only when the target runs that ELF; and a peripheral register by name, decoded into its fields from ST's SVD files, with the file chosen from the board name or the device name and used only where every candidate file agrees. Measured on an STM32H7 and an STM32F407.
@@ -114,7 +118,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dii/stlink-mcp/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dii/stlink-mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dii/stlink-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dii/stlink-mcp/compare/v0.2.0...v0.3.0
