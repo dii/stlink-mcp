@@ -618,7 +618,19 @@ class Probe:
         argv += ["-w", image, f"0x{address:08X}"]
         result = self._run(argv, timeout=300)
         if "File download complete" not in result.stdout:
-            raise ProbeError(f"Programming failed:\n{result.stdout.strip()}")
+            message = f"Programming failed:\n{result.stdout.strip()}"
+            if "failed to erase memory" in result.stdout:
+                # The programmer stops at the erase and never says why. A
+                # write-protected sector on an STM32F407 failed exactly this
+                # way on 2026-10-02.
+                message = (
+                    "The programmer could not erase the flash it was to write. "
+                    "Write protection on that sector, set in the option bytes, "
+                    "fails this way; `STM32_Programmer_CLI -c port=SWD -ob displ` "
+                    "shows it, and this tool does not change option bytes.\n"
+                    + message
+                )
+            raise ProbeError(message)
         return result.stdout
 
     def read_back(

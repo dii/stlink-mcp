@@ -153,3 +153,28 @@ class TestAnOldProbeIsNotCalledAbsent:
         info = pm.parse_target_info(_banner("connect_v2_f407.txt"))
         assert info.connected and info.device_id == 0x413 and info.cpu == "Cortex-M4"
         assert info.board is None and (info.interface, info.interface_khz) == ("swd", 4000)
+
+
+class TestAFlashWriteThatCannotEraseSaysWhy:
+    """Captured on 2026-10-02 from an STM32F407 through an ST-LINK/V2, with
+    sector 11 write-protected in its option bytes, as flash_firmware reported
+    it (the programmer's output, stripped). The programmer stops at the erase,
+    and its output never says why."""
+
+    def test_the_failure_names_write_protection_first(self, monkeypatch) -> None:
+        output = _banner("program_f407_sector_write_protected.txt")
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 1, output))
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="50FF73064977535531090387")
+        with pytest.raises(pm.ProbeError) as raised:
+            probe.program_flash("wrp-test.bin", 0x080F0000)
+        message = str(raised.value)
+        assert message.index("Write protection") < message.index("Programming failed")
+        assert "-ob displ" in message and "Error: failed to erase memory" in message
+
+    def test_other_programming_failures_carry_no_such_claim(self, monkeypatch) -> None:
+        output = _banner("connect_v2_f407.txt")
+        monkeypatch.setattr(pm, "run_command", lambda argv, timeout=90: CommandResult(argv, 1, output))
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="50FF73064977535531090387")
+        with pytest.raises(pm.ProbeError) as raised:
+            probe.program_flash("image.bin", 0x08000000)
+        assert "Write protection" not in str(raised.value)

@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+
+- A `flash_firmware` that fails because the programmer could not erase now says first that write protection in the option bytes fails this way, and how to show it. Measured on an STM32F407 with one sector protected.
+
 ## [0.4.0] - 2026-10-02
 
 Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-02: `tools/hwcheck` passed 42 of 42 checks with `--f4`, `--f4-console`, `--jtag` and `--flash`. docs/findings.md has what was run and what each README promise rests on.
