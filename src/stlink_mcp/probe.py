@@ -9,12 +9,15 @@ answer.
 from __future__ import annotations
 
 import re
+import subprocess
 import tempfile
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .quirks import FamilyQuirks, for_device_id
-from .toolchain import Toolchain, run_command
+from .toolchain import Toolchain, run_command, strip_ansi
 
 
 class ProbeError(RuntimeError):
@@ -180,6 +183,27 @@ def reset_landed_at_vector(pc: int | None, reset_handler: int | None) -> bool:
     if pc is None or reset_handler is None:
         return False
     return pc == (reset_handler & ~1)
+
+
+_SWV_STARTED = ">>>>>> Reception Started <<<<<<"
+_SWV_ENDED = ">>>>>> Reception Ended <<<<<<"
+
+
+def parse_swv_log(log: str) -> str | None:
+    """What arrived, from the log `-startswv` writes; None if reception never began.
+
+    The programmer writes a header, a tab and the start marker, a blank line,
+    then what arrived, then a newline of its own, a tab and the end marker
+    (captured 2026-10-02). Characters that did not decode are already U+FFFD
+    in the file, so the bytes behind them are not recoverable."""
+    start = log.find(_SWV_STARTED)
+    if start < 0:
+        return None
+    body = log[start + len(_SWV_STARTED):].removeprefix("\n\n")
+    end = body.find(_SWV_ENDED)
+    if end >= 0:
+        body = body[:end].removesuffix("\t").removesuffix("\n")
+    return body
 
 
 def no_data_read(address: int, output: str) -> ProbeError:
@@ -554,6 +578,80 @@ class Probe:
         if not words:
             raise no_data_read(address, result.stdout)
         return info, words
+
+    def capture_swo(self, clock_hz: int, seconds: float, itm_port: int) -> str:
+        """What the target writes to ITM stimulus port `itm_port`, over SWO, for
+        `seconds` from the moment reception starts.
+
+        The programmer's -startswv connects hotplug, sets up the trace unit and
+        the pin itself, and runs until it reads "E" on its input; it then exits
+        0 and its log is complete (measured on an STM32F407 and an STM32H7,
+        2026-10-02). It takes the core clock in MHz and uses a fraction as
+        given. The GDB server's own SWO port was tried first and is not used:
+        it streams only while a GDB client stays attached, and on the H7 it
+        never started receiving at all."""
+        if self.interface != SWD:
+            raise ProbeError(
+                "SWO needs SWD: the trace output shares its pin with JTAG's TDO."
+            )
+        mhz = f"{clock_hz / 1_000_000:.6f}".rstrip("0").rstrip(".")
+        with tempfile.TemporaryDirectory(prefix="stlink-mcp-swo-") as scratch:
+            log = Path(scratch) / "swv.log"
+            argv = self._connect_args(self.access_port, "HOTPLUG") + [
+                "-startswv", f"freq={mhz}", f"portnumber={itm_port}", str(log),
+            ]
+            proc = subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, errors="replace",
+            )
+            lines: list[str] = []
+            started = threading.Event()
+
+            def drain() -> None:
+                for line in proc.stdout:
+                    lines.append(line)
+                    if "Reception Started" in line:
+                        started.set()
+
+            reader = threading.Thread(target=drain, daemon=True)
+            reader.start()
+            try:
+                deadline = time.monotonic() + 60
+                while not started.is_set() and proc.poll() is None and time.monotonic() < deadline:
+                    started.wait(0.1)
+                output = strip_ansi("".join(lines))
+                answered = _BANNER_SERIAL.search(output)
+                if self.serial and answered and answered.group(1).upper() != self.serial.upper():
+                    raise ProbeError(
+                        f"Asked for probe {self.serial}, and the programmer answered from "
+                        f"probe {answered.group(1)}. Nothing from that answer is used."
+                    )
+                if not started.is_set():
+                    raise ProbeError("The programmer did not start SWO reception.\n" + output.strip())
+                time.sleep(seconds)
+            finally:
+                # Stopped with its own E on every path, refusals included, so
+                # the probe is not left receiving; killed only if that fails.
+                if proc.poll() is None:
+                    try:
+                        proc.stdin.write("E\n")
+                        proc.stdin.flush()
+                        proc.wait(timeout=15)
+                    except (OSError, subprocess.TimeoutExpired):
+                        proc.kill()
+                        proc.wait()
+                reader.join(2)
+            text = ""
+            if log.is_file():
+                with open(log, encoding="utf-8", errors="replace", newline="") as handle:
+                    text = handle.read()
+        body = parse_swv_log(text)
+        if body is None:
+            raise ProbeError(
+                "The programmer's SWO log has no start of reception.\n"
+                + strip_ansi("".join(lines)).strip()
+            )
+        return body
 
     def core_registers(self) -> dict[str, int]:
         """Read the core registers.

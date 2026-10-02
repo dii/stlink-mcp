@@ -18,7 +18,7 @@ import anyio
 from stlink_mcp import __version__
 
 TOOLS = {
-    "board_state", "capture_console", "core_registers", "flash_firmware",
+    "board_state", "capture_console", "capture_swo", "core_registers", "flash_firmware",
     "list_probes", "locate_fault", "read_fault_status", "read_memory",
     "release_probe", "reset_target", "run_firmware",
 }

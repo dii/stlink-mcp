@@ -62,12 +62,18 @@ VARIANTS: list[Image] = [
           notes="a segment at 0x2C000000; GDB's load fails"),
     Image("h7_flash", _H7 + _SOFT + ['-DTAG="flash"'], "h7_flash.ld", binary=True,
           notes="boots from flash at 0x08000000"),
+    Image("h7_itm", _H7 + _SOFT + ["-DITM_OUT", '-DTAG="itm"'], "h7_ram.ld",
+          notes="prints on USART3 and on ITM port 0, for SWO"),
     Image("f4_ram", _F4 + _SOFT + ['-DTAG="f407"'], "f4_ram.ld", notes="prints on UART5 and counts in SRAM1"),
     Image("f4_fault", _F4 + _SOFT + _FAULT + ['-DTAG="f407 fault"'], "f4_ram.ld", notes="udf after four ticks"),
     Image("f4_flash", _F4 + _SOFT + ['-DTAG="f407 flash"'], "f4_flash.ld", binary=True,
           notes="boots from flash at 0x08000000"),
+    Image("f4_itm", _F4 + _SOFT + ["-DITM_OUT", '-DTAG="f407 itm"'], "f4_ram.ld",
+          notes="prints on UART5 and on ITM port 0, for SWO"),
     Image("n6_ram", _N6 + _SOFT, "n6_ram.ld", notes="counts in AXISRAM2, prints nothing"),
     Image("n6_fault", _N6 + _SOFT + _FAULT, "n6_ram.ld", notes="udf after four ticks"),
+    Image("n6_close", _N6 + _SOFT + ["-DCLOSE_AP1"], "n6_ram.ld",
+          notes="turns the SYSCFG clock off as ST's start-up code does, closing AP1 until a power cycle"),
 ]
 
 

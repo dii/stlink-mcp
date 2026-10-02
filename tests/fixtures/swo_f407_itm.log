@@ -1,0 +1,14 @@
+**********************************************
+	Fri Oct 2 16:03:37 2026
+	Device Name: STM32F405xx/F407xx/F415xx/F417xx
+**********************************************
+	>>>>>> Reception Started <<<<<<
+
+stlink-mcp hw check f407 itm tick 2
+stlink-mcp hw check f407 itm tick 3
+stlink-mcp hw check f407 itm tick 4
+stlink-mcp hw check f407 itm tick 5
+
+	>>>>>> Reception Ended <<<<<<
+**********************************************
+

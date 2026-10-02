@@ -2214,6 +2214,112 @@ from a port not wired to the target.
     return verified(f"serial console read from {source}", **detail)
 
 
+#: What a capture leaves behind on the target, said in every capture_swo result
+#: (N4). Measured on an STM32F407, 2026-10-02: from power-up, the capture set
+#: TRACE_IOEN in DBGMCU_CR (0x20), ITM's TCR and TER, and the TPIU, and after
+#: reset_target DBGMCU_CR still read 0x20 while trace enable had been cleared.
+_TRACE_NOTE = (
+    "This capture switched the target's trace output on and leaves it on: ITM, "
+    "and the setting that hands the SWO pin from the application to the trace "
+    "unit (PB3 on the STM32F407 this was measured on). There the pin setting "
+    "survived reset_target, and only a power cycle cleared it. Firmware that "
+    "writes to ITM now sends what it writes, at the SWO rate."
+)
+
+
+def _swo_garbled_note(text: str, clock_hz: int) -> dict[str, Any]:
+    """A note when more than a tenth of an SWO capture is not text. Four clean
+    captures at the right clock, on an F407 and an H7 (2026-10-02), had no
+    such character in 1,922; a clock 6% off gave nothing but U+FFFD, and one
+    a little further off about half. The console's threshold, half, would
+    miss the second."""
+    if len(text) < 16:
+        return {}
+    unreadable = sum(1 for ch in text if not (ch.isascii() and (ch.isprintable() or ch in "\r\n\t")))
+    if unreadable * 10 <= len(text):
+        return {}
+    return {"swo_garbled_note": (
+        f"{unreadable} of {len(text)} characters are not readable text, which is "
+        f"what a core clock other than the {clock_hz} Hz given looks like: the "
+        "SWO rate is derived from it. Give the clock the core runs at while it "
+        "writes, which may differ from its clock at reset."
+    )}
+
+
+@mcp.tool()
+@_serialised
+def capture_swo(
+    core_clock_hz: int,
+    seconds: float = 5.0,
+    itm_port: int = 0,
+    probe_serial: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Capture what the target writes to an ITM stimulus port, over the SWO pin.
+
+`core_clock_hz` is the clock the core runs at while it writes, which only the
+firmware knows; a wrong one gives nothing or garbled text. Does not halt or
+reset, but turns the target's trace output on and leaves it on, which takes
+the SWO pin from the application until a power cycle. SWD only. Refuses while
+a GDB server holds the probe. A capture that hears nothing is unverified.
+    """
+    too_long = _capture_seconds_problem(seconds, "seconds")
+    if too_long:
+        return failed(too_long)
+    if not 0 <= itm_port <= 31:
+        return failed(f"itm_port is {itm_port}; ITM has stimulus ports 0 to 31.")
+    if core_clock_hz <= 0:
+        return failed(f"core_clock_hz is {core_clock_hz}; give the core's clock in Hz.")
+
+    probe: Probe | None = None
+    try:
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return failed(error)
+        if server_is_held(serial):
+            return failed(
+                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
+            )
+        probe = Probe(toolchain, serial=serial, try_first=_settled_port(serial))
+        info = probe.identify(allow_reset=False)
+        _remember_port(serial, probe, info)
+        if not info.connected:
+            return failed(
+                "Could not reach the core without resetting it, and this tool "
+                "does not reset.",
+                probe_serial=serial,
+                **_connection_fields(probe, info),
+                hint=explain_connect_failure(info),
+            )
+        text = probe.capture_swo(core_clock_hz, seconds, itm_port)
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), **_after_failure(probe))
+
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        **_connection_fields(probe, info),
+        "core_clock_hz": core_clock_hz,
+        "itm_port": itm_port,
+        "seconds": seconds,
+        "target_was_reset": probe.target_was_reset,
+        "output": text,
+        **_swo_garbled_note(text, core_clock_hz),
+        "trace_left_enabled": True,
+        "trace_note": _TRACE_NOTE,
+    }
+    if not text:
+        return unverified(
+            f"Nothing arrived on ITM port {itm_port} over SWO in {seconds:g} seconds. "
+            "That does not show the target is silent: it may not write to that "
+            f"port, its core may not run at the {core_clock_hz} Hz given (twice "
+            "the real clock gave nothing at all on an STM32F407), or this board "
+            "may not have its SWO pin wired to the probe.",
+            **detail,
+        )
+    return verified(f"ITM port {itm_port} output received over SWO", **detail)
+
+
 def _connection_fields(probe: Probe, info: TargetInfo | None) -> dict[str, Any]:
     """The interface asked for, the clock the connect banner reported for it,
     and the warning when the access port in use was never measured.

@@ -3,6 +3,7 @@
     uv run python tools/hwcheck/hwcheck.py [--h7 SERIAL] [--n6 SERIAL]
                                            [--jtag SERIAL] [--flash]
                                            [--f4 SERIAL [--f4-console PORT]]
+                                           [--n6-closed]
 
 Starts the server over stdio, as an MCP client does, and runs each check as
 tool calls against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q, whichever are
@@ -16,7 +17,9 @@ running a RAM image, which a power cycle clears. --flash also writes the H7's
 flash: it saves the whole flash first with the programmer, writes a test
 image, and writes the saved copy back and verifies it, even when a check fails.
 --jtag names an ST-LINK wired to the H7's JTAG connector, and adds checks over
-JTAG through it. --f4 names the ST-LINK on an STM32F407 board, whose RAM
+JTAG through it. --n6-closed ends the N6's checks by closing its debug port
+the way ST's start-up code does and checking what the tools say to it; the N6
+then needs a power cycle. --f4 names the ST-LINK on an STM32F407 board, whose RAM
 images are loaded and which is reset at the end; with --flash its flash is
 saved, written and restored the same way.
 
@@ -227,6 +230,12 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     report.check(capture["status"] == "verified" and "tick" in capture.get("output", ""),
                  "H7: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('port')}")
 
+    await server.call("run_firmware", elf_path=str(images.elf["h7_itm"]), probe_serial=s, console_seconds=1)
+    await server.call("release_probe", probe_serial=s)
+    swo = await server.call("capture_swo", probe_serial=s, core_clock_hz=64_000_000, seconds=2)
+    report.check(swo["status"] == "verified" and "itm tick" in swo.get("output", "") and swo.get("trace_left_enabled"),
+                 "H7: capture_swo reads ITM port 0 over SWO at the core's 64 MHz, and says trace stays on", _why(swo))
+
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
     idle = await server.call("release_probe", probe_serial=s)
@@ -302,6 +311,14 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     where = await server.call("locate_fault", probe_serial=s, elf_path=str(elf))
     report.check(where["status"] == "verified" and where.get("faulting_pc") == f"0x{_udf_address(elf):08X}",
                  "F4: locate_fault finds the udf", f"{_why(where)}; pc {where.get('faulting_pc')}")
+    await server.call("run_firmware", elf_path=str(images.elf["f4_itm"]), probe_serial=s, console_seconds=1)
+    await server.call("release_probe", probe_serial=s)
+    swo = await server.call("capture_swo", probe_serial=s, core_clock_hz=16_000_000, seconds=3)
+    report.check(swo["status"] == "verified" and "f407 itm tick" in swo.get("output", ""),
+                 "F4: capture_swo reads ITM port 0 over SWO at the core's 16 MHz", _why(swo))
+    double = await server.call("capture_swo", probe_serial=s, core_clock_hz=32_000_000, seconds=2)
+    report.check(double["status"] == "unverified" and "32000000" in double.get("unverified_because", ""),
+                 "F4: capture_swo at twice the core clock hears nothing and says the clock may be wrong", _why(double))
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "F4: reset_target halts at the reset handler", _why(reset))
     return True
@@ -355,6 +372,26 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     return True
 
 
+async def check_n6_closed(server: Server, serial: str, images: Built, report: Report) -> None:
+    """Close the N6's debug port as ST's start-up code does, and check what the
+    tools say to it. Only a power cycle reopens it."""
+    s = serial
+    await server.call("run_firmware", elf_path=str(images.elf["n6_close"]), probe_serial=s, console_seconds=1)
+    await server.call("release_probe", probe_serial=s)
+    read = await server.call("read_memory", address=N6_COUNTER, probe_serial=s)
+    report.check(read["status"] == "failed" and read.get("target_was_reset") is not True
+                 and "power cycle" in read.get("error", ""),
+                 "N6 closed: read_memory fails without a reset and names the closed port", _why(read))
+    board = await server.call("board_state", probe_serial=s)
+    report.check(board["status"] == "unverified" and board.get("access_port") == 0
+                 and board.get("target_was_reset") is True,
+                 "N6 closed: board_state falls back to AP0 and says it tried a resetting connect", _why(board))
+    run = await server.call("run_firmware", elf_path=str(images.elf["n6_ram"]), probe_serial=s, console_seconds=1)
+    report.check(run["status"] == "failed" and "closed" in run.get("error", ""),
+                 "N6 closed: run_firmware fails and names the closed port, not the cabling", _why(run))
+    print("      The N6's debug port is closed now; power-cycle the board to reopen it.", flush=True)
+
+
 async def check_together(server: Server, h7: str, n6: str, report: Report) -> None:
     started = time.monotonic()
     timings: dict[str, float] = {}
@@ -382,6 +419,9 @@ async def main() -> int:
     parser.add_argument("--jtag", help="serial of an ST-LINK on the H7's JTAG connector")
     parser.add_argument("--f4", help="serial of the ST-LINK on an STM32F407 board")
     parser.add_argument("--f4-console", help="serial port wired to that board's UART5 TX (PC12)")
+    parser.add_argument("--n6-closed", action="store_true",
+                        help="last, close the N6's debug port and check what the tools say; "
+                             "the N6 then needs a power cycle")
     parser.add_argument("--flash", action="store_true",
                         help="also write, read back and restore the flash of the H7 and the F4")
     args = parser.parse_args()
@@ -404,6 +444,8 @@ async def main() -> int:
             n6_up = await check_n6(server, n6, images, report)
         if h7_up and n6_up:
             await check_together(server, h7, n6, report)
+        if n6_up and args.n6_closed:
+            await check_n6_closed(server, n6, images, report)
         if args.f4:
             f4_up = await check_f4(server, args.f4, images, report, console=bool(args.f4_console))
             if f4_up and args.flash:

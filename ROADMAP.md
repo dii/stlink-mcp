@@ -25,7 +25,7 @@ This plan was red-teamed before anything was built from it, and revised against 
 | N5 runs on hardware that is not ours | **Done.** A TOML board file, loaded at start-up, keyed by device ID, everything in it `user-stated` |
 | N6 facts record how they were established | **Done.** Four provenances, reported by `board_state`, and the write path refuses an unmeasured base |
 | N7 flash, reset, interrogate all first class | **Done.** `reset_target` verifies against the reset vector; `read_fault_status` decodes the SCB fault registers to answer "why did it fault", and `locate_fault` answers where (2026-10-01); `flash_firmware` reads back what it wrote (2026-10-01) |
-| N8 interface is a parameter | **Done for SWD and JTAG** (2026-10-01): `interface` on every tool that connects, the banner's clock in the result, a held server never reused across interfaces. Measured on an ST-LINK/V2 and the N6's own probe. SWO and RTT are not started |
+| N8 interface is a parameter | **Done for SWD and JTAG** (2026-10-01): `interface` on every tool that connects, the banner's clock in the result, a held server never reused across interfaces. Measured on an ST-LINK/V2 and the N6's own probe. SWO started (2026-10-02): `capture_swo` reads an ITM port through the programmer, measured on an H7 and an F407. RTT is not started |
 | N9 no single-caller assumptions | **Started** (2026-10-01). Every tool call carries a caller, the client's declared name and version, its connection and the request, taken from the MCP context; each call is traced on stderr, and each held GDB server records who acquired it, so refusals and releases name it. Per-probe state otherwise still sits in module globals, and there is no per-caller policy. The locks that order tool calls belong to the probes, which every caller shares |
 
 Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and `pyproject.toml` caps it below 3. On 2026-10-01 the latest published was still 2.2.0, and the suite and the stdio test in `tests/test_stdio.py` had passed against it. Re-verify on every SDK bump rather than assuming.
@@ -102,7 +102,8 @@ After Phase 2 most parts have a proposed layout that nobody has run a board agai
 ## Phase 4 - the interfaces (N8)
 
 - **JTAG. DONE** 2026-10-01. A choice, defaulting to SWD, and told rather than falling back: a fallback would turn a failed JTAG connect into a working SWD one without the caller asking, and the result would then describe a connection nobody requested. Measured through an ST-LINK/V2 on the H743's JTAG connector and the N6 board's own probe; the H743's own STLINK-V3E does not do JTAG.
-- **SWO or ITM, and RTT.** A board with no virtual COM port currently has no verification path at all, which is exactly the case where verification matters most.
+- **SWO. DONE** 2026-10-02, as `capture_swo`, after a load and a release. Measured on the H7 through its STLINK-V3E and the F407 through an ST-LINK/V2. Verifying a run by SWO inside `run_firmware` was tried through the GDB server's SWO port and set aside: it streams only while a GDB client stays attached, and on the H7 it never started receiving.
+- **RTT.** Needs no pin, so it reaches boards whose SWO is not wired, but STM32CubeCLT has no support for it: it would mean reading the target's ring buffer through memory reads while it runs.
 - Make the console a peer of the debug interfaces rather than a special case bolted to `run_firmware`.
 
 ## Phase 5 - depth, chosen for the agent user

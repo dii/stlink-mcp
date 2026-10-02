@@ -4,6 +4,11 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- `capture_swo`, which captures what the target writes to an ITM stimulus port over the SWO pin, through STM32_Programmer_CLI's own SWO capture. It takes the core clock, is `unverified` when nothing arrives, notes unreadable text, and says in every result that the target's trace output was left on. Measured on an STM32H7 and an STM32F407.
+- `tools/hwcheck` checks SWO on the H7 and the F407, and with `--n6-closed` closes the N6's debug port the way ST's start-up code does and checks what the tools say to it.
+
 ### Changed
 
 - A read that connects and then fails names its two measured causes: a range past the end of flash or RAM, and a debug access port that has closed, as an STM32N6 image's start-up code does. A GDB server that cannot attach no longer leaves its "check power and cabling" as the only explanation.

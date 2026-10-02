@@ -35,9 +35,7 @@ static void uart_init(void) {
     REG(0x40005008) = 139;                      /* UART5_BRR: 16 MHz HSI / 115200 */
     REG(0x4000500C) = (1u << 13) | (1u << 3);   /* CR1: UE, TE */
 }
-static void putc_(char c) { while (!(REG(0x40005000) & (1u << 7))) {} REG(0x40005004) = (uint8_t)c; }
-static void puts_(const char *s) { while (*s) putc_(*s++); }
-static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); puts_(&b[i]); }
+static void uart_putc(char c) { while (!(REG(0x40005000) & (1u << 7))) {} REG(0x40005004) = (uint8_t)c; }
 #elif defined(HAS_UART)   /* NUCLEO-144 STM32H7: the ST-LINK VCP is USART3, PD8 TX / PD9 RX, AF7 */
 #ifndef BRR
 #define BRR 556   /* 64 MHz HSI / 115200 */
@@ -60,20 +58,38 @@ static void uart_init(void) {
     REG(0x4000480C) = BRR;
     REG(0x40004800) = (1u << 0) | (1u << 2) | (1u << 3);  /* UE, RE, TE */
 }
-static void putc_(char c) { while (!(REG(0x4000481C) & (1u << 7))) {} REG(0x40004828) = (uint8_t)c; }
-static void puts_(const char *s) { while (*s) putc_(*s++); }
-static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); puts_(&b[i]); }
+static void uart_putc(char c) { while (!(REG(0x4000481C) & (1u << 7))) {} REG(0x40004828) = (uint8_t)c; }
 #else
 static void uart_init(void) {}
-static void puts_(const char *s) { (void)s; }
-static void putu(uint32_t v) { (void)v; }
+static void uart_putc(char c) { (void)c; }
 #endif
+
+#ifdef ITM_OUT   /* each character also goes to ITM stimulus port 0, for SWO, but only
+                    once a debugger has enabled ITM and that port; until then nothing */
+static void itm_putc(char c) {
+    if ((REG(0xE0000E80) & 1u) && (REG(0xE0000E00) & 1u)) {   /* ITM_TCR.ITMENA, ITM_TER bit 0 */
+        while (REG(0xE0000000) == 0) {}                        /* port 0 FIFO ready */
+        *(volatile uint8_t *)0xE0000000 = (uint8_t)c;
+    }
+}
+#else
+static void itm_putc(char c) { (void)c; }
+#endif
+
+static void putc_(char c) { uart_putc(c); itm_putc(c); }
+static void puts_(const char *s) { while (*s) putc_(*s++); }
+static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '0' + v % 10; v /= 10; } while (v); puts_(&b[i]); }
 
 static void delay(uint32_t n) { for (volatile uint32_t i = 0; i < n; i++) {} }
 
 extern void (*const vectors[16])(void);
 
 void reset_handler(void) {
+#ifdef CLOSE_AP1  /* STM32N6: what the end of ST's stock SystemInit does, RCC_APB4ENCR2 =
+                     SYSCFGENC. Without the SYSCFG clock, debug access port 1 closes until
+                     power is removed (docs/findings.md, 2026-08-16). */
+    REG(0x56029278) = 1u;
+#endif
 #ifdef SET_VTOR
     REG(0xE000ED08) = (uint32_t)vectors;        /* SCB->VTOR: our own table, so our handler runs */
 #endif

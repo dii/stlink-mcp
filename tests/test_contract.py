@@ -38,6 +38,7 @@ TOOL_CALLS: dict[str, dict] = {
     "read_memory": {"address": 0x20000000},
     "core_registers": {},
     "capture_console": {"seconds": 0.01},
+    "capture_swo": {"core_clock_hz": 16_000_000, "seconds": 0.01},
     "reset_target": {},
     "read_fault_status": {},
     "locate_fault": {},
@@ -344,6 +345,16 @@ class _FakeProbe:
 
     def release_core(self, access_port: int) -> str:
         return "Core run\n"
+
+    # What an SWO capture returns, or the error it raises. Class-level so a
+    # test can set it.
+    swo_text: str = ""
+    swo_raises: str | None = None
+
+    def capture_swo(self, clock_hz: int, seconds: float, itm_port: int) -> str:
+        if self.swo_raises:
+            raise probe_mod.ProbeError(self.swo_raises)
+        return self.swo_text
 
 
 @pytest.fixture
@@ -750,6 +761,62 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         assert "115200" in out["unverified_because"]
         assert out["output"] == ""
         assert out["console_buffered"] == "old\n"
+
+
+class TestSwoIsCapturedAndItsSideEffectSaid:
+    """capture_swo, measured on an STM32F407 and an STM32H7 on 2026-10-02. The
+    programmer's capture turns on ITM and hands the SWO pin to the trace unit,
+    and on the F407 the pin assignment outlived reset_target; a clock 6% off
+    garbled the text and one twice the real clock gave nothing."""
+
+    def test_text_that_arrived_is_verified_and_the_trace_left_on_is_said(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "swo_text", "f407 itm tick 2\r\n")
+        out = call("capture_swo")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and out["output"] == "f407 itm tick 2\r\n"
+        assert out["trace_left_enabled"] is True and "power cycle" in out["trace_note"]
+        assert out["target_was_reset"] is False and (out["core_clock_hz"], out["itm_port"]) == (16_000_000, 0)
+
+    def test_nothing_arrived_is_unverified_and_names_the_clock(self, bench) -> None:
+        out = call("capture_swo")
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        why = out["unverified_because"]
+        assert "16000000" in why and "ITM port 0" in why and "wired" in why
+        assert out["trace_left_enabled"] is True
+
+    def test_a_capture_at_a_clock_6pc_low_says_the_clock_may_be_wrong(self, bench, monkeypatch) -> None:
+        with open(Path(__file__).parent / "fixtures" / "swo_f407_itm_clock_6pc_low.log",
+                  encoding="utf-8", errors="replace", newline="") as handle:
+            monkeypatch.setattr(_FakeProbe, "swo_text", probe_mod.parse_swv_log(handle.read()))
+        out = call("capture_swo")
+        assert out["status"] == result.VERIFIED
+        assert "core clock" in out["swo_garbled_note"]
+
+    def test_a_tenth_unreadable_is_enough_for_the_note(self, bench, monkeypatch) -> None:
+        line = "stlink-mcp tick 38\r\n"
+        monkeypatch.setattr(_FakeProbe, "swo_text", line * 4 + "\ufffd" * 9)
+        assert "swo_garbled_note" in call("capture_swo")
+        monkeypatch.setattr(_FakeProbe, "swo_text", line * 4 + "\ufffd" * 8)
+        assert "swo_garbled_note" not in call("capture_swo")
+
+    def test_a_failed_capture_is_failed(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "swo_raises", "The programmer did not start SWO reception.")
+        out = call("capture_swo")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "did not start" in out["error"]
+
+    @pytest.mark.parametrize("args", [{"itm_port": 32}, {"itm_port": -1}, {"core_clock_hz": 0},
+                                      {"seconds": 0}, {"seconds": 61}])
+    def test_arguments_out_of_range_are_refused(self, bench, args) -> None:
+        out = call("capture_swo", **args)
+        assert_contract(out)
+        assert out["status"] == result.FAILED
+
+    def test_a_held_probe_is_refused(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
+        out = call("capture_swo")
+        assert out["status"] == result.FAILED and "holding" in out["error"].lower()
 
 
 class TestAddressesAndSizesAreCheckedAtTheBoundary:

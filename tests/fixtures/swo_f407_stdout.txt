@@ -1,0 +1,29 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 50FF73064977535531090387
+ST-LINK FW  : V2J48S7
+Board       : --
+Voltage     : 3.26V
+SWD freq    : 4000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x413
+Revision ID : Rev 2.0
+Device name : STM32F405xx/F407xx/F415xx/F417xx
+NVM size    : 1 MBytes
+Device type : MCU
+Device CPU  : Cortex-M4
+BL Version  : 0x31
+
+
+Press S to Stop the reception
+Press E to Exit this mode
+
+
+Reception Started
+
+
+Exiting Serial Wire Viewer mode
+
