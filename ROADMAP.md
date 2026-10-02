@@ -30,6 +30,17 @@ This plan was red-teamed before anything was built from it, and revised against 
 
 Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0 and `pyproject.toml` caps it below 3. On 2026-10-01 the latest published was still 2.2.0, and the suite and the stdio test in `tests/test_stdio.py` had passed against it. Re-verify on every SDK bump rather than assuming.
 
+## Version 1.0 (scope decided 2026-10-02)
+
+An agent can load, run, flash and reset a board, read its output, and find where it crashed. Version 1.0 adds what it needs when a program has gone wrong without crashing, as debugging for an agent rather than a human-facing debugger, which stays a non-goal:
+
+1. **Names instead of addresses**: `read_memory` reads a variable by name from the ELF, or a peripheral register by name from ST's SVD file, decoded into its type or its fields, without halting.
+2. **The call stack**: `core_registers`, given the ELF, returns every frame with its function, line and local variables.
+3. **Stop at a condition**: `run_until` runs until a location is reached or an address is written, within a time limit, and is `verified` only when the chip's own debug status register names the stop.
+4. **Resume**: `resume`, unless `release_probe` can carry it.
+
+Not in 1.0: single-stepping, memory writes, RTT, breakpoint lists and conditions. Each new promise is measured on the H7 and the F407, and the N6 where it differs, before it is claimed. Then the gates the README names: the tool signatures declared stable, one outside user's report on an unlisted board, the Windows question decided, and the README read before the repository goes public. How it is built, the measurements that come first, and three decisions it needs are in [docs/v1-plan.md](docs/v1-plan.md).
+
 ## Phase 1 - the core verbs, and letting the user describe the board
 
 Three needs land together because they are one change to the same data path.
@@ -111,7 +122,7 @@ After Phase 2 most parts have a proposed layout that nobody has run a board agai
 - **Fault decoding. DONE.** `read_fault_status` reads the six SCB fault registers (CFSR, HFSR, DFSR, MMFAR, BFAR, AFSR) without halting or resetting the target, decodes every set bit, and reports a plain-English diagnosis with the faulting address when the hardware recorded it. When a fault is active the result includes a next step telling the agent how to find the faulting instruction via the exception frame on the stack, and since 2026-09-28 which stack, from EXC_RETURN. The decode logic is pure and tested offline, by the ordinary suite and by the blind suite in `tests/blind/`. The registers are at fixed Cortex-M addresses and do not vary by family, which is why this was built before JTAG. Cores without them, Armv6-M and Armv8-M Baseline, are refused rather than read.
 - **Fault location. DONE** 2026-10-01. `locate_fault` follows that next step in one call: the stack from EXC_RETURN, the frame checked before it is trusted, the stacked PC and LR, and with the ELF their functions and lines. Run on the H7 (MSP, PSP, FP frame) and the N6.
 - **Flash readback verification. DONE** 2026-10-01. `flash_firmware` reads the written range back with the programmer's upload and compares it with the image itself, rather than parsing `-v`'s banner, and only an identical readback is `verified`. First run on hardware the same day, an H7 at 0x08000000. The N6 path through the external loader has not been run.
-- Halt, resume, step and memory writes, if real use asks for them.
+- Halt, resume, step and memory writes, if real use asks for them. Decided 2026-10-02: stopping at a condition, the call stack, names for addresses and resume are in version 1.0 (above); stepping and memory writes are not.
 
 ## Phase 6 - reach
 
