@@ -236,11 +236,40 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     report.check(swo["status"] == "verified" and "itm tick" in swo.get("output", "") and swo.get("trace_left_enabled"),
                  "H7: capture_swo reads ITM port 0 over SWO at the core's 64 MHz, and says trace stays on", _why(swo))
 
+    await check_names(server, "H7", s, images, report, "h7_vars", "f4_vars", "0x58024400", "board name")
+
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
     idle = await server.call("release_probe", probe_serial=s)
     report.check(idle["status"] == "unverified", "H7: release_probe with nothing held is unverified", _why(idle))
     return True
+
+
+async def check_names(server: Server, label: str, serial: str, images: Built, report: Report,
+                      own: str, other: str, register_address: str, svd_says: str) -> None:
+    """Read a variable and a register by name, on a board running images[own]."""
+    s = serial
+    await server.call("run_firmware", elf_path=str(images.elf[own]), probe_serial=s, console_seconds=1)
+    await server.call("release_probe", probe_serial=s)
+    var = await server.call("read_memory", probe_serial=s, symbol="g_state", elf_path=str(images.elf[own]))
+    value = var.get("value") or {}
+    report.check(var["status"] == "verified" and value.get("temperature_mc") == -1234 and value.get("gain") == 1.5
+                 and value.get("mode") == "MODE_RUN (3)" and value.get("flags") == {"a": 5, "b": 17, "c": 0xBEEF}
+                 and value.get("pos") == {"x": -3, "y": 7},
+                 f"{label}: read_memory reads a struct by name, decoded with the ELF's types", _why(var))
+    wrong = await server.call("read_memory", probe_serial=s, symbol="g_state", elf_path=str(images.elf[other]))
+    # Unverified where the other part's addresses hold memory here (the F407's on
+    # the H7), failed where they do not (the H7's on the F407).
+    why = wrong.get("unverified_because") or wrong.get("error") or ""
+    report.check(wrong["status"] != "verified" and "value" not in wrong
+                 and ("not running this ELF" in why or "another part" in why),
+                 f"{label}: a read by name with an ELF the target does not run is not verified", _why(wrong))
+    reg = await server.call("read_memory", probe_serial=s, register="RCC.CR")
+    raw = await server.call("read_memory", probe_serial=s, address=register_address, length_bytes=4)
+    report.check(reg["status"] == "verified" and svd_says in reg.get("svd_source", "")
+                 and reg.get("value") == raw.get("words", {}).get(register_address),
+                 f"{label}: read_memory reads RCC.CR by name and agrees with the raw word",
+                 f"{_why(reg)}; {reg.get('value')} against {raw.get('words', {}).get(register_address)}; {reg.get('svd_source')}")
 
 
 async def check_flash(server: Server, label: str, serial: str, flash_size: int,
@@ -319,6 +348,7 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     double = await server.call("capture_swo", probe_serial=s, core_clock_hz=32_000_000, seconds=2)
     report.check(double["status"] == "unverified" and "32000000" in double.get("unverified_because", ""),
                  "F4: capture_swo at twice the core clock hears nothing and says the clock may be wrong", _why(double))
+    await check_names(server, "F4", s, images, report, "f4_vars", "h7_vars", "0x40023800", "all 4 files")
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "F4: reset_target halts at the reset handler", _why(reset))
     return True

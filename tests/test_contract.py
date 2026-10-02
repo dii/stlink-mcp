@@ -287,6 +287,8 @@ class _FakeProbe:
 
     device_id = 0x486  # STM32N6, the family the fake board's AP1 answers below
     cpu: str | None = "Cortex-M55"  # what the captured N6 connect banner reports
+    device_name: str | None = None
+    board: str | None = None
 
     # Class-level so a test can patch them; __init__ must not overwrite them.
     access_port_provenance: str | None = "measured"
@@ -302,7 +304,8 @@ class _FakeProbe:
 
     def identify(self, allow_reset: bool = True) -> probe_mod.TargetInfo:
         return probe_mod.TargetInfo(
-            connected=True, device_id=self.device_id, cpu=self.cpu
+            connected=True, device_id=self.device_id, cpu=self.cpu,
+            device_name=self.device_name, board=self.board,
         )
 
     def gdb_access_port(self, info: object) -> int:
@@ -318,6 +321,12 @@ class _FakeProbe:
 
     def core_registers(self) -> dict[str, int]:
         return dict(self.registers)
+
+    def read_ranges(self, ranges: list[tuple[int, int]]) -> dict[int, int]:
+        words: dict[int, int] = {}
+        for address, length_bytes in ranges:
+            words.update(self.read_memory(address, length_bytes))
+        return words
 
     def identify_and_read(self, address: int, length_bytes: int):
         return None  # the bench always takes the identify-then-read path
@@ -817,6 +826,98 @@ class TestSwoIsCapturedAndItsSideEffectSaid:
         monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
         out = call("capture_swo")
         assert out["status"] == result.FAILED and "holding" in out["error"].lower()
+
+
+class TestReadingByName:
+    """read_memory's symbol and register paths. The variable side uses the ELF
+    fixtures and the bytes read from a NUCLEO-H743ZI on 2026-10-02; the register
+    side needs the SVD files of an STM32CubeCLT install, and skips without one."""
+
+    ELF = str(Path(__file__).parent / "fixtures" / "elf" / "h7_vars_dwarf5.elf")
+
+    def _lay_out(self, monkeypatch, *, image_matches: bool) -> None:
+        from stlink_mcp import symbols
+        from test_symbols import DUMP
+        memory: dict[int, int] = {}
+        base, code = symbols.first_code(self.ELF, 64)
+        if image_matches:
+            for i in range(0, 64, 4):
+                memory[base + i] = int.from_bytes(code[i:i + 4], "little")
+        for i in range(0, len(DUMP), 4):
+            memory[0x24000130 + i] = int.from_bytes(DUMP[i:i + 4], "little")
+        monkeypatch.setattr(_FakeProbe, "memory", memory)
+
+    def test_a_variable_on_a_target_running_its_elf_is_verified(self, bench, monkeypatch) -> None:
+        from test_symbols import EXPECTED
+        self._lay_out(monkeypatch, image_matches=True)
+        out = call("read_memory", address=None, symbol="g_state", elf_path=self.ELF)
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED, out
+        assert out["value"] == EXPECTED and out["type"] == "state_t"
+        assert out["address"] == "0x24000130" and "match" in out["verified_by"]
+
+    def test_a_target_running_something_else_is_not_verified(self, bench, monkeypatch) -> None:
+        """The address and the type come from the ELF; on a target running
+        another build they may describe some other variable's bytes."""
+        self._lay_out(monkeypatch, image_matches=False)
+        out = call("read_memory", address=None, symbol="g_state", elf_path=self.ELF)
+        assert_contract(out)
+        assert out["status"] == result.UNVERIFIED
+        assert "not running this ELF" in out["unverified_because"]
+        assert "value" not in out and "decoded_with_this_elf" in out
+
+    def test_nothing_at_the_address_points_at_the_elf(self, bench, monkeypatch) -> None:
+        def nothing(self, ranges):
+            raise probe_mod.ProbeError("No data read at 0x24000130.")
+        monkeypatch.setattr(_FakeProbe, "read_ranges", nothing)
+        out = call("read_memory", address=None, symbol="g_state", elf_path=self.ELF)
+        assert out["status"] == result.FAILED and "another part" in out["error"]
+
+    def test_a_name_that_is_not_one_variable_fails_before_the_probe(self, bench) -> None:
+        out = call("read_memory", address=None, symbol="s_count", elf_path=self.ELF)
+        assert out["status"] == result.FAILED and "names 2 variables" in out["error"]
+
+    @pytest.mark.parametrize("args, says", [
+        ({"address": None, "symbol": "g_state"}, "needs elf_path"),
+        ({"symbol": "g_state", "elf_path": ELF}, "this call gave address and symbol"),
+        ({"address": None}, "exactly one of address, symbol or register."),
+    ])
+    def test_the_arguments_must_name_one_thing(self, bench, args, says) -> None:
+        out = call("read_memory", **args)
+        assert_contract(out)
+        assert out["status"] == result.FAILED and says in out["error"]
+
+    def _svd(self, monkeypatch):
+        from stlink_mcp import svd
+        from stlink_mcp.toolchain import ToolchainError, find_toolchain
+        try:
+            directory = svd.svd_dir(find_toolchain().root)
+        except ToolchainError:
+            pytest.skip("no STM32CubeCLT install")
+        if not (directory / "STM32H743.svd").is_file():
+            pytest.skip("no SVD files")
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(root=directory.parent))
+
+    def test_a_register_is_decoded_and_its_read_risk_said(self, bench, monkeypatch) -> None:
+        self._svd(monkeypatch)
+        for name, value in (("device_id", 0x450), ("cpu", "Cortex-M7"),
+                            ("device_name", "STM32H7xx"), ("board", "NUCLEO-H743ZI")):
+            monkeypatch.setattr(_FakeProbe, name, value)
+        monkeypatch.setattr(_FakeProbe, "memory", {0x58024400: 0x00000083})
+        out = call("read_memory", address=None, register="RCC.CR")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED, out
+        assert out["value"] == "0x00000083" and out["fields"]["HSION"] == 1
+        assert out["svd"] == "STM32H743.svd" and "NUCLEO-H743ZI" in out["svd_source"]
+        assert "USART3" in out["read_side_effects_note"]
+
+    def test_a_read_the_file_marks_is_refused(self, bench, monkeypatch) -> None:
+        self._svd(monkeypatch)
+        monkeypatch.setattr(_FakeProbe, "device_name", "STM32N6xx")
+        monkeypatch.setattr(_FakeProbe, "board", "NUCLEO-N657X0-Q")
+        out = call("read_memory", address=None, register="ETH.MACISR")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "changing state" in out["error"]
 
 
 class TestAddressesAndSizesAreCheckedAtTheBoundary:

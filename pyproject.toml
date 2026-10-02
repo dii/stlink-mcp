@@ -28,6 +28,7 @@ classifiers = [
 # roadmap's standing check is to re-verify on every SDK bump rather than assume.
 dependencies = [
     "mcp>=2.0.0,<3",
+    "pyelftools>=0.31",
     "pyserial>=3.5",
 ]
 

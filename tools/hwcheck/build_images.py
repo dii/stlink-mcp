@@ -2,8 +2,8 @@
 
     uv run python tools/hwcheck/build_images.py [OUT_DIR]
 
-Each image is images/beacon.c built with a set of -D flags and a linker
-script. They are built fresh into a directory outside the repository on every
+Each image is images/beacon.c, or images/debug_target.c for the ones with
+variables to read by name, built with a set of -D flags and a linker script. They are built fresh into a directory outside the repository on every
 run of hwcheck.py, so no build output is ever tracked or packaged.
 """
 
@@ -23,6 +23,9 @@ _COMMON = [
     "-mthumb", "-O1", "-g", "-fno-tree-vectorize", "-ffreestanding",
     "-nostdlib", "-nostartfiles", "-Wall", "-Werror",
     "-Wl,--build-id=none", "-Wl,-n",
+    # Built from inside images/, so the debug information names its sources as
+    # images/<file> and carries no path from the machine that built it.
+    f"-fdebug-prefix-map={Path(__file__).parent / 'images'}=images",
 ]
 _H7 = ["-mcpu=cortex-m7", "-DHAS_UART", "-DCOUNTER_ADDR=0x24070000u"]
 _N6 = ["-mcpu=cortex-m55", "-DCOUNTER_ADDR=0x341B0000u", "-DDELAY=300000"]
@@ -39,6 +42,7 @@ class Image:
     binary: bool = False
     """Also produce a raw .bin with objcopy, for flash_firmware."""
     notes: str = ""
+    source: str = "beacon.c"
 
 
 VARIANTS: list[Image] = [
@@ -70,6 +74,14 @@ VARIANTS: list[Image] = [
           notes="boots from flash at 0x08000000"),
     Image("f4_itm", _F4 + _SOFT + ["-DITM_OUT", '-DTAG="f407 itm"'], "f4_ram.ld",
           notes="prints on UART5 and on ITM port 0, for SWO"),
+    Image("h7_vars", ["-mcpu=cortex-m7"] + _SOFT, "h7_data.ld", source="debug_target.c",
+          notes="typed globals, a watched variable, a call chain; prints nothing"),
+    Image("h7_vars_hang", ["-mcpu=cortex-m7", "-DHANG"] + _SOFT, "h7_data.ld", source="debug_target.c",
+          notes="hangs three calls deep"),
+    Image("f4_vars", ["-mcpu=cortex-m4", "-DDELAY=500000"] + _SOFT, "f4_data.ld", source="debug_target.c",
+          notes="typed globals, a watched variable, a call chain; prints nothing"),
+    Image("f4_vars_hang", ["-mcpu=cortex-m4", "-DDELAY=500000", "-DHANG"] + _SOFT, "f4_data.ld",
+          source="debug_target.c", notes="hangs three calls deep"),
     Image("n6_ram", _N6 + _SOFT, "n6_ram.ld", notes="counts in AXISRAM2, prints nothing"),
     Image("n6_fault", _N6 + _SOFT + _FAULT, "n6_ram.ld", notes="udf after four ticks"),
     Image("n6_close", _N6 + _SOFT + ["-DCLOSE_AP1"], "n6_ram.ld",
@@ -95,8 +107,8 @@ def build(out_dir: Path) -> Built:
         elf = out_dir / f"{image.name}.elf"
         subprocess.run(
             [str(gcc), *_COMMON, *image.flags, f"-Wl,-T,{IMAGES / image.linker_script}",
-             "-o", str(elf), str(IMAGES / "beacon.c")],
-            check=True,
+             "-o", str(elf.resolve()), image.source],
+            check=True, cwd=IMAGES,
         )
         built.elf[image.name] = elf
         if image.binary:

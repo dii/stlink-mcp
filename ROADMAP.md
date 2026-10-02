@@ -34,7 +34,7 @@ Standing check: `server.py` uses `mcp.server.MCPServer`. The lock pins SDK 2.0.0
 
 An agent can load, run, flash and reset a board, read its output, and find where it crashed. Version 1.0 adds what it needs when a program has gone wrong without crashing, as debugging for an agent rather than a human-facing debugger, which stays a non-goal:
 
-1. **Names instead of addresses**: `read_memory` reads a variable by name from the ELF, or a peripheral register by name from ST's SVD file, decoded into its type or its fields, without halting.
+1. **Names instead of addresses**: `read_memory` reads a variable by name from the ELF, or a peripheral register by name from ST's SVD file, decoded into its type or its fields, without halting. DONE 2026-10-02, measured on the H7 and the F407.
 2. **The call stack**: `core_registers`, given the ELF, returns every frame with its function, line and local variables.
 3. **Stop at a condition**: `run_until` runs until a location is reached or an address is written, within a time limit, and is `verified` only when the chip's own debug status register names the stop.
 4. **Resume**: `release_probe` resumes a core a stop left halted, and says so; stopping the GDB server was measured to resume it (2026-10-02), so there is no separate tool.

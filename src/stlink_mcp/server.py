@@ -47,9 +47,12 @@ from . import faults as faults_mod
 from . import image as image_mod
 from . import quirks as quirks_mod
 from . import settings
+from . import svd as svd_mod
+from . import symbols as symbols_mod
 from .result import failed, unverified, verified
 from .probe import (
     Probe,
+    ProbeError,
     ProbeInfo,
     TargetInfo,
     explain_connect_failure,
@@ -1277,20 +1280,35 @@ when the written range, read back afterwards, matches the image byte for byte.
 @mcp.tool()
 @_serialised
 def read_memory(
-    address: int | str,
+    address: int | str | None = None,
     length_bytes: int = 32,
+    symbol: str | None = None,
+    elf_path: str | None = None,
+    register: str | None = None,
+    svd: str | None = None,
     probe_serial: str | None = None,
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Read target memory as 32-bit words without halting or resetting the target.
-
-`address` is an integer or a hex string such as "0x20000000", 4-byte aligned;
-`length_bytes` is a multiple of 4, at most 1024. Connects hotplug-only: where
-running firmware has closed the debug port, reopening it would need a reset,
-which destroys the state being read, so this refuses instead. Cannot reach a
-probe held by a GDB server until `release_probe`.
+    """Read target memory without halting or resetting it, given one of: `address`
+(4-byte aligned, `length_bytes` a multiple of 4, at most 1024); `symbol`, a
+variable decoded with the types in `elf_path`; or `register`, such as "RCC.CR",
+decoded from ST's SVD file (`svd` names one when the part is ambiguous).
+Reading some registers changes state, such as a UART's data register.
+Hotplug-only: refuses rather than reset at a closed port. Cannot reach a probe
+held by a GDB server.
     """
+    given = [name for name, value in (("address", address), ("symbol", symbol), ("register", register))
+             if value is not None]
+    if len(given) != 1:
+        return failed(
+            "Give exactly one of address, symbol or register"
+            + (f"; this call gave {' and '.join(given)}." if given else ".")
+        )
+    if symbol is not None:
+        return _read_symbol(symbol, elf_path, probe_serial, interface)
+    if register is not None:
+        return _read_register(register, svd, probe_serial, interface)
     try:
         start = _address(address)
     except ValueError as exc:
@@ -1361,6 +1379,175 @@ probe held by a GDB server until `release_probe`.
         return unverified(probe.degraded_reason, **detail)
 
     return verified("words read back from the target", **detail)
+
+
+def _probe_for_read(
+    probe_serial: str | None, interface: str
+) -> tuple[tuple[Toolchain, str, Probe, TargetInfo] | None, dict[str, Any] | None]:
+    """Resolve, refuse a held probe, and identify without reset, for a read by name."""
+    toolchain = _toolchain()
+    serial, _, error = _resolve_probe(toolchain, probe_serial)
+    if error:
+        return None, failed(error)
+    if server_is_held(serial):
+        return None, failed(
+            _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
+        )
+    probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
+    info = probe.identify(allow_reset=False)
+    _remember_port(serial, probe, info)
+    if not info.connected:
+        return None, failed(
+            "Could not reach the core without resetting it, and this tool does not reset.",
+            probe_serial=serial,
+            **_connection_fields(probe, info),
+            hint=explain_connect_failure(info, interface),
+        )
+    return (toolchain, serial, probe, info), None
+
+
+#: How much of an image's code is compared with the target to check that the
+#: target runs the ELF a variable's address and type came from.
+_IMAGE_CHECK_BYTES = 64
+
+
+def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, interface: str) -> dict[str, Any]:
+    if not elf_path:
+        return failed("symbol needs elf_path: the ELF the target runs gives the variable's address and type.")
+    try:
+        variable = symbols_mod.find_variable(elf_path, symbol)
+        code = symbols_mod.first_code(elf_path, _IMAGE_CHECK_BYTES)
+    except symbols_mod.SymbolError as exc:
+        return failed(str(exc))
+    if variable.size > _MAX_READ_BYTES:
+        return failed(
+            f"{symbol} is {variable.size} bytes; at most {_MAX_READ_BYTES} are read by name, "
+            "so one read cannot flood the result. Read it by address, in pieces."
+        )
+    start = variable.address & ~3
+    end = (variable.address + variable.size + 3) & ~3
+    ranges = [(start, end - start)]
+    if code is not None:
+        ranges.append((code[0] & ~3, (len(code[1]) + 3) & ~3))
+
+    probe: Probe | None = None
+    try:
+        ready, refusal = _probe_for_read(probe_serial, interface)
+        if refusal:
+            return refusal
+        _, serial, probe, info = ready
+        words = probe.read_ranges(ranges)
+    except ProbeError as exc:
+        # Measured 2026-10-02: an STM32H7 ELF's g_state, at 0x24000130, read on an
+        # STM32F407, where nothing answers there.
+        return failed(
+            f"{symbol}'s address, 0x{variable.address:08X}, comes from {elf_path}, and "
+            "nothing could be read there; an ELF built for another part does this. "
+            + str(exc), **_after_failure(probe)
+        )
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), **_after_failure(probe))
+
+    def span(address: int, length: int) -> bytes | None:
+        out = bytearray()
+        for word_address in range(address & ~3, address + length, 4):
+            if word_address not in words:
+                return None
+            out += words[word_address].to_bytes(4, "little")
+        skip = address - (address & ~3)
+        return bytes(out[skip:skip + length])
+
+    data = span(variable.address, variable.size)
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        **_connection_fields(probe, info),
+        "target_was_reset": probe.target_was_reset,
+        "symbol": symbol,
+        "address": f"0x{variable.address:08X}",
+        "size_bytes": variable.size,
+        "type": variable.type_name,
+        "declared_in": variable.scope,
+        "elf_path": elf_path,
+    }
+    if data is None:
+        return failed(f"The read did not return all {variable.size} bytes of {symbol}.", **detail)
+    decoded = symbols_mod.decode(variable.type_die, data)
+    detail["bytes"] = data.hex()
+    on_target = span(code[0], len(code[1])) if code is not None else None
+    if code is not None and on_target != code[1]:
+        # Not `value`: an agent quoting the field without its verdict would
+        # report another variable's bytes as this one.
+        detail["decoded_with_this_elf"] = decoded
+        return unverified(
+            f"The bytes were read, but the target is not running this ELF: its first "
+            f"{len(code[1])} bytes of code at 0x{code[0]:08X} differ from the ELF's, so the "
+            "address and the type may not be this variable's. Load this ELF, or give the "
+            "one the target runs.", **detail
+        )
+    detail["value"] = decoded
+    if code is None:
+        return unverified(
+            "The bytes were read and decoded, but the ELF has no code segment to compare "
+            "with the target, so nothing shows the target runs this ELF.", **detail
+        )
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **detail)
+    return verified(
+        f"the variable's bytes read from the target, which runs this ELF: its first "
+        f"{len(code[1])} bytes of code at 0x{code[0]:08X} match", **detail
+    )
+
+
+#: Every register read says this unless the file marks the read, which is refused.
+_READ_SIDE_EFFECT_NOTE = (
+    "The SVD file marks no side effect for reading this register, which does not "
+    "mean it has none: on an STM32H7 a read of USART3's RDR returned the received "
+    "byte and cleared RXNE, so the firmware never saw it, and the H743 file does "
+    "not mark it."
+)
+
+
+def _read_register(register: str, svd: str | None, probe_serial: str | None, interface: str) -> dict[str, Any]:
+    probe: Probe | None = None
+    try:
+        ready, refusal = _probe_for_read(probe_serial, interface)
+        if refusal:
+            return refusal
+        toolchain, serial, probe, info = ready
+        connection = {"probe_serial": serial, **_connection_fields(probe, info)}
+        try:
+            found, file_name, how = svd_mod.resolve(
+                svd_mod.svd_dir(toolchain.root), register, svd=svd,
+                device_name=info.device_name, board=info.board, cpu=info.cpu,
+            )
+            svd_mod.refuse_marked_read(found, file_name)
+        except svd_mod.SvdError as exc:
+            return failed(str(exc), **connection)
+        aligned = found.address & ~3
+        words = probe.read_memory(aligned, 4)
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), **_after_failure(probe))
+
+    detail: dict[str, Any] = {
+        **connection,
+        "target_was_reset": probe.target_was_reset,
+        "register": f"{found.peripheral}.{found.name}",
+        "address": f"0x{found.address:08X}",
+        "description": found.description,
+        "svd": file_name,
+        "svd_source": how,
+    }
+    if aligned not in words:
+        return failed(f"The read at 0x{aligned:08X} returned nothing for {register}.", **detail)
+    value = (words[aligned] >> ((found.address & 3) * 8)) & ((1 << found.size_bits) - 1)
+    detail.update({
+        "value": f"0x{value:0{max(1, found.size_bits // 4)}X}",
+        "fields": svd_mod.decode(found, value),
+        "read_side_effects_note": _READ_SIDE_EFFECT_NOTE,
+    })
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **detail)
+    return verified(f"the register read from the target and decoded with {file_name}", **detail)
 
 
 #: Where a user describes boards this project has not characterised.

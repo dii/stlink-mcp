@@ -547,6 +547,18 @@ class Probe:
             raise no_data_read(address, result.stdout)
         return words
 
+    def read_ranges(self, ranges: list[tuple[int, int]]) -> dict[int, int]:
+        """Several reads in one programmer call, which takes a -r32 per range and
+        prints each (measured 2026-10-02, three ranges on an STM32H7 and an F407)."""
+        argv = self._connect_args(self.access_port, self.connect_mode)
+        for address, length_bytes in ranges:
+            argv += ["-r32", f"0x{address:08X}", str(length_bytes)]
+        result = self._run(argv, timeout=90)
+        words = parse_memory(result.stdout)
+        if not words:
+            raise no_data_read(ranges[0][0], result.stdout)
+        return words
+
     def identify_and_read(
         self, address: int, length_bytes: int
     ) -> tuple[TargetInfo, dict[int, int]] | None:
