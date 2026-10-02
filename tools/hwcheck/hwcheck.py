@@ -112,6 +112,15 @@ def _why(result: dict) -> str:
     return f"{result.get('status')}: {text[:160]}"
 
 
+def _answered(board: dict, label: str) -> bool:
+    """A board that does not answer its first call would fail every check after
+    it the slow way, up to a minute each, so its first FAIL stands for them."""
+    if board["status"] == "verified":
+        return True
+    print(f"SKIP  {label}: its other checks, because the board did not answer", flush=True)
+    return False
+
+
 def _udf_address(elf: Path) -> int:
     objdump = find_toolchain().root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-objdump"
     listing = subprocess.run([str(objdump), "-d", str(elf)], capture_output=True, text=True, check=True).stdout
@@ -126,7 +135,7 @@ def _counter(result: dict, address: str) -> int | None:
     return int(word, 16) if word else None
 
 
-async def check_h7(server: Server, serial: str, images: Built, report: Report) -> None:
+async def check_h7(server: Server, serial: str, images: Built, report: Report) -> bool:
     s = serial
 
     board = await server.call("board_state", probe_serial=s)
@@ -134,6 +143,8 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
         board["status"] == "verified" and board["family"]["name"] == "STM32H7"
         and "access_port_warning" not in board,
         "H7: board_state identifies the family on a measured port", _why(board))
+    if not _answered(board, "H7"):
+        return False
 
     run = await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=s, console_seconds=1.5)
     report.check(run["status"] == "verified" and "ram tick 0" in run.get("console", ""),
@@ -220,6 +231,7 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
     idle = await server.call("release_probe", probe_serial=s)
     report.check(idle["status"] == "unverified", "H7: release_probe with nothing held is unverified", _why(idle))
+    return True
 
 
 async def check_flash(server: Server, label: str, serial: str, flash_size: int,
@@ -255,7 +267,7 @@ async def check_flash(server: Server, label: str, serial: str, flash_size: int,
         await server.call("reset_target", probe_serial=serial)
 
 
-async def check_f4(server: Server, serial: str, images: Built, report: Report, console: bool) -> None:
+async def check_f4(server: Server, serial: str, images: Built, report: Report, console: bool) -> bool:
     """An STM32F407 board. Its images print on UART5 (PC12); with --f4-console
     naming a serial adapter there the RAM run is verified by console, and
     without one it is unverified and the counter shows it running."""
@@ -264,6 +276,8 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     report.check(board["status"] == "verified" and board["family"]["name"] == "STM32F4"
                  and "access_port_warning" not in board,
                  "F4: board_state identifies the family on a measured port", _why(board))
+    if not _answered(board, "F4"):
+        return False
     run = await server.call("run_firmware", elf_path=str(images.elf["f4_ram"]), probe_serial=s, console_seconds=2)
     if console:
         report.check(run["status"] == "verified" and "f407 tick 0" in run.get("console", ""),
@@ -290,6 +304,7 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
                  "F4: locate_fault finds the udf", f"{_why(where)}; pc {where.get('faulting_pc')}")
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "F4: reset_target halts at the reset handler", _why(reset))
+    return True
 
 
 async def check_jtag(server: Server, serial: str, images: Built, report: Report) -> None:
@@ -297,6 +312,8 @@ async def check_jtag(server: Server, serial: str, images: Built, report: Report)
     report.check(board["status"] == "verified" and board.get("interface") == "jtag" and board.get("interface_clock_khz"),
                  "JTAG: board_state over JTAG reports the clock the banner gave",
                  f"{_why(board)}; {board.get('interface_clock_khz')} kHz")
+    if not _answered(board, "JTAG"):
+        return
     run = await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=serial,
                             console_seconds=1.5, interface="jtag")
     report.check(run["status"] == "verified" and run.get("console_port_source") == "STLINK_MCP_CONSOLE",
@@ -307,11 +324,13 @@ async def check_jtag(server: Server, serial: str, images: Built, report: Report)
     await server.call("release_probe", probe_serial=serial)
 
 
-async def check_n6(server: Server, serial: str, images: Built, report: Report) -> None:
+async def check_n6(server: Server, serial: str, images: Built, report: Report) -> bool:
     s = serial
     board = await server.call("board_state", probe_serial=s)
     report.check(board["status"] == "verified" and board["family"]["name"] == "STM32N6" and board.get("access_port") == 1,
                  "N6: board_state identifies the family on AP1", _why(board))
+    if not _answered(board, "N6"):
+        return False
     run = await server.call("run_firmware", elf_path=str(images.elf["n6_ram"]), probe_serial=s, console_seconds=1)
     report.check(run["status"] == "unverified", "N6: a silent image is unverified, not verified", _why(run))
     await server.call("release_probe", probe_serial=s)
@@ -333,6 +352,7 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     report.check(where["status"] == "verified" and where.get("faulting_pc") == f"0x{_udf_address(elf):08X}",
                  "N6: locate_fault finds the udf on its Secure stack",
                  f"{_why(where)}; pc {where.get('faulting_pc')}")
+    return True
 
 
 async def check_together(server: Server, h7: str, n6: str, report: Report) -> None:
@@ -375,24 +395,25 @@ async def main() -> int:
         h7 = args.h7 or by_board.get(H7_BOARD, {}).get("serial")
         n6 = args.n6 or by_board.get(N6_BOARD, {}).get("serial")
         print(f"H7 probe {h7 or 'not found'}, N6 probe {n6 or 'not found'}\n", flush=True)
+        h7_up = n6_up = False
         if h7:
-            await check_h7(server, h7, images, report)
-            if args.flash:
+            h7_up = await check_h7(server, h7, images, report)
+            if h7_up and args.flash:
                 await check_flash(server, "H7", h7, 0x200000, images.bin["h7_flash"], report)
         if n6:
-            await check_n6(server, n6, images, report)
-        if h7 and n6:
+            n6_up = await check_n6(server, n6, images, report)
+        if h7_up and n6_up:
             await check_together(server, h7, n6, report)
         if args.f4:
-            await check_f4(server, args.f4, images, report, console=bool(args.f4_console))
-            if args.flash:
+            f4_up = await check_f4(server, args.f4, images, report, console=bool(args.f4_console))
+            if f4_up and args.flash:
                 await check_flash(server, "F4", args.f4, 0x100000, images.bin["f4_flash"], report)
     if args.jtag and h7:
         console = next((p["console_port"] for p in listed.get("probes", []) if p["serial"] == h7), None)
         env = {"STLINK_MCP_CONSOLE": f"{args.jtag}={console}"} if console else {}
         async with Server(env) as jtag_server:
             await check_jtag(jtag_server, args.jtag, images, report)
-    if h7:
+    if h7_up:
         async with Server() as server:
             await server.call("reset_target", probe_serial=h7)  # leave the H7 on its own firmware
 

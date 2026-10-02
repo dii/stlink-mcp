@@ -7,7 +7,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 ### Added
 
 - STM32F4 (device 0x413) is a measured family: run on an STM32F407IGT6 board through an ST-LINK/V2, RAM run, faults, flash written and read back, reset to it.
-- `tools/hwcheck` checks an STM32F407 board named with `--f4`, by its console on UART5 when `--f4-console` names an adapter, and prints every result since the previous check when one fails.
+- `tools/hwcheck` checks an STM32F407 board named with `--f4`, by its console on UART5 when `--f4-console` names an adapter, and prints every result since the previous check when one fails. A board whose first call fails gets one failure, not one per check.
 
 ### Fixed
 

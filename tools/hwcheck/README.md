@@ -8,14 +8,14 @@ uv run python tools/hwcheck/hwcheck.py --h7 <serial> --n6 <serial> --jtag <seria
 uv run python tools/hwcheck/hwcheck.py --f4 <serial> --f4-console /dev/serial/by-id/<adapter>
 ```
 
-It knows the NUCLEO-H743ZI and the NUCLEO-N657X0-Q, and finds them by board name in `list_probes` when no serial is given. An STM32F407 board has no board name to find it by, so `--f4` names its probe. Each check prints PASS or FAIL and what it saw, and when a check fails, every call result since the previous check, whole. The exit status is 1 when any failed.
+It knows the NUCLEO-H743ZI and the NUCLEO-N657X0-Q, and finds them by board name in `list_probes` when no serial is given. An STM32F407 board has no board name to find it by, so `--f4` names its probe. Each check prints PASS or FAIL and what it saw, and when a check fails, every call result since the previous check, whole. A board whose first call fails gets one FAIL and SKIP for the rest, since each of its other checks would fail too, at up to a minute each. The exit status is 1 when any failed.
 
 ## What it changes on the boards
 
 - It loads images into RAM on both boards. The H7 is reset at the end, so it runs its own firmware again.
 - It never resets the N6, because ST's stock start-up code can close the N6's debug port until a power cycle. The N6 is left running a RAM image, which a power cycle clears.
 - It loads images into RAM on an F407 board named with `--f4` and resets it at the end.
-- `--flash` writes the flash of the H7, and of the F407 when `--f4` is given. It saves the whole flash with STM32_Programmer_CLI first, writes a small test image and checks it, then writes the saved copy back and verifies it, even when a check failed. The saved copy is kept in a temporary directory, whose path it prints.
+- `--flash` writes the flash of the H7, and of the F407 when `--f4` is given. It saves the whole flash with STM32_Programmer_CLI first, writes a small test image and checks it, then writes the saved copy back and verifies it, even when a check failed. The saved copy is kept in a temporary directory, whose path it prints. It holds whatever the board's own firmware holds, so delete it once the board is back as it was.
 - `--jtag <serial>` names an ST-LINK wired to the H7's JTAG connector, such as an ST-LINK/V2 through a 20-to-10-pin adapter into CN5, and adds checks over JTAG. The H7's console is assigned to that probe for those checks with `STLINK_MCP_CONSOLE`.
 
 ## The images
