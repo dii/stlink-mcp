@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-02
+
+Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-02: `tools/hwcheck` passed 48 of 48 checks with `--f4`, `--f4-console`, `--jtag`, `--flash` and `--n6-closed`. docs/findings.md has what was run and what each README promise rests on.
+
 ### Added
 
 - `capture_swo`, which captures what the target writes to an ITM stimulus port over the SWO pin, through STM32_Programmer_CLI's own SWO capture. It takes the core clock, is `unverified` when nothing arrives, notes unreadable text, and says in every result that the target's trace output was left on. Measured on an STM32H7 and an STM32F407.
@@ -101,7 +105,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dii/stlink-mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dii/stlink-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dii/stlink-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dii/stlink-mcp/compare/v0.1.0...v0.2.0
