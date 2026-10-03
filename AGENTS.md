@@ -75,7 +75,7 @@ Every entry carries `notes`, and that field is the point rather than decoration:
 
 ## Public repo hygiene
 
-- No estate specifics, no host names, no paths from the author's machine in code or docs.
+- No estate specifics, no host names, no names of the author's other projects or of the hardware on his bench, and no paths from his machine: not in code, docs, tests, commit messages or tag messages. Name what a machine was ("a Windows 11 laptop", "the Linux bench"), never what it is called. History is rewritten to remove one, which costs every citation of every later commit, so the check comes before the commit, not after.
 - No secrets, obviously, and no serial numbers of real probes outside test fixtures.
 - Not affiliated with STMicroelectronics, and the name deliberately avoids their STM32Cube product brand.
 - Never commit or package STM32CubeProgrammer's device database files, or any table derived from them. Seeding happens at run time from the user's own install and nowhere else. Those files are under ST's SLA0048, whose condition 5 forbids any use or redistribution that would put them under open-source terms, and this repo is MIT. Quoting a single address as a fact, or a count of what the database contains, is fine; a copied or pre-parsed dataset is not.

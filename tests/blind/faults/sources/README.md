@@ -28,5 +28,5 @@ edited to match this repository:
   instead, in `tests/blind/faults/sources/`.
 - `CALLSITES.md` was a listing, generated for the run, of where `faults.decode` is called. It
   was not kept. There is one call site, `read_fault_status` in `src/stlink_mcp/server.py`, and
-  the line numbers the rulings quote (`server.py:1092-1098`) are those of commit `9d769bf`, the
+  the line numbers the rulings quote (`server.py:1092-1098`) are those of commit `c2109c3`, the
   code the run was made against.
