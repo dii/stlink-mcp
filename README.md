@@ -103,17 +103,19 @@ claude mcp add stlink -- uv --directory /path/to/stlink-mcp run stlink-mcp
 | `release_probe` | Frees a held GDB server, which resumes a core `run_until` held | `unverified` if nothing was held, since then nothing was released. Reads DHCSR afterwards to say whether a held core runs again |
 | `list_probes` | Lists attached probes and their consoles | Deduplicates the tool's own double listing. Works while other probes are held |
 
-### The GDB server stays alive between runs
+### When the program closes the debug port
 
-`run_firmware` starts a GDB server and holds it. On the STM32N6, an image built from ST's FSBL template closes debug access port 1 when it starts, and only a power cycle reopens it. The cause is one line at the end of ST's `system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out of `SystemInit`:
+`run_firmware` loads through a GDB server, and once the program has started it lets go of the probe and checks, with one hotplug connect, that the core still answers. It nearly always does, and then every tool reaches the probe at once. A program can close the debug port, though, by taking the SWD pins for other use, turning off a clock the debug port needs, or sleeping with debug off; that is the program's doing, not the part's. When the check finds the port closed, the result says so in `debug_port_after_run`, and the next run of that image on that probe keeps the GDB server, so it can be loaded again. The check is made once, a moment after the start, so a program that closes the port later does not show there. Tools that may reset end with a connect under reset, which reopened the port on an STM32H743 whose program had taken the SWD pins.
+
+On the STM32N6, an image built from ST's FSBL template closes debug access port 1 when it starts, and only a power cycle reopens it, so there the server is kept from the first run. The cause is one line at the end of ST's `system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out of `SystemInit`:
 
 ```c
 RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
 ```
 
-Remove that write and the port survives across runs. With the stock image, holding the server is the difference between one power cycle per session and one per run. Either way the target is reset before every load; without that, each image inherits the previous run's peripheral and interrupt state and faults during start-up.
+Remove that write and the port survives across runs. With the stock image, keeping the server is the difference between one power cycle per session and one per run. Either way the target is reset before every load; without that, each image inherits the previous run's peripheral and interrupt state and faults during start-up.
 
-While the server holds a probe, `core_registers` and `run_until` work through it and `capture_console` still reads its console; the other tools that connect cannot reach it until you call `release_probe`. Other probes are unaffected. Listing the probes slows to about 11 seconds while one is held, which is one reason a call that names its probe does not list them.
+While a server holds a probe, whether `run_firmware`'s for such a program or `run_until`'s, `core_registers` and `run_until` work through it and `capture_console` still reads its console; the other tools that connect cannot reach it until you call `release_probe`. Other probes are unaffected. Listing the probes slows to about 11 seconds while one is held, which is one reason a call that names its probe does not list them.
 
 `run_firmware` is the one to use while developing: faster than flashing, and an image placed in RAM by the debugger bypasses the boot ROM, so no signing is involved even on parts that require signed images to boot. The image must be linked for RAM, with its vector table at the address `board_state` reports for the family, and every section it loads must lie in the SRAM region, 0x20000000 to 0x3FFFFFFF. A default flash-linked build is refused before anything is loaded, because a GDB load writes each segment to the address the image carries. The tool sets the stack pointer and program counter from that vector table and does not set VTOR, so an image that uses interrupts must point VTOR at its own table in its start-up code.
 
@@ -229,8 +231,8 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * **The serial port cannot be opened.** On Linux the user needs to be in the `dialout` group, and a new group membership takes effect at the next login.
 * **Could not reach the core.** The result's `hint` lists the likely causes. One is another process holding the probe, such as an IDE or a GDB server left by an earlier session. Check by port with `ss -ltnp`, not by process name: Linux truncates process names to fifteen characters, so `pgrep ST-LINK_gdbserver` finds nothing even while one is running.
 * **Serial number not found, or old firmware.** STM32CubeProgrammer refuses ST-LINK firmware that is too old: an ST-LINK/V2 on V2J16S4 was listed and then refused. STLinkUpgrade, in the STM32CubeCLT install, updates it (select the probe, Open in update mode, Upgrade).
-* **run_firmware refuses the image.** It has to be linked for RAM; see [The GDB server stays alive between runs](#the-gdb-server-stays-alive-between-runs).
-* **Other tools report the probe as held.** A `run_firmware` left its GDB server holding the probe, and `release_probe` frees it. On an STM32N6 running ST's stock start-up code the board then needs a power cycle before the next run.
+* **run_firmware refuses the image.** It has to be linked for RAM; see [When the program closes the debug port](#when-the-program-closes-the-debug-port).
+* **Other tools report the probe as held.** A `run_until`, or a `run_firmware` whose program closed the debug port, left a GDB server holding the probe, and `release_probe` frees it. After a program that closes the port, such as ST's stock start-up code on an STM32N6, the board may then need a power cycle before the next run.
 
 ## Limitations
 

@@ -214,3 +214,36 @@ class TestAClosedPortIsNamedAsACause:
     def test_other_server_exits_carry_no_such_claim(self) -> None:
         message = runner.server_exit_message("Error: port 61234 already in use\n")
         assert "closed" not in message and message.startswith("GDB server exited before listening")
+
+
+class TestAConnectUnderResetIsTheLastResort:
+    """On an STM32H743 whose program had made the SWD pins inputs, a hotplug
+    connect and a reset-pulse connect each failed after 30 s, and a connect
+    under reset reached the core in 0.1 s (2026-10-03). The banners are what the
+    programmer printed for the hotplug and the under-reset connects then."""
+
+    REFUSED = (FIXTURES / "connect_h7_swd_pins_taken_hotplug.txt").read_text()
+    UNDER_RESET = (FIXTURES / "connect_h7_swd_pins_taken_under_reset.txt").read_text()
+
+    def _run(self, monkeypatch, *, allow_reset: bool):
+        modes: list[str] = []
+
+        def run(argv, timeout=90):
+            mode = next(a.split("=", 1)[1] for a in argv if a.startswith("mode="))
+            modes.append(mode)
+            return CommandResult(argv, 0 if mode == "UR" else 1, self.UNDER_RESET if mode == "UR" else self.REFUSED)
+
+        monkeypatch.setattr(pm, "run_command", run)
+        probe = pm.Probe(SimpleNamespace(programmer=Path("STM32_Programmer_CLI")),
+                         serial="0054003D3137511139383538", interface="swd")
+        return probe, probe.identify(allow_reset=allow_reset), modes
+
+    def test_it_reaches_a_core_whose_program_took_the_pins(self, monkeypatch) -> None:
+        probe, info, modes = self._run(monkeypatch, allow_reset=True)
+        assert info.connected and probe.connect_mode == "UR" and probe.target_was_reset
+        assert modes.index("UR") > max(i for i, m in enumerate(modes) if m == "HWRSTPULSE")
+
+    def test_not_without_leave_to_reset(self, monkeypatch) -> None:
+        _, info, modes = self._run(monkeypatch, allow_reset=False)
+        assert not info.connected and set(modes) == {"HOTPLUG"}
+

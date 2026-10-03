@@ -258,6 +258,11 @@ def seed_from_directory(db_dir: Path) -> SeedResult:
             ),
             default_provenance=VENDOR_DB,
             provenance={"access_port": ASSUMED},
+            agent_note=(
+                "Seeded from ST's device database, not measured on a board: the addresses "
+                "come from that file and access port 0 is assumed. Confirm them on a board "
+                "before relying on them."
+            ),
         )
 
         problems = check_consistency(entry)

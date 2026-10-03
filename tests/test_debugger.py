@@ -114,6 +114,25 @@ class TestTheHelpersReadWhatGdbSaid:
                              "R11", "R12", "SP", "LR", "PC", "XPSR"}
         assert regs["PC"] == 0x24000042
 
+    def test_the_system_registers_are_asked_for_by_their_numbers_in_gdbs_list(self) -> None:
+        """So core_registers gives through GDB what the programmer gives. The
+        values come from the H7 in tools/hwcheck; this checks the numbers asked
+        for against the register list GDB gave on the H7."""
+        names = next(gdbmi.parse(line) for line in LINES if "register-names=" in line)
+        asked: list[str] = []
+
+        class Session:
+            def command(self, text, timeout=30):
+                if text == "-data-list-register-names":
+                    return names
+                asked.append(text)
+                return gdbmi.Record("^", "done", {"register-values": []})
+
+        debugger.system_registers(Session())
+        listed = names.results["register-names"]
+        numbers = [int(n) for n in asked[0].split()[2:]]
+        assert [listed[n] for n in numbers] == ["msp", "psp", "primask", "basepri", "faultmask", "control"]
+
     def test_the_call_before_lr(self) -> None:
         assert debugger.call_before(_Replay(), 0x24000103) == "writer"
 
@@ -299,7 +318,7 @@ class TestAWatchpointNamesNoWriterItCannotKnow:
         assert stop.frames[0]["function"] == "reset_handler"
         assert stop.detail["returned_from"] == "reached_tick_five"
         from stlink_mcp import server
-        assert "stopped_at" in server._WRITE_NOTE and "Nothing here tells which" in server._WRITE_NOTE
+        assert "stopped_at" in server._WRITE_NOTE and "The source of both tells which" in server._WRITE_NOTE
 
 
 class TestAWatchedPeripheralRegisterIsNotReadByThisTool:

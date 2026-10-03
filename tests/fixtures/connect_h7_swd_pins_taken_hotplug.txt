@@ -1,0 +1,17 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 0054003D3137511139383538
+ST-LINK FW  : V3J17M11
+Board       : NUCLEO-H743ZI
+Voltage     : 3.27V
+Error: Unable to get core ID
+Error: No STM32 target found! If your product embeds Debug Authentication, please perform a discovery using Debug Authentication
+2nd connect tentative with frequency (8MHz)
+ST-LINK SN  : 0054003D3137511139383538
+ST-LINK FW  : V3J17M11
+Board       : NUCLEO-H743ZI
+Voltage     : 3.27V
+Error: Unable to get core ID
+Error: No STM32 target found! If your product embeds Debug Authentication, please perform a discovery using Debug Authentication

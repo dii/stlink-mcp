@@ -175,9 +175,22 @@ _CORE = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11
          "sp", "lr", "pc", "xpsr"]
 
 
-def registers(session: Session) -> dict[str, int]:
+#: The system registers the programmer's path reports too, so that
+#: core_registers gives the same set whichever way it reads them.
+_SYSTEM = ["msp", "psp", "primask", "basepri", "faultmask", "control"]
+
+
+def system_registers(session: Session) -> dict[str, int]:
+    """MSP, PSP and the mask and control registers, which ST-LINK_gdbserver's
+    register list names (H7, 2026-10-02 transcript)."""
+    return registers(session, _SYSTEM)
+
+
+def registers(session: Session, which: list[str] = _CORE) -> dict[str, int]:
     names = session.command("-data-list-register-names").results.get("register-names") or []
-    wanted = {i: n for i, n in enumerate(names) if n in _CORE}
+    wanted = {i: n for i, n in enumerate(names) if n in which}
+    if not wanted:
+        return {}
     values = session.command(
         "-data-list-register-values x " + " ".join(str(i) for i in wanted)
     ).results.get("register-values") or []

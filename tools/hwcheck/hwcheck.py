@@ -154,19 +154,17 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     run = await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=s, console_seconds=1.5)
     report.check(run["status"] == "verified" and "ram tick 0" in run.get("console", ""),
                  "H7: run_firmware is verified by the new image's own console", _why(run))
-    held = await server.call("read_memory", address=H7_COUNTER, probe_serial=s)
-    report.check(held["status"] == "failed" and "holding this probe" in held.get("error", "").lower(),
-                 "H7: a held probe refuses read_memory and says why", _why(held))
-    cached = await server.call("board_state", probe_serial=s)
-    report.check(cached["status"] == "unverified", "H7: board_state answers from cache while held", _why(cached))
-    await server.call("release_probe", probe_serial=s)
+    report.check(run.get("gdb_server_held") is False and run.get("debug_port_after_run", "").startswith("open"),
+                 "H7: run_firmware lets go of the probe when the program leaves the debug port open",
+                 f"{run.get('debug_port_after_run')}")
 
     first = await server.call("read_memory", address=H7_COUNTER, length_bytes=4, probe_serial=s)
     await anyio.sleep(1.0)
     second = await server.call("read_memory", address=H7_COUNTER, length_bytes=4, probe_serial=s)
     a, b = _counter(first, H7_COUNTER), _counter(second, H7_COUNTER)
     report.check(a is not None and b is not None and b > a,
-                 "H7: the image keeps running after release (its counter advances)", f"{a and hex(a)} then {b and hex(b)}")
+                 "H7: the image runs, and is read with no release first (its counter advances)",
+                 f"{a and hex(a)} then {b and hex(b)}")
 
     await anyio.sleep(3.0)  # the running image prints while nothing has the port open
     silent = await server.call("run_firmware", elf_path=str(images.elf["h7_silent"]), probe_serial=s, console_seconds=2)
@@ -223,30 +221,51 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
                  f"{_why(bus)}; locate {late.get('faulting_pc')}")
 
     regs = await server.call("core_registers", probe_serial=s)
-    report.check(regs["status"] == "verified" and regs.get("halted_to_read_registers") is True and "halted" not in regs,
+    report.check(regs["status"] == "verified" and regs.get("halted_during_call") is True and "halted" not in regs,
                  "H7: core_registers halts for the read and claims nothing after", _why(regs))
 
     await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=s, console_seconds=1)
     await server.call("release_probe", probe_serial=s)
     capture = await server.call("capture_console", probe_serial=s, seconds=2)
-    report.check(capture["status"] == "verified" and "tick" in capture.get("output", ""),
-                 "H7: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('port')}")
+    report.check(capture["status"] == "verified" and "tick" in capture.get("console", ""),
+                 "H7: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('console_port')}")
 
     await server.call("run_firmware", elf_path=str(images.elf["h7_itm"]), probe_serial=s, console_seconds=1)
     await server.call("release_probe", probe_serial=s)
     swo = await server.call("capture_swo", probe_serial=s, core_clock_hz=64_000_000, seconds=2)
-    report.check(swo["status"] == "verified" and "itm tick" in swo.get("output", "") and swo.get("trace_left_enabled"),
+    report.check(swo["status"] == "verified" and "itm tick" in swo.get("swo", "") and swo.get("trace_left_enabled"),
                  "H7: capture_swo reads ITM port 0 over SWO at the core's 64 MHz, and says trace stays on", _why(swo))
 
     await check_names(server, "H7", s, images, report, "h7_vars", "f4_vars", "0x58024400", "board name")
     await check_stops(server, "H7", s, images, report, "h7_vars", "f4_vars", "h7_vars_hang")
     await check_read_effects(server, "H7", s, images, report, "h7_read_effects", "ADC3", 0x58026000, 2, 0x58026040)
+    await check_closed_port(server, s, images, report)
 
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
     idle = await server.call("release_probe", probe_serial=s)
     report.check(idle["status"] == "unverified", "H7: release_probe with nothing held is unverified", _why(idle))
     return True
+
+
+async def check_closed_port(server: Server, serial: str, images: Built, report: Report) -> None:
+    """A program that takes the SWD pins: the run says the port closed, board_state
+    gets back in with a connect under reset, and the next run keeps the server."""
+    s, elf = serial, str(images.elf["h7_close_swd"])
+    run = await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=1.5)
+    report.check(run["status"] == "verified" and run.get("debug_port_after_run", "").startswith("closed"),
+                 "H7: a program that takes the SWD pins runs verified, and the run says the debug port closed",
+                 f"{_why(run)}; {run.get('debug_port_after_run', '')[:60]}")
+    board = await server.call("board_state", probe_serial=s)
+    report.check(board["status"] == "verified" and board.get("connect_mode") == "UR" and board.get("target_was_reset") is True,
+                 "H7: board_state reaches that core with a connect under reset, and says it reset the target",
+                 f"{_why(board)}; mode {board.get('connect_mode')}")
+    again = await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=1.5)
+    report.check("last time it ran on this probe" in again.get("debug_port_after_run", "") and again.get("gdb_server_held") is True,
+                 "H7: the next run of that image keeps the GDB server", f"{again.get('debug_port_after_run', '')[:80]}")
+    await server.call("release_probe", probe_serial=s)
+    back = await server.call("board_state", probe_serial=s)
+    report.check(back["status"] == "verified", "H7: after a release, board_state gets back in again", _why(back))
 
 
 async def check_read_effects(server: Server, label: str, serial: str, images: Built, report: Report,
@@ -321,10 +340,18 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
     await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=1)
     stop = await server.call("run_until", probe_serial=s, elf_path=elf, location="writer", seconds=5)
     report.check(stop["status"] == "verified" and any("BKPT" in r for r in stop.get("stop_reason_from_chip", []))
-                 and stop.get("stopped_at", {}).get("function") == "writer" and stop.get("target_halted") is True,
+                 and stop.get("stopped_at", {}).get("function") == "writer" and stop.get("halted_during_call") is True,
                  f"{label}: run_until stops at a function, verified by the chip's DFSR", _why(stop))
+    held = await server.call("read_memory", address="0x24070000" if label == "H7" else "0x2001F000",
+                             length_bytes=4, probe_serial=s)
+    cached = await server.call("board_state", probe_serial=s)
+    report.check(held["status"] == "failed" and "holding this probe" in held.get("error", "").lower()
+                 and cached["status"] == "unverified",
+                 f"{label}: while run_until holds the core, read_memory refuses and says why, and board_state "
+                 "answers from cache", f"{_why(held)}; {_why(cached)}")
     regs = await server.call("core_registers", probe_serial=s, elf_path=elf)
     report.check(regs["status"] == "verified" and regs.get("core_after", "").startswith("still halted")
+                 and "MSP" in regs.get("registers", {})
                  and [f.get("function") for f in regs.get("call_stack", [])][:2] == ["writer", "reset_handler"],
                  f"{label}: core_registers gives the call stack and leaves a stopped core halted", _why(regs))
     # The fault handler runs only on a fault. reached_tick_five was the first
@@ -349,9 +376,9 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
                  f"{label}: a write by the caller stops verified, and never names a call the core is still in",
                  f"{_why(member)}; returned_from {member.get('returned_from')}, in {inside}")
     released = await server.call("release_probe", probe_serial=s)
-    report.check("running again" in json.dumps(released.get("core_after_release", {})),
+    report.check("running again" in json.dumps(released.get("core_after", {})),
                  f"{label}: release_probe resumes a core run_until held, read from DHCSR",
-                 json.dumps(released.get("core_after_release"))[:160])
+                 json.dumps(released.get("core_after"))[:160])
     refused = await server.call("run_until", probe_serial=s, elf_path=str(images.elf[other]), location="writer", seconds=2)
     after = await server.call("read_memory", probe_serial=s, symbol="g_ticks", elf_path=elf)
     report.check(refused["status"] == "failed" and "another program's code" in refused.get("error", "")
@@ -440,7 +467,7 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     await server.call("run_firmware", elf_path=str(images.elf["f4_itm"]), probe_serial=s, console_seconds=1)
     await server.call("release_probe", probe_serial=s)
     swo = await server.call("capture_swo", probe_serial=s, core_clock_hz=16_000_000, seconds=3)
-    report.check(swo["status"] == "verified" and "f407 itm tick" in swo.get("output", ""),
+    report.check(swo["status"] == "verified" and "f407 itm tick" in swo.get("swo", ""),
                  "F4: capture_swo reads ITM port 0 over SWO at the core's 16 MHz", _why(swo))
     double = await server.call("capture_swo", probe_serial=s, core_clock_hz=32_000_000, seconds=2)
     report.check(double["status"] == "unverified" and "32000000" in double.get("unverified_because", ""),
@@ -464,14 +491,13 @@ async def check_jtag(server: Server, serial: str, images: Built, report: Report)
                             console_seconds=1.5, interface="jtag")
     report.check(run["status"] == "verified" and run.get("console_port_source") == "STLINK_MCP_CONSOLE",
                  "JTAG: run_firmware over JTAG, verified on the console a setting assigns", _why(run))
-    other = await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=serial, console_seconds=1)
-    report.check(other["status"] == "failed" and "uses JTAG" in other.get("error", ""),
-                 "JTAG: a server held over JTAG is not reused for SWD", _why(other))
-    await server.call("release_probe", probe_serial=serial)
     vars_elf = str(images.elf["h7_vars"])
     await server.call("run_firmware", elf_path=vars_elf, probe_serial=serial, console_seconds=1, interface="jtag")
     stop = await server.call("run_until", probe_serial=serial, elf_path=vars_elf, location="writer", seconds=5,
                              interface="jtag")
+    other = await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=serial, console_seconds=1)
+    report.check(other["status"] == "failed" and "uses JTAG" in other.get("error", ""),
+                 "JTAG: a server held over JTAG is not reused for SWD", _why(other))
     watch = await server.call("run_until", probe_serial=serial, elf_path=vars_elf, watch="g_watched", seconds=5,
                               interface="jtag")
     report.check(stop["status"] == "verified" and watch["status"] == "verified" and watch.get("returned_from") == "writer",
@@ -546,8 +572,8 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  f"{_why(printing)}; port {printing.get('console_port')}")
     await server.call("release_probe", probe_serial=s)
     capture = await server.call("capture_console", probe_serial=s, seconds=2)
-    report.check(capture["status"] == "verified" and "n6 tick" in capture.get("output", ""),
-                 "N6: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('port')}")
+    report.check(capture["status"] == "verified" and "n6 tick" in capture.get("console", ""),
+                 "N6: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('console_port')}")
     run = await server.call("run_firmware", elf_path=str(images.elf["n6_ram"]), probe_serial=s, console_seconds=1)
     report.check(run["status"] == "unverified", "N6: a silent image is unverified, not verified", _why(run))
     await server.call("release_probe", probe_serial=s)
@@ -587,8 +613,8 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  "N6: after a release, run_until stops at a function and after a write, both verified",
                  f"{_why(stop)}; {_why(watch)}")
     released = await server.call("release_probe", probe_serial=s)
-    report.check("running again" in json.dumps(released.get("core_after_release", {})),
-                 "N6: release_probe resumes the core run_until held", json.dumps(released.get("core_after_release"))[:160])
+    report.check("running again" in json.dumps(released.get("core_after", {})),
+                 "N6: release_probe resumes the core run_until held", json.dumps(released.get("core_after"))[:160])
     await check_names(server, "N6", s, images, report, "n6_vars", "h7_vars", "0x46028000", "board name")
     await server.call("release_probe", probe_serial=s)
     return True

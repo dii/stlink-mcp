@@ -153,6 +153,11 @@ class FamilyQuirks:
     """
 
     notes: str = ""
+    """For the maintainers: how each value was established and what went wrong."""
+
+    agent_note: str | None = None
+    """For the agent, in board_state: only what changes what it does with this
+    family, in a sentence or two. A board file's own `notes` stand in for it."""
 
     provenance: Mapping[str, str] = field(default_factory=dict)
     """Per-field override of where a value came from, keyed by field name.
@@ -219,7 +224,7 @@ class FamilyQuirks:
         return {
             f.name: self.provenance_of(f.name)
             for f in fields(self)
-            if f.name not in ("name", "notes", "provenance", "default_provenance")
+            if f.name not in ("name", "notes", "agent_note", "provenance", "default_provenance")
             and getattr(self, f.name) is not None
         }
 
@@ -269,6 +274,11 @@ FAMILIES: dict[str, FamilyQuirks] = {
         flash_base=0x08000000,
         requires_signing=False,
         debug_closes_on_run=False,
+        agent_note=(
+            "Core debug is on access port 0 and stays open while firmware runs. A RAM image "
+            "whose UART stays silent may need PLL3 on first: firmware that clocked the UART "
+            "from PLL3 leaves it without a clock after a reset."
+        ),
         notes=(
             "The ordinary shape, and it is in this table mainly to prove the "
             "table describes a family rather than describing the STM32N6. It "
@@ -334,6 +344,12 @@ FAMILIES: dict[str, FamilyQuirks] = {
         external_loader="MX25UM51245G_STM32N6570-NUCLEO.stldr",
         requires_signing=True,
         debug_closes_on_run=True,
+        agent_note=(
+            "No internal flash: booting from the external flash at 0x70000000 needs a "
+            "signed image. Core debug is on access port 1. ST's start-up code (SystemInit) "
+            "turns the SYSCFG clock off, which closes the debug port until a power cycle; "
+            "without that one write the port stays open."
+        ),
         notes=(
             "No internal flash. The boot ROM reads a signed FSBL out of external "
             "XSPI flash and loads it into AXISRAM2 at the vector table address. "
@@ -380,6 +396,11 @@ FAMILIES: dict[str, FamilyQuirks] = {
         flash_base=0x08000000,
         requires_signing=False,
         debug_closes_on_run=False,
+        agent_note=(
+            "Core debug is on access port 0 and stays open while firmware runs. RAM images "
+            "load to SRAM at 0x20000000; the core-coupled RAM at 0x10000000 is outside what "
+            "run_firmware accepts."
+        ),
         notes=(
             "The first family measured on a board that is not a NUCLEO: a custom "
             "board built around an STM32F407IGT6 (device 0x413, Cortex-M4, Rev 2.0), "
@@ -407,6 +428,10 @@ DEFAULT = FamilyQuirks(
     access_port=0,
     requires_signing=False,
     default_provenance=ASSUMED,
+    agent_note=(
+        "Not characterised: access port 0 and no signing are assumed, and RAM runs and "
+        "flash writes are not offered, since their addresses are not known."
+    ),
     notes=(
         "Fallback for families not yet characterised here. Access port 0 and no "
         "signing is right for most STM32 parts with internal flash. RAM execution "

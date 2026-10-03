@@ -103,6 +103,19 @@ static void delay(uint32_t n) { for (volatile uint32_t i = 0; i < n; i++) {} }
 
 extern void (*const vectors[16])(void);
 
+#ifdef CLOSE_SWD  /* PA13 and PA14, SWDIO and SWCLK on these parts, made plain inputs:
+                     the debug port closes as soon as this runs, and drives nothing */
+static void close_swd(void) {
+#ifdef F4_UART5
+    REG(0x40023830) |= 1u;                      /* RCC_AHB1ENR.GPIOAEN */
+    REG(0x40020000) &= ~(0xFu << 26);           /* GPIOA_MODER: PA13, PA14 input */
+#else
+    REG(0x580244E0) |= 1u;                      /* RCC_AHB4ENR.GPIOAEN */
+    REG(0x58020000) &= ~(0xFu << 26);           /* GPIOA_MODER: PA13, PA14 input */
+#endif
+}
+#endif
+
 void reset_handler(void) {
 #ifdef CLOSE_AP1  /* STM32N6: what the end of ST's stock SystemInit does, RCC_APB4ENCR2 =
                      SYSCFGENC. Without the SYSCFG clock, debug access port 1 closes until
@@ -116,6 +129,9 @@ void reset_handler(void) {
     for (uint32_t tick = 0;; tick++) {
         REG(COUNTER_ADDR) = 0xC0FFEE00u + tick;
         puts_("stlink-mcp hw check " TAG " tick "); putu(tick); puts_("\r\n");
+#ifdef CLOSE_SWD
+        if (tick == 2) close_swd();
+#endif
 #ifdef FAULT_AFTER
         if (tick == FAULT_AFTER) {
 #ifdef USE_PSP   /* run on PSP from here, as an RTOS thread does; same address, so locals survive */

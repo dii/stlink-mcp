@@ -314,6 +314,13 @@ class _FakeProbe:
     def gdb_access_port(self, info: object) -> int:
         return 1
 
+    # Whether a hotplug connect reaches the core after a run; class-level so a
+    # test can close the port.
+    answer: bool = True
+
+    def answers(self, timeout: float = 5.0) -> bool:
+        return self.answer
+
     # Class-level so a test can lay out memory and registers; zero elsewhere.
     memory: dict[int, int] = {}
     registers: dict[str, int] = {"PC": 0x34180D3C}
@@ -705,12 +712,50 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         """image_initial_sp and image_entry_point come from the ELF's vector
         table and are written INTO the core. They were once called
         stack_pointer and program_counter, which read as a reading of where the
-        core is."""
+        core is. The names carry it; the note that also said so went with the
+        budget for result text (2026-10-03)."""
         bench.console_text = "up\n"
         r = call("run_firmware", elf_path=str(bench.elf))
         assert "stack_pointer" not in r and "program_counter" not in r
-        assert r["image_initial_sp"] == "0x34200000"
-        assert "not a reading of where the core is" in r["image_note"]
+        assert r["image_initial_sp"] == "0x34200000" and "image_note" not in r
+
+
+class TestRunFirmwareLetsGoUnlessTheProgramClosesThePort:
+    """Whether the debug port closes once a program runs is the program's doing,
+    not the family's (interface review, 2026-10-03): the server was held on every
+    family for the STM32N6's sake, and six tools refused until release_probe."""
+
+    @pytest.fixture
+    def open_part(self, bench, monkeypatch):
+        import dataclasses
+        part = dataclasses.replace(probe_mod.for_device_id(_FakeProbe.device_id), debug_closes_on_run=False)
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: part)
+        released: list = []
+        monkeypatch.setattr(server, "release_server", lambda serial: released.append(serial))
+        monkeypatch.setattr(server, "_closes_port", set())
+        bench.console_text = "up\n"
+        return released
+
+    def test_a_program_that_leaves_the_port_open_frees_the_probe(self, bench, open_part) -> None:
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and len(open_part) == 1
+        assert out["debug_port_after_run"].startswith("open") and out["gdb_server_held"] is False
+
+    def test_a_program_that_closes_it_is_reported_and_remembered(self, bench, open_part, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "answer", False)
+        first = call("run_firmware", elf_path=str(bench.elf))
+        assert first["status"] == result.VERIFIED, "the run itself is still what the console showed"
+        assert first["debug_port_after_run"].startswith("closed") and "connect under reset" in first["debug_port_hint"]
+        second = call("run_firmware", elf_path=str(bench.elf))
+        assert "last time it ran on this probe" in second["debug_port_after_run"] and len(open_part) == 1
+
+    def test_on_a_part_whose_usual_start_up_code_closes_it_the_server_is_kept(self, bench, monkeypatch) -> None:
+        released: list = []
+        monkeypatch.setattr(server, "release_server", lambda serial: released.append(serial))
+        bench.console_text = "up\n"
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert released == [] and "ST's usual start-up code for STM32N6" in out["debug_port_after_run"]
 
 
 class TestTheConsoleSettingMeansOneThingEverywhere:
@@ -770,10 +815,10 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         bench.console_text = "live\n"
         out = call("capture_console")
         assert_contract(out)
-        assert out["output"] == "live\n"
+        assert out["console"] == "live\n"
         assert out["console_buffered_bytes"] == 1500
         assert len(out["console_buffered"]) == 1000
-        assert "may be from before this capture" in out["console_buffered_note"]
+        assert "so it may be older" in out["console_buffered_note"]
         assert "the part in the middle is missing" in out["console_buffered_note"]
         assert "last 1000 characters" in out["console_buffered_note"]
 
@@ -786,7 +831,7 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         assert_contract(out)
         assert out["status"] == result.VERIFIED
         assert "partial" in out["verified_by"]
-        assert out["output"] == "boot ok\n"
+        assert out["console"] == "boot ok\n"
         assert "device disconnected" in out["console_error"]
 
     def test_a_capture_that_heard_nothing_is_unverified(self, bench) -> None:
@@ -801,7 +846,7 @@ class TestTheConsoleSettingMeansOneThingEverywhere:
         assert out["status"] == result.UNVERIFIED
         assert "wired" in out["unverified_because"]
         assert "115200" in out["unverified_because"]
-        assert out["output"] == ""
+        assert out["console"] == ""
         assert out["console_buffered"] == "old\n"
 
 
@@ -815,7 +860,7 @@ class TestSwoIsCapturedAndItsSideEffectSaid:
         monkeypatch.setattr(_FakeProbe, "swo_text", "f407 itm tick 2\r\n")
         out = call("capture_swo")
         assert_contract(out)
-        assert out["status"] == result.VERIFIED and out["output"] == "f407 itm tick 2\r\n"
+        assert out["status"] == result.VERIFIED and out["swo"] == "f407 itm tick 2\r\n"
         assert out["trace_left_enabled"] is True and "power cycle" in out["trace_note"]
         assert out["target_was_reset"] is False and (out["core_clock_hz"], out["itm_port"]) == (16_000_000, 0)
 
@@ -1076,6 +1121,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         monkeypatch.setattr(server.gdbmi, "Session", self._Session)
         monkeypatch.setattr(server, "_elf_on_target", lambda session, elf: mismatch)
         monkeypatch.setattr(server.debugger_mod, "registers", lambda session: {"PC": 0x24000042, "XPSR": xpsr})
+        monkeypatch.setattr(server.debugger_mod, "system_registers", lambda session: {"MSP": 0x2407FFD8})
         if stop is not None:
             monkeypatch.setattr(server.debugger_mod, "run_until", lambda session, srv, **kw: stop)
         monkeypatch.setattr(server, "_stopped", {})
@@ -1092,7 +1138,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         out = call("run_until", elf_path=self.ELF, location="writer")
         assert_contract(out)
         assert out["status"] == result.VERIFIED and "names a breakpoint (0x00000003)" in out["verified_by"]
-        assert out["target_halted"] is True and "watchdogs" in out["halted_note"]
+        assert out["halted_during_call"] is True and "watchdogs" in out["core_after"] and out["target_was_reset"] is False
         assert out["interface"] == "swd", "N8: the result says which interface the stop went through"
         assert self._Session.closes == [False], "disconnected, leaving the core halted"
 
@@ -1212,7 +1258,7 @@ class TestWithoutUdevTheConsoleIsFoundByUsbSerial:
         bench.console_text = "tick 0\n"
         out = call("capture_console", probe_serial=self.SERIAL)
         assert_contract(out)
-        assert out["port"] == "COM3" and out["port_source"] == "USB serial number"
+        assert out["console_port"] == "COM3" and out["console_port_source"] == "USB serial number"
 
     def test_two_ports_with_one_serial_are_not_chosen_between(self, bench, monkeypatch) -> None:
         self._ports(monkeypatch, ("COM3", self.SERIAL), ("COM4", self.SERIAL.lower()))
@@ -1498,8 +1544,8 @@ class TestResetIsNotClaimedUnlessItWasSeen:
         """N4: the halt was not asked for, so it is reported."""
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
         out = call("reset_target")
-        assert out["core_released"] is True
-        assert "resumed" in out["note"]
+        assert out["core_after"].startswith("running")
+        assert "resumed" in out["core_after"]
 
     def test_it_does_not_claim_whether_the_core_is_halted_now(
         self, h7_bench, monkeypatch
@@ -1513,8 +1559,8 @@ class TestResetIsNotClaimedUnlessItWasSeen:
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x0807FA98)
         out = call("reset_target")
         assert "core_halted" not in out
-        assert out["halted_to_read_pc"] is True
-        assert out["core_released"] is True
+        assert out["halted_during_call"] is True
+        assert out["core_after"].startswith("running")
 
 
 class TestResetTargetTellsTheTruthAboutTheCore:
@@ -1555,7 +1601,7 @@ class TestResetTargetTellsTheTruthAboutTheCore:
         monkeypatch.setattr(_FakeProbe, "reset_pc", 0x34180400)
         out = call("reset_target")
         assert out["ok"] is False
-        assert out["core_released"] is True, (
+        assert out["core_after"].startswith("running"), (
             "the core should have been RELEASED even though the reset could not "
             "be verified: the two are independent facts"
         )
@@ -1569,7 +1615,7 @@ class TestResetTargetTellsTheTruthAboutTheCore:
         out = call("reset_target")
         assert out["ok"] is False
         assert out["status"] == result.FAILED
-        assert out["core_released"] is False
+        assert not out["core_after"].startswith("running")
         # The reset itself WAS observed, and that evidence is not thrown away.
         assert "0x0807FA98" in out["reset_verified_by"]
 
@@ -1588,7 +1634,7 @@ class TestResetTargetTellsTheTruthAboutTheCore:
             monkeypatch.setattr(_FakeProbe, "reset_pc", pc)
             out = call("reset_target")
             assert released, f"core left halted for pc={pc:#x}"
-            assert out["core_released"] is True
+            assert out["core_after"].startswith("running")
 
     def test_nothing_is_released_when_nothing_was_halted(self, h7_bench, monkeypatch) -> None:
         released: list[int] = []
@@ -1599,8 +1645,8 @@ class TestResetTargetTellsTheTruthAboutTheCore:
         )
         out = call("reset_target")
         assert not released
-        assert out["halted_to_read_pc"] is False
-        assert out["core_released"] is False
+        assert out["halted_during_call"] is False
+        assert not out["core_after"].startswith("running")
         assert out["ok"] is False
 
     def test_every_unverified_branch_offers_a_next_step(self, h7_bench, monkeypatch) -> None:
@@ -1626,9 +1672,9 @@ class TestCoreRegistersDoesNotClaimTheCoreStaysHalted:
         out = call("core_registers")
         assert_contract(out)
         assert "halted" not in out
-        assert out["halted_to_read_registers"] is True
-        assert "now halted" not in out["note"]
-        assert "not claimed" in out["note"]
+        assert out["halted_during_call"] is True
+        assert "now halted" not in out["core_after"]
+        assert out["core_after"].startswith("not observed")
 
 
 class TestReleaseCoreChecksItsOwnEffect:
@@ -1936,7 +1982,7 @@ class TestASeededAddressIsDisclosedWhereItIsUsed:
         out = call("run_firmware", elf_path=str(seeded_bench.elf))
         assert out["status"] == result.UNVERIFIED
         assert "IS verified" not in out["load_address_note"]
-        assert "says nothing about it" in out["load_address_note"]
+        assert "not a measurement" in out["load_address_note"]
 
     def test_a_measured_part_carries_no_such_note(self, bench) -> None:
         """The fake board is the measured STM32N6, so the caveat must be absent
@@ -2109,7 +2155,7 @@ class TestFaultStatusReportsWhatsActuallyThere:
         monkeypatch.setattr(_FakeProbe, "cpu", "Cortex-M7")
         assert "security_state_note" not in call("read_fault_status")
 
-    def test_debug_halt_reason_reported_when_present(
+    def test_debug_events_since_cleared_reported_when_present(
         self, bench, monkeypatch
     ) -> None:
         from stlink_mcp import faults as fm
@@ -2124,7 +2170,7 @@ class TestFaultStatusReportsWhatsActuallyThere:
         out = call("read_fault_status")
         assert_contract(out)
         assert out["any_fault_active"] is False
-        reasons = out["debug_halt_reason"]
+        reasons = out["debug_events_since_cleared"]
         assert any(r["bit"] == "BKPT" for r in reasons)
 
 
@@ -2284,6 +2330,23 @@ class TestTheInterfaceReachesTheProbeAndTheServer:
         assert out["interface"] == "jtag"
 
 
+class TestAPlaceInTheSourceHasOneShape:
+    """locate_fault gave "location": "file:line" where run_until and
+    core_registers give file and line apart (interface review, 2026-10-03). The
+    addr2line output is what it printed for tests/fixtures/elf/h7_vars_dwarf5.elf."""
+
+    @pytest.mark.parametrize("printed, expected", [
+        ("writer\nimages/debug_target.c:39\n", ("writer", "images/debug_target.c", 39)),
+        ("delay\nimages/debug_target.c:48 (discriminator 3)\n", ("delay", "images/debug_target.c", 48)),
+        ("??\n??:0\n", (None, None, None)),
+    ])
+    def test_function_file_line_address(self, monkeypatch, printed, expected) -> None:
+        monkeypatch.setattr(server, "run_command", lambda argv, timeout: SimpleNamespace(stdout=printed))
+        place = server._symbol(SimpleNamespace(addr2line=Path("addr2line")), Path("x.elf"), 0x24000042)
+        assert (place["function"], place["file"], place["line"]) == expected
+        assert list(place) == ["function", "file", "line", "address"] and place["address"] == "0x24000042"
+
+
 class TestLocateFaultFollowsTheFrame:
     """locate_fault does in one call what read_fault_status's next step says to
     do by hand, which was followed on an H7 and an N6 on 2026-10-01: XPSR says a
@@ -2315,7 +2378,7 @@ class TestLocateFaultFollowsTheFrame:
         assert out["status"] == result.VERIFIED
         assert (out["stack"], out["faulting_pc"]) == ("MSP", "0x0800013E")
         assert out["exception"] == {"number": 3, "name": "HardFault"}
-        assert out["halted_to_read_registers"] is True
+        assert out["halted_during_call"] is True
 
     def test_a_thread_on_psp_is_read_from_psp(self, bench) -> None:
         self._fault(0xFFFFFFFD)
@@ -2449,8 +2512,8 @@ class TestTheConsoleIsFoundByTheProbesSerial:
         bench.console_text = "tick 0\n"
         out = call("capture_console", probe_serial=self.SERIAL)
         assert_contract(out)
-        assert out["port"] == str(d / f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if02")
-        assert out["port_source"] == "udev serial name"
+        assert out["console_port"] == str(d / f"usb-STMicroelectronics_STLINK-V3_{self.SERIAL}-if02")
+        assert out["console_port_source"] == "udev serial name"
 
     def test_a_probe_with_no_port_has_no_console(self, bench, tmp_path, monkeypatch) -> None:
         self._by_id(tmp_path, monkeypatch, ["usb-STMicroelectronics_STLINK-V3_003C002C3335510535383531-if01"])
@@ -2472,7 +2535,7 @@ class TestTheConsoleIsFoundByTheProbesSerial:
         monkeypatch.setenv("STLINK_MCP_CONSOLE", f"{self.SERIAL}=/dev/ttyUSB3")
         bench.console_text = "tick 0\n"
         out = call("capture_console", probe_serial=self.SERIAL)
-        assert out["port"] == "/dev/ttyUSB3" and out["port_source"] == "STLINK_MCP_CONSOLE"
+        assert out["console_port"] == "/dev/ttyUSB3" and out["console_port_source"] == "STLINK_MCP_CONSOLE"
 
 
 class TestAConsoleThatIsNotTextSaysWhy:

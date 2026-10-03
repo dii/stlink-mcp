@@ -28,11 +28,13 @@ import contextlib
 import contextvars
 import dataclasses
 import functools
+import hashlib
 import inspect
 import os
 import re
 import sys
 import threading
+import time
 import weakref
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -352,13 +354,10 @@ def _cached_for(serial: str | None):
 
 
 _HELD_MESSAGE = (
-    "A GDB server is holding THIS probe, so the programmer cannot connect to "
-    "it. Enumeration and other probes are unaffected. The server is kept alive "
-    "because on some parts a typical image leaves the debug access port "
-    "unreachable once it has run. Call release_probe() to free it. If your "
-    "image is one of those, the board then needs a power cycle before firmware "
-    "can run again, and board_state reports the family note describing what in "
-    "the image causes it, which is usually one line and usually removable."
+    "A GDB server is holding this probe, so the programmer cannot connect to it: "
+    "run_until's, or run_firmware's for a program that closes the debug port. "
+    "core_registers, run_until and capture_console work through it; release_probe() "
+    "frees it, after which such a program's port may stay closed until a power cycle."
 )
 
 
@@ -761,7 +760,9 @@ identity reads fine on a port that cannot halt the core.
             # nothing. It also decides whether a later run_firmware will cost a
             # power cycle, which is worth knowing beforehand rather than after.
             "debug_closes_on_run": quirks.debug_closes_on_run,
-            "notes": quirks.notes,
+            # What changes what the agent does; the maintainers' history stays in
+            # quirks.py. A board file's own notes stand in for it.
+            "note": quirks.agent_note if quirks.agent_note is not None else quirks.notes,
             # Which of these numbers somebody has actually seen work on a board.
             # Reported beside the values rather than folded into them, because
             # an agent deciding whether to trust an address needs both, and a
@@ -825,12 +826,11 @@ def run_firmware(
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
-Verified only by console output from that board's serial console: `unverified`
-if it stays silent, `failed` if the load did not complete. Refuses, before any
-load, an image whose vector table is not at the family's RAM address or with a
-segment outside SRAM (0x20000000-0x3FFFFFFF), since a GDB load writes wherever
-the image says. Resets the target first and keeps the GDB server; see
-`release_probe`. No signing.
+Verified only by its board's console output: `unverified` if silent, `failed`
+if the load did not complete. Refuses, before loading, an image whose vector
+table is not at the family's RAM address or with a segment outside SRAM. Resets
+the target first. Lets go of the probe afterwards unless the program closes
+the debug port, as `debug_port_after_run` says. No signing.
     """
     too_long = _capture_seconds_problem(console_seconds, "console_seconds")
     if too_long:
@@ -891,7 +891,7 @@ the image says. Resets the target first and keeps the GDB server; see
     not_ram = image_mod.check_ram_image(elf, quirks.vector_table_addr)
     if not_ram:
         return failed(
-            not_ram, probe_serial=serial, elf=str(elf),
+            not_ram, probe_serial=serial, elf_path=str(elf),
             vector_table_addr=f"0x{quirks.vector_table_addr:08X}",
             vector_table_provenance=layout_provenance,
         )
@@ -926,6 +926,7 @@ the image says. Resets the target first and keeps the GDB server; see
                     toolchain, elf, quirks.vector_table_addr,
                     probe.gdb_access_port(info), gdb_port
                 )
+                started = time.monotonic()
                 try:
                     text = cap.collect(console_seconds)
                 except Exception as exc:  # noqa: BLE001
@@ -942,6 +943,7 @@ the image says. Resets the target first and keeps the GDB server; see
                 toolchain, elf, quirks.vector_table_addr,
                 probe.gdb_access_port(info), gdb_port
             )
+            started = time.monotonic()
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError,
             settings.SettingError) as exc:
@@ -953,10 +955,20 @@ the image says. Resets the target first and keeps the GDB server; see
             **_held_disclosure(serial), **_server_output(gdb_server),
         )
 
+    # Let go of the probe once the program runs, unless it closes the debug port.
+    # Until 2026-10-03 the server was held on every family because the STM32N6's
+    # usual images close it; on parts that stay open the hold only made six tools
+    # refuse until release_probe. Whether a program closes the port is the
+    # program's doing, not the family's, so after letting go a hotplug connect
+    # must still reach the core, and an image that closes it is remembered.
+    after_run = (_let_go_after_run(probe, serial, quirks, elf, started)
+                 if sp is not None and pc is not None else {})
+
     detail: dict[str, Any] = {
         "probe_serial": serial,
         **_connection_fields(probe, info),
         **_held_disclosure(serial),
+        **after_run,
         "console_port": port,
         "console_port_source": probe_info.console_source if probe_info else None,
         **({"console_note": probe_info.console_note}
@@ -974,12 +986,6 @@ the image says. Resets the target first and keeps the GDB server; see
         **_buffered_disclosure(buffered, before="this run started", source=(
             "so it came from whatever ran before, not from this image, and it is "
             "not counted as evidence")),
-        "image_note": (
-            "image_initial_sp and image_entry_point are read out of the ELF's own "
-            "vector table and written into the core. They are what the image asked "
-            "for, not a reading of where the core is. core_registers() is the "
-            "observation."
-        ),
     }
 
     if layout_provenance != quirks_mod.MEASURED:
@@ -988,24 +994,9 @@ the image says. Resets the target first and keeps the GDB server; see
         # and on 2026-10-01 an STM32F407 run with no console, unverified, carried
         # that sentence: the first seeded part ever run on a board.
         detail["load_address_note"] = (
-            f"The address this image was loaded to is {layout_provenance}, not "
-            "measured on hardware. A run verified by its console is good evidence "
-            f"that {_hex(quirks.vector_table_addr)} is the right place for this "
-            "part, and not a measurement of it; a run nothing verified says nothing "
-            "about it either way. Do not record it as a confirmed layout on the "
-            "strength of this result alone."
-        )
-
-    if quirks.debug_closes_on_run:
-        detail["next_run_note"] = (
-            f"On {quirks.name}, a typical image leaves the debug access port "
-            "unreachable once it has run, and no reset reopens it. The GDB server "
-            "is therefore being HELD so further run_firmware calls on this board "
-            "keep working without a power cycle. core_registers and run_until work "
-            "through it; read_memory, flash_firmware and the other tools that "
-            "connect cannot reach the probe until release_probe() is called. "
-            "This is a property of the image, not of the silicon: see the family "
-            "notes in board_state for what causes it and how to remove it."
+            f"The load address is {layout_provenance}, not measured on a board. A run "
+            "verified here is evidence for it, not a measurement: do not record it as "
+            "this part's confirmed layout."
         )
 
     # The markers are the only evidence that the GDB batch reached its end. GDB
@@ -1098,13 +1089,57 @@ def _buffered_disclosure(text: str, *, before: str, source: str) -> dict[str, An
         "console_buffered": text[-_BUFFERED_TAIL:],
         "console_buffered_bytes": size,
         "console_buffered_note": (
-            f"{size} bytes arrived the moment the serial port was opened, before "
-            f"{before}. The probe keeps what the target prints while nothing has "
-            f"the port open and hands it over on the next open, {source}. It holds "
-            "a few KB, and when the target printed more than that, the part in the "
-            "middle is missing."
-            + (f" Only the last {_BUFFERED_TAIL} characters are shown."
+            f"Arrived when the port opened, before {before}: the probe keeps a few KB of "
+            f"what the target printed while the port was closed, and when there was more, "
+            f"the part in the middle is missing; {source}."
+            + (f" The last {_BUFFERED_TAIL} characters are shown."
                if len(text) > _BUFFERED_TAIL else "")
+        ),
+    }
+
+
+#: Images seen to close the debug port once they ran, by probe and by the
+#: ELF's SHA-256: run_firmware keeps the GDB server for their next run.
+_closes_port: set[tuple[str | None, str]] = set()
+
+
+def _let_go_after_run(probe: Probe, serial: str | None, quirks: Any, elf: Path,
+                      started: float) -> dict[str, Any]:
+    """Release the probe after a run and check the core still answers, or say
+    why the server is kept: this image closed the port before, or the family's
+    usual start-up code does."""
+    key = (serial, hashlib.sha256(elf.read_bytes()).hexdigest())
+    with _STATE:
+        closed_before = key in _closes_port
+    if closed_before or quirks.debug_closes_on_run:
+        why = ("this image closed the debug port the last time it ran on this probe" if closed_before else
+               f"ST's usual start-up code for {quirks.name} closes the debug port once it runs; "
+               "board_state's family note says what does it")
+        return {"debug_port_after_run": f"not tested: the GDB server is kept, because {why}"}
+    release_server(serial)
+    with _STATE:
+        _held.pop(serial, None)
+        _held_by.pop(serial, None)
+    after = time.monotonic() - started
+    reachable = probe.answers()
+    if reachable:
+        return {"debug_port_after_run": (
+            f"open {after:.1f} s after the start: the GDB server let go and a hotplug connect "
+            "reached the core. A program that closes it later does not show here."
+        )}
+    with _STATE:
+        _closes_port.add(key)
+    return {
+        "debug_port_after_run": (
+            f"closed {after:.1f} s after the start: once the GDB server let go, a hotplug "
+            "connect no longer reached the core, so this program closes the debug port, by "
+            "taking the SWD pins, turning off a clock it needs or sleeping without debug. The "
+            "next run of this image on this probe keeps the server."
+        ),
+        "debug_port_hint": (
+            "Tools that may reset (board_state, reset_target, core_registers) end with a "
+            "connect under reset, which reopened it on an STM32H743 whose program took the "
+            "pins; on an STM32N6 running ST's start-up code only a power cycle does."
         ),
     }
 
@@ -1138,12 +1173,12 @@ def release_probe(
 ) -> dict[str, Any]:
     """Shut down held GDB servers and free their probes; with no serial, all of them.
 
-Resumes a core run_until holds, and reads DHCSR to say so. Needed after a run
-before read_memory, read_fault_status, locate_fault, reset_target,
-flash_firmware or capture_swo can reach the probe; core_registers and run_until
-work through the held server. Never done implicitly: on an STM32N6 running a
-stock FSBL image, releasing is a one-way door until the board is power cycled.
-`unverified` if nothing was held.
+Resumes a core run_until holds, and reads DHCSR to say so. While a server holds
+a probe, read_memory, read_fault_status, locate_fault, reset_target,
+flash_firmware and capture_swo cannot reach it; core_registers and run_until
+work through it. Never done implicitly: after a program that closes the debug
+port, such as ST's STM32N6 start-up code, releasing can leave the port closed
+until a power cycle. `unverified` if nothing was held.
     """
     with _STATE:
         affected = [probe_serial] if probe_serial is not None else list(_held)
@@ -1160,7 +1195,7 @@ stock FSBL image, releasing is a one-way door until the board is power cycled.
     if holders:
         detail["held_by"] = holders
     if released and stops:
-        detail["core_after_release"] = {s: _core_state_after_release(s, stop) for s, stop in stops.items()}
+        detail["core_after"] = {s: _core_state_after_release(s, stop) for s, stop in stops.items()}
     if released and any(q.debug_closes_on_run for q in quirks):
         detail["warning"] = (
             "The debug access port cannot be re-acquired now that firmware has "
@@ -1225,12 +1260,12 @@ what its erase took beyond the image, which is whole sectors.
     image = Path(image_path).expanduser()
     not_flashable = image_mod.check_flash_image(image)
     if not_flashable:
-        return failed(not_flashable, image=str(image))
+        return failed(not_flashable, image_path=str(image))
     image_size = image.stat().st_size
     try:
         explicit = None if address is None else _address(address)
     except ValueError as exc:
-        return failed(str(exc), image=str(image))
+        return failed(str(exc), image_path=str(image))
 
     try:
         toolchain = _toolchain()
@@ -1312,12 +1347,12 @@ what its erase took beyond the image, which is whole sectors.
     written: dict[str, Any] = {
         "probe_serial": serial,
         **_connection_fields(probe, info),
-        "image": str(image),
+        "image_path": str(image),
         "image_size_bytes": image_size,
         "address": _hex(target_address),
         "target_was_reset": probe.target_was_reset,
         "signing_required": quirks.requires_signing,
-        "detail": output.strip().splitlines()[-3:],
+        "programmer_output": output.strip().splitlines()[-3:],
         "next_step": (
             "This does not start the image, and this part boots only a signed image, which "
             "this tool does not make: sign it (ST's STM32_SigningTool_CLI), write the signed "
@@ -1765,6 +1800,7 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
     detail.update({
         "value": f"0x{value:0{max(1, found.size_bits // 4)}X}",
         "fields": svd_mod.decode(found, value),
+        **({"field_meanings": meanings} if (meanings := svd_mod.meanings(found, value)) else {}),
         **_effects_disclosure(True, effects),
     })
     if probe.degraded_reason:
@@ -1776,19 +1812,13 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
 #: clear it; core_registers reads it to leave such a core halted.
 _stopped: dict[str | None, dict[str, Any]] = {}
 
-_HALTED_NOTE = (
-    "The core is held here; the rest of the chip is not. Timers, DMA, USB and "
-    "watchdogs keep running, so what happens around the core afterwards can look "
-    "like a firmware fault. run_until again continues from here; release_probe "
-    "resumes it."
-)
+def _held_here(place: str) -> str:
+    return (f"halted in {place}, held by run_until; timers, DMA and watchdogs keep "
+            "running. run_until again continues from here; release_probe resumes it.")
 
 _WRITE_NOTE = (
-    "The write came before this stop, not at it: one to four instructions before, "
-    "on the parts measured, which can be past a return, a branch or into a call. "
-    "It was made either just before stopped_at, or in returned_from, the function "
-    "the last call before LR went to, if that call returned in those instructions. "
-    "Nothing here tells which; the source of both does."
+    "The write was one to four instructions before this stop: just before stopped_at, "
+    "or in returned_from if that call returned in between. The source of both tells which."
 )
 
 
@@ -1840,6 +1870,13 @@ def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
     return server, None, None, True
 
 
+#: core_after for a halt made through the programmer: it ends with the command
+#: (two H7 boards, 2026-08-17), and nothing here observes the core afterwards.
+_PROGRAMMER_HALT_AFTER = (
+    "not observed: the programmer halted the core for the read, and on the boards "
+    "measured such a halt did not outlive the command. run_until holds a core stopped."
+)
+
 _DETACH_RESUMED = (
     "resumed: GDB's detach resumed the core on the H7, the F407 and the N6; "
     "not observed for this call"
@@ -1888,7 +1925,7 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
                 return refusal
         session = gdbmi.Session(toolchain.gdb, elf_path, server.port)
         mismatch = _elf_on_target(session, elf_path) if elf_path else None
-        regs = debugger_mod.registers(session)
+        regs = debugger_mod.registers(session) | debugger_mod.system_registers(session)
         stack, cut = debugger_mod.frames(session) if elf_path and not mismatch else ([], False)
         session.close(detach=not was_halted)
         session = None
@@ -1903,7 +1940,7 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "interface": server.interface,
-        "halted_to_read_registers": True,
+        "halted_during_call": True,
         "core_after": "still halted where run_until stopped it" if was_halted else _DETACH_RESUMED,
         "target_was_reset": False,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
@@ -1991,7 +2028,7 @@ keeps running. release_probe resumes the core.
             if started:
                 _drop_debug_server(serial)
             return failed(str(exc), probe_serial=serial)
-        regs = debugger_mod.registers(session)
+        regs = debugger_mod.registers(session) | debugger_mod.system_registers(session)
         session.close(detach=False)
         session = None
     except (gdbmi.MiError, RunError, ProbeError, ToolchainError, OSError) as exc:
@@ -2005,7 +2042,7 @@ keeps running. release_probe resumes the core.
                 _stopped.pop(serial, None)
             if started:
                 _drop_debug_server(serial)
-            after["core_after"] = _DETACH_RESUMED
+            after.update(halted_during_call=True, core_after=_DETACH_RESUMED)
         return failed(str(exc), probe_serial=serial, **after,
                       **({"gdb_server_held": True} if serial and server_is_held(serial) else {}))
 
@@ -2027,8 +2064,9 @@ keeps running. release_probe resumes the core.
             f"0x{v:08X} ({'+'.join(debugger_mod.dfsr_names(v))})" for v in stop.dfsr
         ],
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
-        "target_halted": True,
-        "halted_note": _HALTED_NOTE,
+        "halted_during_call": True,
+        "core_after": None,
+        "target_was_reset": False,
     }
     if stop.frames_cut:
         detail["call_stack_cut"] = f"deeper than {debugger_mod.MAX_FRAMES} frames; the rest is not shown"
@@ -2036,6 +2074,7 @@ keeps running. release_probe resumes the core.
         detail["in_exception"] = f"{exception} ({faults_mod.exception_name(exception)})"
     what = location if location is not None else f"a write to {watch}"
     place = f"{where['function'] or where['address']}" + (f" ({where['file']}:{where['line']})" if where["file"] else "")
+    detail["core_after"] = _held_here(place)
     if not stop.reached:
         reason = f"{what} was not reached in {seconds:g} s. The core was interrupted and is halted in {place}."
         if exception:
@@ -2277,15 +2316,15 @@ core stopped, use run_until.
         # What was DONE, not what the core is doing now. The difference is the
         # whole point: these two are observations, and "core_halted" was a guess
         # wearing a field name.
-        "halted_to_read_pc": halted_to_read_pc,
-        "core_released": released,
+        "halted_during_call": halted_to_read_pc,
+        "core_after": (
+            "running: halted only to read the program counter, and the programmer "
+            "reported it resumed" if released else
+            "not observed: halted to read the program counter, and the release that "
+            "followed failed" if halted_to_read_pc else
+            "not observed: the core was not reached after the reset"
+        ),
     }
-    if released:
-        detail["note"] = (
-            "The core was halted only long enough to read the program counter, "
-            "and the programmer confirmed it resumed. Note that a halt made this "
-            "way does not outlive the command that made it in any case."
-        )
 
     if pc is None:
         # The pulse went out and the debug port did not answer afterwards.
@@ -2445,7 +2484,8 @@ core needed a reset. Perturbing, so never used inside routine checks.
         # claim reset_target dropped on 2026-08-17 after two H7 boards showed a
         # programmer halt does not outlive the command that made it
         # (docs/findings.md, "A halt does not survive the invocation").
-        "halted_to_read_registers": True,
+        "halted_during_call": True,
+        "core_after": _PROGRAMMER_HALT_AFTER,
         "connect_mode": probe.connect_mode,
         **_connection_fields(probe, info),
         # Reported, not hidden. Reaching the family's access port on a part that
@@ -2453,12 +2493,6 @@ core needed a reset. Perturbing, so never used inside routine checks.
         # program being inspected. A caller cannot allow for that if it is not told.
         "target_was_reset": probe.target_was_reset,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
-        "note": (
-            "The core was halted to read these registers. Whether it is still "
-            "halted is not claimed: a halt made through the programmer did not "
-            "outlive the command on the boards measured, and nothing here can "
-            "observe it. To hold the core stopped, use run_until."
-        ),
     }
     if probe.target_was_reset:
         detail["reset_note"] = (
@@ -2579,10 +2613,8 @@ registers.
             name: f"0x{val:08X}" for name, val in status.raw.items()
         },
         "note": (
-            "These registers are sticky: they hold the state from the most "
-            "recent fault until software clears them by writing 1 to each set "
-            "bit, or until the target is reset. A clean read means no fault "
-            "since the last reset or clear, not that the program is healthy."
+            "Sticky until software clears them or the target resets: a clean read means "
+            "no fault since then, not a healthy program."
         ),
     }
 
@@ -2592,7 +2624,9 @@ registers.
         detail["bus_fault_address"] = f"0x{status.bfar:08X}"
 
     if status.debug:
-        detail["debug_halt_reason"] = [
+        # DFSR is sticky like the rest: HALTED here meant a halt at some time since
+        # it was cleared, and read under the old name as the core being halted now.
+        detail["debug_events_since_cleared"] = [
             {"bit": d.name, "meaning": d.meaning} for d in status.debug
         ]
 
@@ -2688,7 +2722,8 @@ frame.
         "connect_mode": probe.connect_mode,
         **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
-        "halted_to_read_registers": True,
+        "halted_during_call": True,
+        "core_after": _PROGRAMMER_HALT_AFTER,
         "registers": {
             name: f"0x{regs[name]:08X}"
             for name in ("PC", "LR", "XPSR", "MSP", "PSP") if name in regs
@@ -2815,11 +2850,15 @@ def _symbol(toolchain: Toolchain, elf: Path, address: int) -> dict[str, Any]:
     except ToolchainError as exc:
         return {"address": _hex(address), "error": str(exc)}
     function = lines[0].strip() if lines else "??"
-    location = lines[1].strip() if len(lines) > 1 else "??"
+    location = (lines[1].strip() if len(lines) > 1 else "??").split(" (discriminator")[0]
+    file, _, line = location.rpartition(":")
+    known = not location.startswith("??") and line.isdigit()
+    # The shape run_until and core_registers give a place in the source.
     return {
-        "address": _hex(address),
         "function": None if function == "??" else function,
-        "location": None if location.startswith("??") else location,
+        "file": file if known else None,
+        "line": int(line) if known else None,
+        "address": _hex(address),
     }
 
 
@@ -2877,17 +2916,17 @@ silence cannot be told from a port not wired to the target.
                 # what arrived, as run_firmware does, and say it was cut short.
                 text, capture_error = cap.text, str(exc)
     except (console_mod.ConsoleError, settings.SettingError) as exc:
-        return failed(str(exc), probe_serial=serial, port=port)
+        return failed(str(exc), probe_serial=serial, console_port=port)
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
-        "port": port,
-        "port_source": probe_info.console_source if probe_info else None,
+        "console_port": port,
+        "console_port_source": probe_info.console_source if probe_info else None,
         "seconds": seconds,
-        "output": text,
+        "console": text,
         **_garbled_note(text),
         **_buffered_disclosure(buffered, before="this capture started", source=(
-            "so it may be from before this capture, and it is not in `output`")),
+            "so it may be older, and it is not in `console`")),
     }
     source = (
         f"the port {settings.CONSOLE} assigns to this probe"
@@ -2922,11 +2961,8 @@ silence cannot be told from a port not wired to the target.
 #: TRACE_IOEN in DBGMCU_CR (0x20), ITM's TCR and TER, and the TPIU, and after
 #: reset_target DBGMCU_CR still read 0x20 while trace enable had been cleared.
 _TRACE_NOTE = (
-    "This capture switched the target's trace output on and leaves it on: ITM, "
-    "and the setting that hands the SWO pin from the application to the trace "
-    "unit (PB3 on the STM32F407 this was measured on). There the pin setting "
-    "survived reset_target, and only a power cycle cleared it. Firmware that "
-    "writes to ITM now sends what it writes, at the SWO rate."
+    "Trace output stays on until a power cycle, reset_target included (measured on an "
+    "STM32F407): the SWO pin now belongs to the trace unit, not the application."
 )
 
 
@@ -3006,7 +3042,7 @@ probe. Hearing nothing is unverified.
         "itm_port": itm_port,
         "seconds": seconds,
         "target_was_reset": probe.target_was_reset,
-        "output": text,
+        "swo": text,
         **_swo_garbled_note(text, core_clock_hz),
         "trace_left_enabled": True,
         "trace_note": _TRACE_NOTE,

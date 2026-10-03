@@ -405,11 +405,17 @@ def vendor_marks(directory: Path) -> dict[tuple[str, str], tuple[str, str]]:
     return _vendor_marks(str(directory), signature)
 
 
-def decode(register: Register, value: int) -> dict[str, Any]:
-    """Each field's value, with the file's name for it where it gives one."""
-    out: dict[str, Any] = {}
+def decode(register: Register, value: int) -> dict[str, int]:
+    """Each field's value, a number, highest field first."""
+    return {f.name: (value >> f.offset) & ((1 << f.width) - 1)
+            for f in sorted(register.fields, key=lambda f: -f.offset)}
+
+
+def meanings(register: Register, value: int) -> dict[str, str]:
+    """What the file says each field's value means, for the fields it explains."""
+    out: dict[str, str] = {}
     for f in sorted(register.fields, key=lambda f: -f.offset):
-        v = (value >> f.offset) & ((1 << f.width) - 1)
-        meaning = dict(f.meanings).get(v)
-        out[f.name] = {"value": v, "meaning": meaning} if meaning else v
+        meaning = dict(f.meanings).get((value >> f.offset) & ((1 << f.width) - 1))
+        if meaning:
+            out[f.name] = meaning
     return out

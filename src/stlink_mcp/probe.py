@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .quirks import FamilyQuirks, for_device_id
-from .toolchain import Toolchain, run_command, strip_ansi
+from .toolchain import Toolchain, ToolchainError, run_command, strip_ansi
 
 
 class ProbeError(RuntimeError):
@@ -387,10 +387,13 @@ class Probe:
         last = TargetInfo(connected=False)
 
         # HOTPLUG first: it does not disturb a running program, so state can be
-        # inspected. HWRSTPULSE second: it pulses the reset line, which RECOVERS
-        # an access port that running firmware has closed, at the cost of
-        # restarting the target.
-        modes = ["HOTPLUG", "HWRSTPULSE"] if allow_reset else ["HOTPLUG"]
+        # inspected. HWRSTPULSE second: it pulses the reset line and then
+        # connects. UR last: it connects while holding the target in reset, so
+        # no program runs first. On an STM32H743 whose program had made the SWD
+        # pins inputs, HOTPLUG and HWRSTPULSE each failed after 30 s with
+        # "Unable to get core ID" and UR reached the core in 0.1 s (2026-10-03);
+        # on an STM32N6 UR fails even on a healthy board, so it stays last.
+        modes = ["HOTPLUG", "HWRSTPULSE", "UR"] if allow_reset else ["HOTPLUG"]
 
         for mode in modes:
             for port in ports:
@@ -455,8 +458,8 @@ class Probe:
             return answered_on
 
         attempts = [mode]
-        if allow_reset and "HWRSTPULSE" not in attempts:
-            attempts.append("HWRSTPULSE")
+        if allow_reset:
+            attempts += [m for m in ("HWRSTPULSE", "UR") if m not in attempts]
 
         for attempt in attempts:
             if attempt != "HOTPLUG":
@@ -483,6 +486,15 @@ class Probe:
             "to halt it."
         )
         return answered_on
+
+    def answers(self, timeout: float = 5.0) -> bool:
+        """Whether one hotplug connect on the settled port reaches the core in
+        `timeout`. A healthy one took 0.1 s; one to a closed port, 30 s to fail."""
+        try:
+            result = self._run(self._connect_args(self.access_port, "HOTPLUG"), timeout=timeout)
+        except (ToolchainError, ProbeError):
+            return False
+        return parse_target_info(result.stdout).connected
 
     def _note_unmeasured_port(self, answered_on: int) -> None:
         """Record that the access port in use is a guess, and what else answered.

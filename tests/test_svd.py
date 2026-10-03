@@ -111,13 +111,13 @@ class TestDecoding:
         register = svd.find(svd_dir / "STM32H743.svd", "RCC.CR")
         fields = svd.decode(register, 0x00000083)
         assert (fields["HSION"], fields["HSIKERON"], fields["CSION"]) == (1, 1, 1)
-        assert sum(v for v in fields.values() if isinstance(v, int)) == 3
+        assert sum(fields.values()) == 3
 
     def test_a_value_is_explained_by_its_description_not_its_b_name(self, svd_dir) -> None:
         """ST names values B_0x0 and so on; the description is what says it."""
-        fields = svd.decode(svd.find(svd_dir / "STM32N657.svd", "RCC.CFGR1"), 0)
-        assert fields["CPUSW"]["value"] == 0
-        assert fields["CPUSW"]["meaning"].startswith("hsi_ck selected")
+        register = svd.find(svd_dir / "STM32N657.svd", "RCC.CFGR1")
+        assert svd.decode(register, 0)["CPUSW"] == 0
+        assert svd.meanings(register, 0)["CPUSW"].startswith("hsi_ck selected")
 
 
 class TestReadsThatChangeState:
