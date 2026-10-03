@@ -1040,7 +1040,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
 class TestWithoutUdevTheConsoleIsFoundByUsbSerial:
     """On Windows, which has no /dev/serial/by-id, pyserial reported the
     ST-LINK's serial for its COM port: COM3, 003E00463234510337333934, an
-    STLINK-V3 on the Windows laptop, 2026-10-02. The port objects here carry what it
+    STLINK-V3 on Windows 11, 2026-10-02. The port objects here carry what it
     reported."""
 
     SERIAL = "003E00463234510337333934"
@@ -2218,7 +2218,7 @@ class TestTheConsoleIsFoundByTheProbesSerial:
         d.mkdir()
         for name in names:
             # Only the name is read. A symlink needs a privilege Windows does not
-            # give an ordinary process (WinError 1314 on the Windows laptop, 2026-10-02).
+            # give an ordinary process (WinError 1314 on Windows 11, 2026-10-02).
             (d / name).touch()
         monkeypatch.setattr(server, "_BY_ID_DIR", d)
         return d

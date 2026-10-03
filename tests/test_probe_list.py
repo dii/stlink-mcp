@@ -337,7 +337,7 @@ class TestListingErrors:
 
 
 class TestAWindowsListing:
-    """`STM32_Programmer_CLI -l` on Windows 11, captured on the Windows laptop on 2026-10-02
+    """`STM32_Programmer_CLI -l` on Windows 11, captured on 2026-10-02
     with one NUCLEO-N657X0-Q attached: 882 bytes with CRLF line ends, SHA-256
     E4FBB4D4...DCF26D85. Its UART section gives "Port: COM3" and then the
     Win32 device path, "Location: \\\\.\\COM3"."""

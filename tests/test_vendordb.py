@@ -265,7 +265,7 @@ class TestNothingIsDroppedSilently:
     @pytest.mark.skipif(
         (hasattr(os, "geteuid") and os.geteuid() == 0) or os.name == "nt",
         reason="root reads a file whatever its mode, and on Windows chmod only sets "
-        "the read-only attribute (seen on the Windows laptop, 2026-10-02), so it cannot be made unreadable",
+        "the read-only attribute (seen on Windows 11, 2026-10-02), so it cannot be made unreadable",
     )
     def test_a_file_without_read_permission_is_reported(self, tmp_path) -> None:
         """It raised PermissionError, which is an OSError and not an ET.ParseError,
