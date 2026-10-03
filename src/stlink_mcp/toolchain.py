@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,15 @@ class Toolchain:
     def addr2line(self) -> Path:
         """Turns an address into a function and source line, given the ELF."""
         return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-addr2line{_EXE}"
+
+    @property
+    def stlink_server(self) -> Path | None:
+        """ST's probe-sharing daemon, which CubeCLT's installer puts on the PATH
+        (/usr/bin on Linux) rather than in its own directory. With it, a GDB
+        server started with -t lets the programmer connect with `shared`
+        beside it; without it, a held server keeps the probe to itself."""
+        found = shutil.which("stlink-server")
+        return Path(found) if found else None
 
     @property
     def programmer_bin_dir(self) -> Path:

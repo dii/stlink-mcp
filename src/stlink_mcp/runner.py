@@ -114,8 +114,15 @@ class GdbServer:
         serial: str | None = None,
         interface: str = "swd",
         attach: bool = False,
+        shared: bool = False,
     ) -> None:
         self.toolchain = toolchain
+        # Started with -t, ST's shared mode: the programmer then connects beside
+        # it with `shared` and reads without halting the core, while GDB stays
+        # attached (measured on the H7, the F407 and the N6, 2026-10-03). A
+        # reset or a flash write made that way broke the GDB session, so tools
+        # that reset or write stop the server first.
+        self.shared = shared
         self.interface = interface
         # A server for debugging: attaches to what runs without a reset, and logs
         # at level 16, the lowest that records the Debug Fault Status Register it
@@ -176,6 +183,7 @@ class GdbServer:
             # the F407 and the N6).
             "-g" if self.attach else "--halt",
             "-cp", str(self.toolchain.programmer_bin_dir),
+            *(["-t"] if self.shared else []),
         ]
         if self.attach:
             self.log_path = Path(tempfile.mkdtemp(prefix="stlink-mcp-gdbserver-")) / "server.log"
@@ -396,7 +404,8 @@ def acquire_server(
                 "Give each board its own GDB port."
             )
 
-        server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface, attach=attach)
+        server = GdbServer(toolchain, access_port, port, serial=serial, interface=interface,
+                           attach=attach, shared=toolchain.stlink_server is not None)
         server.__enter__()
         _sessions[serial] = server
         return server
@@ -434,9 +443,10 @@ def held_serials() -> list[str | None]:
 def release_server(serial: str | None = None) -> bool:
     """Shut down one probe's server, or all of them when given no serial.
 
-    Where a typical image closes the access port this is a one-way door until
-    the board is power cycled, so it is never done implicitly. See quirks.py:
-    that is caused by the image, not by the part, and is removable.
+    After a program that closes the debug port, this leaves it closed until a
+    connect under reset, or on an STM32N6 running ST's start-up code a power
+    cycle. So it is done only when asked for: by release_probe, or before a
+    reset or a flash write, whose results say so.
     """
     with _REGISTRY:
         if serial is None:

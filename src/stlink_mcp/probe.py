@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .quirks import FamilyQuirks, for_device_id
-from .toolchain import Toolchain, ToolchainError, run_command, strip_ansi
+from .toolchain import Toolchain, run_command, strip_ansi
 
 
 class ProbeError(RuntimeError):
@@ -150,15 +150,22 @@ def canary_problem(output: str) -> str | None:
     )
 
 
-DHCSR, DEMCR, DWT_PCSR = 0xE000EDF0, 0xE000EDFC, 0xE000101C
+DHCSR, DEMCR, DWT_PCSR, DFSR = 0xE000EDF0, 0xE000EDFC, 0xE000101C, 0xE000ED30
 
 
 @dataclass(frozen=True)
 class CoreState:
-    """What DHCSR, DEMCR and DWT_PCSR said, read without halting the core."""
+    """What DHCSR, DEMCR, DWT_PCSR and DFSR said, read without halting the core."""
     dhcsr: int
     demcr: int | None
     pc_samples: tuple[int, ...]
+    dfsr: int | None = None
+    """Sticky debug events. VCATCH, bit 3, is set when a vector catch halted the
+    core: a held GDB server resets and halts a core that locked up that way."""
+
+    @property
+    def vector_catch(self) -> bool:
+        return self.dfsr is not None and bool(self.dfsr & (1 << 3))
 
     @property
     def state(self) -> str:
@@ -374,6 +381,7 @@ class Probe:
         serial: str | None = None,
         interface: str = SWD,
         try_first: int | None = None,
+        shared: bool = False,
     ) -> None:
         if interface not in INTERFACES:
             raise ValueError(f"interface {interface!r} is not one of {', '.join(INTERFACES)}")
@@ -385,6 +393,9 @@ class Probe:
         last time. Only the order changes: the same ports are scanned. On an
         STM32N6 it saves a connect per call, 1.1 s (measured 2026-10-01),
         because AP1 answers first instead of AP0 and then AP1."""
+        self.shared = shared
+        """Connect in ST's shared mode, beside a GDB server started with -t that
+        holds this probe. Reads then reach the core without halting it."""
         self.toolchain = toolchain
         self._access_port = access_port
         self.serial = serial
@@ -445,6 +456,8 @@ class Probe:
         ]
         if self.serial:
             argv.append(f"sn={self.serial}")
+        if self.shared:
+            argv.append("shared")
         return argv
 
     def identify(self, allow_reset: bool = True) -> TargetInfo:
@@ -475,6 +488,9 @@ class Probe:
         # pins inputs, HOTPLUG and HWRSTPULSE each failed after 30 s with
         # "Unable to get core ID" and UR reached the core in 0.1 s (2026-10-03);
         # on an STM32N6 UR fails even on a healthy board, so it stays last.
+        # Never a resetting connect beside a held GDB server: a reset made that
+        # way broke the GDB session on the H7 and the F407 (2026-10-03).
+        allow_reset = allow_reset and not self.shared
         modes = ["HOTPLUG", "HWRSTPULSE", "UR"] if allow_reset else ["HOTPLUG"]
 
         for mode in modes:
@@ -575,6 +591,7 @@ class Probe:
         not happen, as when the core sleeps on WFI."""
         argv = self._connect_args(self.access_port, "HOTPLUG") + ["-r32", f"0x{DHCSR:08X}", "4"]
         argv += ["-r32", f"0x{DEMCR:08X}", "4"] + ["-r32", f"0x{DWT_PCSR:08X}", "4"] * samples
+        argv += ["-r32", f"0x{DFSR:08X}", "4"]
         result = self._run(argv + _CANARY, timeout=90)
         problem = canary_problem(result.stdout)
         if problem:
@@ -583,6 +600,7 @@ class Probe:
         dhcsr = next((word for address, word in reads if address == DHCSR), None)
         demcr = next((word for address, word in reads if address == DEMCR), None)
         pcs = tuple(word for address, word in reads if address == DWT_PCSR)
+        dfsr = next((word for address, word in reads if address == DFSR), None)
         if dhcsr is None or len(pcs) < samples:
             raise ProbeError(
                 "The core's debug status could not be read without halting it: "
@@ -590,16 +608,7 @@ class Probe:
                 "on WFI or WFE answered no reads on the STM32N6 and the STM32F407 "
                 "(2026-10-03).\n" + result.stdout.strip()[-400:]
             )
-        return CoreState(dhcsr, demcr, pcs)
-
-    def answers(self, timeout: float = 5.0) -> bool:
-        """Whether one hotplug connect on the settled port reaches the core in
-        `timeout`. A healthy one took 0.1 s; one to a closed port, 30 s to fail."""
-        try:
-            result = self._run(self._connect_args(self.access_port, "HOTPLUG") + _CANARY, timeout=timeout)
-        except (ToolchainError, ProbeError):
-            return False
-        return _trusted(parse_target_info(result.stdout), result.stdout).connected
+        return CoreState(dhcsr, demcr, pcs, dfsr)
 
     def _note_unmeasured_port(self, answered_on: int) -> None:
         """Record that the access port in use is a guess, and what else answered.

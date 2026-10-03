@@ -28,13 +28,11 @@ import contextlib
 import contextvars
 import dataclasses
 import functools
-import hashlib
 import inspect
 import os
 import re
 import sys
 import threading
-import time
 import weakref
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -341,8 +339,9 @@ def _held_by_disclosure(serial: str | None) -> dict[str, Any]:
 def _cached_for(serial: str | None):
     """The cached identity, but only while a live server actually holds it.
 
-    The cache exists because a held server blocks the programmer CLI. Once that
-    server dies the reason is gone, so the entry must go too: otherwise the
+    The cache exists because a server held without stlink-server blocks the
+    programmer CLI. Once that server dies the reason is gone, so the entry must
+    go too: otherwise the
     identity of a board nobody is holding keeps being served from memory long
     after it stopped being true.
     """
@@ -354,10 +353,10 @@ def _cached_for(serial: str | None):
 
 
 _HELD_MESSAGE = (
-    "A GDB server is holding this probe, so the programmer cannot connect to it: "
-    "run_until's, or run_firmware's for a program that closes the debug port. "
-    "core_registers, run_until and capture_console work through it; release_probe() "
-    "frees it, after which such a program's port may stay closed until a power cycle."
+    "A GDB server is holding this probe without stlink-server, so the programmer "
+    "cannot connect beside it. core_registers, run_until and capture_console work "
+    "through it; release_probe() frees it, after which a program that closes the "
+    "debug port leaves it closed until a reset or a power cycle."
 )
 
 
@@ -703,9 +702,9 @@ def board_state(
 runs, is halted or locked up, with program-counter samples read without halting
 it; given `elf_path`, where in the source they fall. A hotplug connect that
 cannot reach the core is retried with resetting connects, and
-`target_was_reset` says so. While a GDB server holds the probe it answers from
-cache, `unverified`. Only `measured` values in `family.provenance` have been
-seen to work.
+`target_was_reset` says so; never beside a GDB server that holds the probe,
+which it reads through without halting. Only `measured` values in
+`family.provenance` have been seen to work.
     """
     try:
         toolchain = _toolchain()
@@ -718,7 +717,15 @@ seen to work.
 
     entry = _cached_for(serial)
     cached = entry is not None
-    if entry is not None:
+    if entry is not None and _shares(serial):
+        # Read live beside the held server, without a reset, rather than from
+        # the identity captured when it was started.
+        held_probe, _, probe_info = entry
+        probe = Probe(toolchain, access_port=held_probe.access_port, serial=serial,
+                      interface=interface, shared=True)
+        info = probe.identify(allow_reset=False)
+        cached = False
+    elif entry is not None:
         probe, info, probe_info = entry
     else:
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
@@ -831,16 +838,17 @@ def run_firmware(
     probe_serial: str | None = None,
     console_seconds: float = 3.0,
     interface: Interface = "swd",
+    keep_probe: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
 Verified by its board's console output, or else by program-counter samples
 inside the image, read without halting; `failed` if the load did not complete.
-Refuses, before loading, an image whose vector table is not at the family's RAM
-address or with a segment outside SRAM. Resets the target first. Lets go of the
-probe afterwards unless the program closes the debug port, as
-`debug_port_after_run` says. No signing.
+Refuses an image whose vector table is not at the family's RAM address or with
+a segment outside SRAM. Resets the target first. Keeps the probe afterwards;
+`keep_probe=False` lets go once the program starts. release_probe says what
+each costs. No signing.
     """
     too_long = _capture_seconds_problem(console_seconds, "console_seconds")
     if too_long:
@@ -916,12 +924,23 @@ probe afterwards unless the program closes the debug port, as
         # Inside the try: running out of ports raises RunError, which used to
         # escape the tool as an unhandled exception instead of a result.
         gdb_port = _gdb_port_for(serial)
+        reused = held_server(serial) is not None
         # Family's port, not the one the programmer settled on: see
         # Probe.gdb_access_port for why those differ.
         gdb_server = acquire_server(
             toolchain, probe.gdb_access_port(info), gdb_port, serial=serial,
             interface=interface,
         )
+        if reused and port:
+            # A new server halts the running program as it starts, before the
+            # console opens; a held one does not, and the previous image then
+            # printed between the open and the load's reset, which verified an
+            # image that prints nothing (H7, 2026-10-04). A GDB connect halts it.
+            try:
+                gdbmi.Session(toolchain.gdb, None, gdb_server.port).close(detach=False)
+            except (gdbmi.MiError, OSError) as exc:
+                raise RunError(f"Could not stop the previous program through the held GDB server "
+                               f"before the console opened: {exc}") from exc
         with _STATE:
             _held[serial] = (probe, info, probe_info)
             _held_by.setdefault(serial, current_caller())
@@ -936,7 +955,8 @@ probe afterwards unless the program closes the debug port, as
                     toolchain, elf, quirks.vector_table_addr,
                     probe.gdb_access_port(info), gdb_port
                 )
-                started = time.monotonic()
+                if not keep_probe:
+                    _stop_holder_first(serial)
                 try:
                     text = cap.collect(console_seconds)
                 except Exception as exc:  # noqa: BLE001
@@ -953,7 +973,8 @@ probe afterwards unless the program closes the debug port, as
                 toolchain, elf, quirks.vector_table_addr,
                 probe.gdb_access_port(info), gdb_port
             )
-            started = time.monotonic()
+            if not keep_probe:
+                _stop_holder_first(serial)
             text = ""
     except (RunError, ToolchainError, console_mod.ConsoleError,
             settings.SettingError) as exc:
@@ -965,20 +986,20 @@ probe afterwards unless the program closes the debug port, as
             **_held_disclosure(serial), **_server_output(gdb_server),
         )
 
-    # Let go of the probe once the program runs, unless it closes the debug port.
-    # Until 2026-10-03 the server was held on every family because the STM32N6's
-    # usual images close it; on parts that stay open the hold only made six tools
-    # refuse until release_probe. Whether a program closes the port is the
-    # program's doing, not the family's, so after letting go a hotplug connect
-    # must still reach the core, and an image that closes it is remembered.
-    after_run = (_let_go_after_run(probe, serial, quirks, elf, started)
-                 if sp is not None and pc is not None else {})
+    # By default the server keeps the probe after the start. A program that
+    # closes the debug port (takes the SWD pins, stops a clock, sleeps without
+    # debug, or runs the STM32N6's usual start-up code) cannot then lock the
+    # debugger out, and the other tools read beside the server in ST's shared
+    # mode. Letting go after every run, as from b6e5aa8, turned such a program
+    # into a reset or a power cycle. Holding has its own cost: a held server
+    # resets and halts a core that locks up, which clears the fault registers
+    # (H7, F407 and N6, 2026-10-04). So the agent chooses, with keep_probe.
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
         **_connection_fields(probe, info),
         **_held_disclosure(serial),
-        **after_run,
+        **({} if keep_probe or not quirks.debug_closes_on_run else {"warning": _RELEASE_WARNING}),
         "console_port": port,
         "console_port_source": probe_info.console_source if probe_info else None,
         **({"console_note": probe_info.console_note}
@@ -1033,11 +1054,13 @@ probe afterwards unless the program closes the debug port, as
 
     # Without console text, where the core executes says whether the image
     # started: program-counter samples read without halting it, which lay inside
-    # the running image on the H7, the F407 and the N6 (2026-10-03). Not while a
-    # server holds the probe, since the programmer cannot read then.
+    # the running image on the H7, the F407 and the N6 (2026-10-03). Read beside
+    # the server, so only when it shares the probe.
     sampled: str | None = None
-    if not text.strip() and after_run.get("debug_port_after_run", "").startswith("open"):
-        inside, core = _samples_in_image(probe, elf)
+    if not text.strip() and (not keep_probe or (gdb_server is not None and gdb_server.shared)):
+        inside, core = _samples_in_image(
+            Probe(toolchain, access_port=probe.access_port, serial=serial, interface=interface,
+                  shared=keep_probe), elf)
         detail.update(core)
         if inside:
             sampled = (f"the core is executing this image's code: {core['core']['samples_inside_image']} "
@@ -1134,11 +1157,14 @@ def _core_report(toolchain: Toolchain, probe: Probe, elf_path: str | None) -> di
     except ProbeError as exc:
         return {"state": "not read", "why": str(exc).splitlines()[0]}
     report: dict[str, Any] = {"state": core.state, "dhcsr": f"0x{core.dhcsr:08X}"}
+    if core.dfsr is not None:
+        report["dfsr"] = f"0x{core.dfsr:08X}"
+    if core.state == "halted" and core.vector_catch and probe.shared:
+        report["state_note"] = _VECTOR_CATCH_NOTE
     if core.state == "not seen running":
         report["state_note"] = ("No instruction retired between two reads of DHCSR, and neither the halt "
-                                "nor the lockup bit is set. An STM32H743 read this way after its program "
-                                "faulted inside its fault handler, and after a reset into its own firmware, "
-                                "the two alike.")
+                                "nor the lockup bit is set. An STM32H743 read this way after a reset into "
+                                "its own firmware.")
     if not core.sampler_on:
         report["pc_samples_note"] = ("Not sampled: the sampler is off (DEMCR.TRCENA clear) until a debugger "
                                      "turns tracing on, as run_firmware's and run_until's sessions do.")
@@ -1156,7 +1182,8 @@ def _sample_reason(detail: dict[str, Any]) -> str:
     if not core:
         return " core_registers() shows where the program counter is."
     if core["state"] == "not read":
-        return f" Its program counter could not be sampled: {core['why']}"
+        return (f" Its program counter could not be sampled: {core['why']} "
+                "core_registers() reads it by halting the core.")
     if core["state"] != "running":
         return f" The core is {core['state']} (DHCSR {core['dhcsr']}); read_fault_status says whether it faulted."
     return (f" Only {core['samples_inside_image']} program-counter samples lie inside the image, so the "
@@ -1182,64 +1209,61 @@ def _samples_in_image(probe: Probe, elf: Path) -> tuple[bool, dict[str, Any]]:
     return ok, {"core": report}
 
 
-#: Images seen to close the debug port once they ran, by probe and by the
-#: ELF's SHA-256: run_firmware keeps the GDB server for their next run.
-_closes_port: set[tuple[str | None, str]] = set()
-
-
-def _let_go_after_run(probe: Probe, serial: str | None, quirks: Any, elf: Path,
-                      started: float) -> dict[str, Any]:
-    """Release the probe after a run and check the core still answers, or say
-    why the server is kept: this image closed the port before, or the family's
-    usual start-up code does."""
-    key = (serial, hashlib.sha256(elf.read_bytes()).hexdigest())
-    with _STATE:
-        closed_before = key in _closes_port
-    if closed_before or quirks.debug_closes_on_run:
-        why = ("this image closed the debug port the last time it ran on this probe" if closed_before else
-               f"ST's usual start-up code for {quirks.name} closes the debug port once it runs; "
-               "board_state's family note says what does it")
-        return {"debug_port_after_run": f"not tested: the GDB server is kept, because {why}"}
-    release_server(serial)
-    with _STATE:
-        _held.pop(serial, None)
-        _held_by.pop(serial, None)
-    after = time.monotonic() - started
-    reachable = probe.answers()
-    if reachable:
-        return {"debug_port_after_run": (
-            f"open {after:.1f} s after the start: the GDB server let go and a hotplug connect "
-            "reached the core. A program that closes it later does not show here."
-        )}
-    with _STATE:
-        _closes_port.add(key)
-    return {
-        "debug_port_after_run": (
-            f"closed {after:.1f} s after the start: once the GDB server let go, a hotplug "
-            "connect no longer reached the core, so this program closes the debug port, by "
-            "taking the SWD pins, turning off a clock it needs or sleeping without debug. The "
-            "next run of this image on this probe keeps the server."
-        ),
-        "debug_port_hint": (
-            "Tools that may reset (board_state, reset_target, core_registers) end with a "
-            "connect under reset, which reopened it on an STM32H743 whose program took the "
-            "pins; on an STM32N6 running ST's start-up code only a power cycle does."
-        ),
-    }
-
-
 def _held_disclosure(serial: str | None) -> dict[str, Any]:
     """Whether this server now holds the probe, for N3: the agent cannot see it."""
-    held = server_is_held(serial)
-    disclosure: dict[str, Any] = {"gdb_server_held": held}
-    if held:
+    server = held_server(serial)
+    disclosure: dict[str, Any] = {"gdb_server_held": server is not None}
+    if server is not None and not server.shared:
         disclosure["gdb_server_note"] = (
-            "The GDB server started for run_firmware is holding this probe. "
-            "core_registers, run_until and capture_console still work; read_memory, "
-            "read_fault_status, locate_fault, reset_target, flash_firmware and "
-            "capture_swo refuse until release_probe()."
+            "stlink-server is not installed, so this server keeps the probe to itself: "
+            "read_memory, read_fault_status, locate_fault and capture_swo refuse until "
+            "release_probe(). Installing STM32CubeCLT puts stlink-server on the PATH."
         )
     return disclosure
+
+
+_RELEASE_WARNING = (
+    "On an STM32N6 running ST's usual start-up code, the debug port stayed closed "
+    "after a release until a power cycle. board_state's family note says what in "
+    "the image does it."
+)
+
+#: For a core halted by a vector catch while a server held its probe.
+_VECTOR_CATCH_NOTE = (
+    "DFSR records a vector catch while a GDB server held the probe. On the H7, the F407 and "
+    "the N6, a core that locked up (a fault inside its fault handler) was reset by the held "
+    "server and halted at its reset vector, which clears the fault registers. To see such a "
+    "fault, run again with run_firmware(keep_probe=False)."
+)
+
+
+def _shares(serial: str | None) -> bool:
+    """Whether a server holds this probe in ST's shared mode, so the programmer
+    can connect beside it with `shared`."""
+    server = held_server(serial)
+    return server is not None and server.shared
+
+
+def _held_refusal(serial: str | None) -> dict[str, Any] | None:
+    """A refusal when a server keeps this probe to itself; None when nothing
+    holds it or the holder shares it."""
+    if server_is_held(serial) and not _shares(serial):
+        return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(),
+                      **_held_by_disclosure(serial))
+    return None
+
+
+def _stop_holder_first(serial: str | None) -> dict[str, Any]:
+    """Stop a server holding this probe before a reset or a flash write: either
+    made beside it broke its GDB session (2026-10-03). The result says so."""
+    if not server_is_held(serial):
+        return {}
+    with _STATE:
+        _stopped.pop(serial, None)
+        _held.pop(serial, None)
+        _held_by.pop(serial, None)
+    release_server(serial)
+    return {"released_probe_first": True}
 
 
 def _server_output(gdb_server: Any) -> dict[str, Any]:
@@ -1255,20 +1279,22 @@ def release_probe(
     probe_serial: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Shut down held GDB servers and free their probes; with no serial, all of them.
+    """Stop the GDB server holding a probe; with no serial, every probe's.
 
-Resumes a core run_until holds, and reads DHCSR to say so. While a server holds
-a probe, read_memory, read_fault_status, locate_fault, reset_target,
-flash_firmware and capture_swo cannot reach it; core_registers and run_until
-work through it. Never done implicitly: after a program that closes the debug
-port, such as ST's STM32N6 start-up code, releasing can leave the port closed
-until a power cycle. `unverified` if nothing was held.
+Held, the debugger stays connected whatever the program does, and only these
+tools and STM32_Programmer_CLI with `shared` reach the probe; a core that locks
+up is reset, which clears its fault registers. Released, a program that closes
+the debug port keeps it closed until a reset restarts the program, or with ST's
+STM32N6 start-up code, a power cycle. Resumes a core run_until holds.
+`unverified` if nothing was held.
     """
     with _STATE:
         affected = [probe_serial] if probe_serial is not None else list(_held)
         quirks = [_held[s][1].quirks for s in affected if s in _held]
         stops = {s: _stopped.pop(s) for s in affected if s in _stopped}
 
+    for serial in stops:
+        _resume_through_gdb(serial)
     released = release_server(probe_serial)
     with _STATE:
         holders = {s: _held_by.pop(s).label for s in affected if s in _held_by}
@@ -1281,12 +1307,7 @@ until a power cycle. `unverified` if nothing was held.
     if released and stops:
         detail["core_after"] = {s: _core_state_after_release(s, stop) for s, stop in stops.items()}
     if released and any(q.debug_closes_on_run for q in quirks):
-        detail["warning"] = (
-            "The debug access port cannot be re-acquired now that firmware has "
-            "run. Power cycle the affected board(s) before the next run_firmware. "
-            "This is caused by the image, not the silicon: board_state carries the "
-            "family note saying what to change so it stops happening."
-        )
+        detail["warning"] = _RELEASE_WARNING
 
     if not released:
         return unverified(
@@ -1296,6 +1317,21 @@ until a power cycle. `unverified` if nothing was held.
         )
 
     return verified("gdb server shut down and the probe freed", **detail)
+
+
+def _resume_through_gdb(serial: str | None) -> None:
+    """Resume a core run_until left halted, by GDB's detach, before its server
+    stops. Stopping a server in ST's shared mode left the F407's core halted two
+    times in five, where without it the core ran again five times in five
+    (2026-10-04); a detach resumed it on all three boards. A failure here is
+    not raised: the DHCSR read after the release says whether the core runs."""
+    server = held_server(serial)
+    if server is None:
+        return
+    try:
+        gdbmi.Session(_toolchain().gdb, None, server.port).close(detach=True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _core_state_after_release(serial: str | None, stop: dict[str, Any]) -> str:
@@ -1334,10 +1370,17 @@ def flash_firmware(
 
 Prefer run_firmware while developing. Does not sign. Takes only a .bin, since
 the programmer writes HEX, S-record and ELF files where they say. Refuses an
-unmeasured flash base unless you pass `address`, an integer or a hex string.
-Verified only when the range read back matches the image byte for byte. Says
-what its erase took beyond the image, which is whole sectors.
+unmeasured flash base unless you pass `address`. Verified only when the range
+read back matches the image byte for byte. Says what its erase took beyond the
+image, which is whole sectors. Stops a GDB server holding the probe first
+(`released_probe_first`).
     """
+    released: dict[str, Any] = {}
+    return {**_flash_firmware(image_path, probe_serial, address, interface, released), **released}
+
+
+def _flash_firmware(image_path: str, probe_serial: str | None, address: int | str | None,
+                    interface: str, released: dict[str, Any]) -> dict[str, Any]:
     # Checked before anything touches the probe, like run_firmware's image
     # check: a refusal after identify() would already have connected, and
     # possibly reset, for nothing.
@@ -1360,8 +1403,7 @@ what its erase took beyond the image, which is whole sectors.
     if error:
         return failed(error)
     # Only this probe matters. Another board's held server does not stop us.
-    if server_is_held(serial):
-        return failed(_HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial))
+    released.update(_stop_holder_first(serial))
 
     probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
     try:
@@ -1593,11 +1635,11 @@ to change state when read, such as a UART's data register, unless
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        if server_is_held(serial):
-            return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-            )
-        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
+        refusal = _held_refusal(serial)
+        if refusal:
+            return refusal
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
+                      shared=_shares(serial))
         one_call = None if in_device else probe.identify_and_read(start, length_bytes)
         if one_call is not None:
             info, words = one_call
@@ -1710,16 +1752,17 @@ def _effects_disclosure(in_device: bool, effects: list[dict[str, Any]]) -> dict[
 def _probe_for_read(
     probe_serial: str | None, interface: str
 ) -> tuple[tuple[Toolchain, str, Probe, TargetInfo] | None, dict[str, Any] | None]:
-    """Resolve, refuse a held probe, and identify without reset, for a read by name."""
+    """Resolve, refuse a probe held without sharing, and identify without reset,
+    for a read by name."""
     toolchain = _toolchain()
     serial, _, error = _resolve_probe(toolchain, probe_serial)
     if error:
         return None, failed(error)
-    if server_is_held(serial):
-        return None, failed(
-            _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-        )
-    probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
+    refusal = _held_refusal(serial)
+    if refusal:
+        return None, refusal
+    probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
+                  shared=_shares(serial))
     info = probe.identify(allow_reset=False)
     _remember_port(serial, probe, info)
     if not info.connected:
@@ -2324,18 +2367,21 @@ The reset is a resetting connect; the core is halted at the reset vector just
 long enough to compare the PC against word 1 of the vector table, then
 released, and that brief halt is reported. The result does not claim whether
 the core is halted now, because nothing here can observe that. To hold the
-core stopped, use run_until.
+core stopped, use run_until. Stops a GDB server holding the probe first, as
+`released_probe_first` says.
     """
+    released: dict[str, Any] = {}
+    return {**_reset_target(probe_serial, interface, released), **released}
+
+
+def _reset_target(probe_serial: str | None, interface: str, released: dict[str, Any]) -> dict[str, Any]:
     probe: Probe | None = None
     try:
         toolchain = _toolchain()
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        if server_is_held(serial):
-            return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-            )
+        released.update(_stop_holder_first(serial))
 
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
         # allow_reset=False deliberately: identification must not reset the
@@ -2613,11 +2659,11 @@ registers.
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        if server_is_held(serial):
-            return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-            )
-        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
+        refusal = _held_refusal(serial)
+        if refusal:
+            return refusal
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
+                      shared=_shares(serial))
         # In one programmer call where nothing could differ; the one-call path
         # runs only for a family whose access port was measured, and every such
         # family has fault registers, so the refusal below still comes first
@@ -2714,6 +2760,9 @@ registers.
             {"bit": d.name, "meaning": d.meaning} for d in status.debug
         ]
 
+    if probe.shared and any(d.name == "VCATCH" for d in status.debug):
+        detail["vector_catch_note"] = _VECTOR_CATCH_NOTE
+
     if faults_mod.may_bank_by_security(info.cpu):
         detail["security_state_note"] = (
             "If this core implements the Armv8-M Security Extension (TrustZone), "
@@ -2780,11 +2829,11 @@ frame.
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        if server_is_held(serial):
-            return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-            )
-        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
+        refusal = _held_refusal(serial)
+        if refusal:
+            return refusal
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
+                      shared=_shares(serial))
         info = probe.identify()
         _remember_port(serial, probe, info)
         if not info.connected:
@@ -3100,11 +3149,10 @@ probe. Hearing nothing is unverified.
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        if server_is_held(serial):
-            return failed(
-                _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
-            )
-        probe = Probe(toolchain, serial=serial, try_first=_settled_port(serial))
+        refusal = _held_refusal(serial)
+        if refusal:
+            return refusal
+        probe = Probe(toolchain, serial=serial, try_first=_settled_port(serial), shared=_shares(serial))
         info = probe.identify(allow_reset=False)
         _remember_port(serial, probe, info)
         if not info.connected:

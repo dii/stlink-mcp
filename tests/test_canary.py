@@ -95,6 +95,20 @@ class TestTheCoreStateIsReadWithoutHaltingIt:
         assert core.state == state and core.sampler_on is sampler_on
         assert set(core.pc_samples) == samples and len(core.pc_samples) == 5
 
+    @pytest.mark.parametrize("fixture, state, dfsr, caught", [
+        ("core_state_h7_held_after_lockup.txt", "halted", 0x9, True),
+        ("core_state_h7_held_running.txt", "running", 0x1, False),
+    ])
+    def test_dfsr_says_when_a_vector_catch_halted_it(self, monkeypatch, fixture, state, dfsr, caught) -> None:
+        """Captured 2026-10-04 in shared mode beside run_firmware's held server:
+        the H7 after its program faulted inside its fault handler, which the
+        server reset and halted at the reset vector, and the H7 running h7_ram."""
+        text = (FIXTURES / fixture).read_text()
+        probe, _ = _probe(monkeypatch, lambda mode: text)
+        probe._access_port = 0
+        core = probe.core_state()
+        assert (core.state, core.dfsr, core.vector_catch) == (state, dfsr, caught)
+
     def test_a_sleeping_h7s_stale_word_is_not_taken_for_a_state(self, monkeypatch) -> None:
         probe, _ = _probe(monkeypatch, lambda mode: ASLEEP)
         probe._access_port = 0

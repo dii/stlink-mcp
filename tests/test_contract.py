@@ -27,7 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from stlink_mcp import probe as probe_mod
-from stlink_mcp import result, server
+from stlink_mcp import faults, result, server
 from stlink_mcp.toolchain import ToolchainError
 
 # Every tool, with the smallest argument set that reaches its body.
@@ -300,6 +300,7 @@ class _FakeProbe:
 
     def __init__(self, *args, **kwargs) -> None:
         self.interface = kwargs.get("interface", "swd")
+        self.shared = kwargs.get("shared", False)
         self.connect_mode = "HOTPLUG"
         self.target_was_reset = False
         self.degraded_reason: str | None = None
@@ -314,10 +315,6 @@ class _FakeProbe:
     def gdb_access_port(self, info: object) -> int:
         return 1
 
-    # Whether a hotplug connect reaches the core after a run; class-level so a
-    # test can close the port.
-    answer: bool = True
-
     # What a non-halting read of DHCSR and the PC sampler gives: by default it
     # cannot be read, as on a sleeping core; a test sets a CoreState.
     core: object = None
@@ -326,9 +323,6 @@ class _FakeProbe:
         if self.core is None:
             raise probe_mod.ProbeError("The core's debug status could not be read without halting it.")
         return self.core
-
-    def answers(self, timeout: float = 5.0) -> bool:
-        return self.answer
 
     # Class-level so a test can lay out memory and registers; zero elsewhere.
     memory: dict[int, int] = {}
@@ -409,6 +403,7 @@ def bench(monkeypatch, tmp_path):
         console_buffered="",
         console_port="/dev/fake0",
         console_raises=None,
+        shares=True,
     )
 
     class _FakeCapture:
@@ -444,13 +439,48 @@ def bench(monkeypatch, tmp_path):
             console_source="probe list" if state.console_port else None,
         )]
 
-    monkeypatch.setattr(server, "_toolchain", lambda: object())
+    monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(gdb=Path("arm-none-eabi-gdb")))
     monkeypatch.setattr(server, "_list_probes", _attached)
+
+    class _Session:
+        """GDB against the bench's held server: connects and leaves."""
+
+        def __init__(self, gdb, elf, port) -> None:
+            pass
+
+        def close(self, detach: bool = True) -> None:
+            pass
+
+    monkeypatch.setattr(server.gdbmi, "Session", _Session)
     monkeypatch.setattr(
         server, "list_probes_with_unreadable", lambda tc: (_attached(tc), 0, [])
     )
     monkeypatch.setattr(server, "Probe", _FakeProbe)
-    monkeypatch.setattr(server, "acquire_server", lambda *a, **k: None)
+    # The GDB servers this bench holds, by serial. They share the probe, as one
+    # started with -t does where stlink-server is installed, unless a test sets
+    # state.shares to False.
+    held: dict = {}
+
+    def acquire(*args, serial=None, **kwargs):
+        held[serial] = SimpleNamespace(shared=state.shares, interface=kwargs.get("interface", "swd"),
+                                       attach=kwargs.get("attach", False), recent_output=lambda n: [],
+                                       port=61234)
+        return held[serial]
+
+    def release(serial=None) -> bool:
+        if serial is None:
+            found = bool(held)
+            held.clear()
+            return found
+        return held.pop(serial, None) is not None
+
+    monkeypatch.setattr(server, "acquire_server", acquire)
+    monkeypatch.setattr(server, "held_server", lambda serial: held.get(serial))
+    monkeypatch.setattr(server, "server_is_held",
+                        lambda serial=None: bool(held) if serial is None else serial in held)
+    monkeypatch.setattr(server, "held_serials", lambda: list(held))
+    monkeypatch.setattr(server, "release_server", release)
+    state.held = held
     monkeypatch.setattr(
         server, "load_and_run", lambda *a, **k: (*state.markers, state.gdb_output)
     )
@@ -556,14 +586,13 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
             raise RunError("arm-none-eabi-gdb did not finish within 180s")
 
         monkeypatch.setattr(server, "load_and_run", gdb_times_out)
-        monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
         r = call("run_firmware", elf_path=str(bench.elf))
         assert_contract(r)
         assert r["status"] == result.FAILED
-        assert r["gdb_server_held"] is True
-        assert "release_probe" in r["gdb_server_note"]
-        # core_registers reads through the held server (H7 and N6, 2026-10-03).
-        assert "core_registers, run_until and capture_console still work" in r["gdb_server_note"]
+        assert r["gdb_server_held"] is True and "gdb_server_note" not in r, "it shares the probe"
+        bench.shares = False
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert "read_memory" in r["gdb_server_note"] and "release_probe" in r["gdb_server_note"]
 
     def test_a_run_says_it_reset_the_target(self, bench) -> None:
         """N3. The GDB batch starts with `monitor reset`, and the docstring said
@@ -729,42 +758,159 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert r["image_initial_sp"] == "0x34200000" and "image_note" not in r
 
 
-class TestRunFirmwareLetsGoUnlessTheProgramClosesThePort:
-    """Whether the debug port closes once a program runs is the program's doing,
-    not the family's (interface review, 2026-10-03): the server was held on every
-    family for the STM32N6's sake, and six tools refused until release_probe."""
+class TestRunFirmwareKeepsTheProbe:
+    """The GDB server keeps the probe after a run, so a program that closes the
+    debug port cannot lock the debugger out. From b6e5aa8 it let go after every
+    run, which turned such a program into a reset or a power cycle; whether to
+    let go is the agent's choice, with release_probe (2026-10-04)."""
 
     @pytest.fixture
-    def open_part(self, bench, monkeypatch):
+    def ran(self, bench, monkeypatch):
         import dataclasses
         part = dataclasses.replace(probe_mod.for_device_id(_FakeProbe.device_id), debug_closes_on_run=False)
         monkeypatch.setattr(probe_mod, "for_device_id", lambda did: part)
-        released: list = []
-        monkeypatch.setattr(server, "release_server", lambda serial: released.append(serial))
-        monkeypatch.setattr(server, "_closes_port", set())
-        bench.console_text = "up\n"
-        return released
+        made: list = []
+        original = _FakeProbe.__init__
 
-    def test_a_program_that_leaves_the_port_open_frees_the_probe(self, bench, open_part) -> None:
+        def remember(self, *args, **kwargs):
+            original(self, *args, **kwargs)
+            made.append(kwargs.get("shared", False))
+
+        monkeypatch.setattr(_FakeProbe, "__init__", remember)
+        bench.console_text = "up\n"
         out = call("run_firmware", elf_path=str(bench.elf))
+        assert out["status"] == result.VERIFIED and out["gdb_server_held"] is True
+        made.clear()
+        return made
+
+    def test_on_every_part(self, bench, ran) -> None:
+        assert list(bench.held) == ["AAA1"]
+
+    @pytest.mark.parametrize("name", ["read_memory", "read_fault_status", "locate_fault", "capture_swo"])
+    def test_the_reading_tools_connect_beside_it(self, bench, ran, name) -> None:
+        out = call(name)
+        assert_contract(out, name)
+        assert out["status"] != result.FAILED or "holding" not in out["error"], out
+        assert ran and all(ran), "every programmer connect is made in shared mode"
+        assert list(bench.held) == ["AAA1"], "and the server is still held"
+
+    def test_board_state_reads_live_beside_it(self, bench, ran) -> None:
+        out = call("board_state")
+        assert ran == [True] and out["status"] == result.VERIFIED, out
+
+    @pytest.mark.parametrize("name, args", [("reset_target", {}), ("flash_firmware", {"image_path": None})])
+    def test_a_reset_or_a_flash_write_stops_it_first_and_says_so(self, bench, ran, name, args) -> None:
+        """Either, made beside the server, broke its GDB session (2026-10-03)."""
+        args = {k: str(bench.bin) for k in args}
+        out = call(name, **args)
+        assert_contract(out, name)
+        assert out["released_probe_first"] is True and bench.held == {}
+        assert not any(ran), "nothing is shared once the server is gone"
+
+    def test_keep_probe_false_lets_go_once_the_program_starts(self, bench, monkeypatch) -> None:
+        """A held server resets and halts a core that locks up, which clears its
+        fault registers (H7, F407 and N6, 2026-10-04); letting go keeps them."""
+        bench.console_text = ""
+        made: list = []
+        original = _FakeProbe.__init__
+
+        def remember(self, *args, **kwargs):
+            original(self, *args, **kwargs)
+            made.append(kwargs.get("shared", False))
+
+        monkeypatch.setattr(_FakeProbe, "__init__", remember)
+        monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(0x01010000, 0x01000000, (0x34180500,) * 2))
+        out = call("run_firmware", elf_path=str(bench.elf), keep_probe=False)
         assert_contract(out)
-        assert out["status"] == result.VERIFIED and len(open_part) == 1
-        assert out["debug_port_after_run"].startswith("open") and out["gdb_server_held"] is False
+        assert out["gdb_server_held"] is False and bench.held == {}
+        assert out["status"] == result.VERIFIED and made[-1] is False, "sampled with nothing held"
+        assert "power cycle" in out["warning"], "the bench is an STM32N6"
 
-    def test_a_program_that_closes_it_is_reported_and_remembered(self, bench, open_part, monkeypatch) -> None:
-        monkeypatch.setattr(_FakeProbe, "answer", False)
-        first = call("run_firmware", elf_path=str(bench.elf))
-        assert first["status"] == result.VERIFIED, "the run itself is still what the console showed"
-        assert first["debug_port_after_run"].startswith("closed") and "connect under reset" in first["debug_port_hint"]
-        second = call("run_firmware", elf_path=str(bench.elf))
-        assert "last time it ran on this probe" in second["debug_port_after_run"] and len(open_part) == 1
-
-    def test_on_a_part_whose_usual_start_up_code_closes_it_the_server_is_kept(self, bench, monkeypatch) -> None:
-        released: list = []
-        monkeypatch.setattr(server, "release_server", lambda serial: released.append(serial))
+    def test_a_kept_probe_carries_no_release_warning(self, bench) -> None:
         bench.console_text = "up\n"
-        out = call("run_firmware", elf_path=str(bench.elf))
-        assert released == [] and "ST's usual start-up code for STM32N6" in out["debug_port_after_run"]
+        assert "warning" not in call("run_firmware", elf_path=str(bench.elf))
+
+    def test_release_resumes_a_stopped_core_through_gdb_before_stopping_the_server(self, bench, monkeypatch) -> None:
+        """Stopping a server in shared mode left the F407's core halted two times
+        in five (2026-10-04); a GDB detach resumes it."""
+        order: list = []
+
+        class _Session:
+            def __init__(self, gdb, elf, port) -> None:
+                order.append(("attach", port))
+
+            def close(self, detach: bool = True) -> None:
+                order.append(("detach", detach))
+
+        monkeypatch.setattr(server.gdbmi, "Session", _Session)
+        monkeypatch.setattr(server, "_core_state_after_release", lambda serial, stop: "running again")
+        original = server.release_server
+        monkeypatch.setattr(server, "release_server", lambda serial=None: order.append("stop") or original(serial))
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
+        server._stopped["AAA1"] = {"address": "0x34180500", "function": "writer"}
+        out = call("release_probe", probe_serial="AAA1")
+        assert order == [("attach", 61234), ("detach", True), "stop"]
+        assert out["core_after"] == {"AAA1": "running again"}
+
+    def test_a_second_run_stops_the_previous_image_before_the_console_opens(self, bench, monkeypatch) -> None:
+        """Through a held server the previous image ran on until the load's reset,
+        and a line it printed after the port opened verified an image that
+        prints nothing (H7, 2026-10-04). A new server halts it as it starts."""
+        order: list = []
+
+        class _Session:
+            def __init__(self, gdb, elf, port) -> None:
+                order.append("attach")
+
+            def close(self, detach: bool = True) -> None:
+                order.append(f"close, detach {detach}")
+
+        monkeypatch.setattr(server.gdbmi, "Session", _Session)
+        capture = server.console_mod.ConsoleCapture
+        monkeypatch.setattr(server.console_mod, "ConsoleCapture",
+                            lambda *a, **k: order.append("console opens") or capture(*a, **k))
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", elf_path=str(bench.elf))
+        assert order == ["console opens", "attach", "close, detach False", "console opens"]
+
+    def test_nothing_is_said_when_nothing_was_held(self, bench) -> None:
+        assert "released_probe_first" not in call("reset_target")
+
+    def test_without_stlink_server_the_reading_tools_refuse(self, bench, monkeypatch) -> None:
+        bench.shares = False
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
+        out = call("read_memory")
+        assert out["status"] == result.FAILED and "stlink-server" in out["error"]
+
+
+class TestALockupUnderAHeldServerIsNamed:
+    """While a GDB server held the probe, a core that faulted inside its fault
+    handler was reset and halted at its reset vector, DFSR reading VCATCH and
+    the fault registers clear, on the H7, the F407 and the N6 (2026-10-04)."""
+
+    @pytest.fixture
+    def caught(self, bench, monkeypatch):
+        monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(0x00030003, 0, (0,) * 5, 0x9))
+        monkeypatch.setattr(_FakeProbe, "memory", {faults.DFSR: 0x9})
+        bench.console_text = "up\n"
+
+    def test_board_state_beside_the_server_says_what_it_likely_is(self, bench, caught) -> None:
+        call("run_firmware", elf_path=str(bench.elf))
+        core = call("board_state")["core"]
+        assert core["state"] == "halted" and core["dfsr"] == "0x00000009"
+        assert "keep_probe=False" in core["state_note"]
+
+    def test_read_fault_status_beside_the_server_says_it(self, bench, caught) -> None:
+        call("run_firmware", elf_path=str(bench.elf))
+        out = call("read_fault_status")
+        assert out["any_fault_active"] is False and "keep_probe=False" in out["vector_catch_note"]
+
+    def test_with_nothing_held_neither_says_it(self, bench, caught) -> None:
+        assert "state_note" not in call("board_state")["core"]
+        assert "vector_catch_note" not in call("read_fault_status")
 
 
 class TestWhereTheCoreRunsSaysWhetherASilentImageStarted:
@@ -773,12 +919,7 @@ class TestWhereTheCoreRunsSaysWhetherASilentImageStarted:
     one segment is 0x34180000 to 0x34181000."""
 
     @pytest.fixture
-    def open_part(self, bench, monkeypatch):
-        import dataclasses
-        part = dataclasses.replace(probe_mod.for_device_id(_FakeProbe.device_id), debug_closes_on_run=False)
-        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: part)
-        monkeypatch.setattr(server, "release_server", lambda serial: None)
-        monkeypatch.setattr(server, "_closes_port", set())
+    def open_part(self, bench):
         bench.console_text = ""
 
     @pytest.mark.parametrize("dhcsr, samples, status, says", [
@@ -793,9 +934,9 @@ class TestWhereTheCoreRunsSaysWhetherASilentImageStarted:
         reason = out.get("verified_by") or out.get("unverified_because")
         assert out["status"] == status and says in reason and out["core"]["pc_samples"]
 
-    def test_not_while_a_server_holds_the_probe(self, bench, monkeypatch) -> None:
-        """The bench is the STM32N6, whose usual start-up code closes the port, so
-        the server is kept and the programmer cannot read."""
+    def test_not_beside_a_server_that_keeps_the_probe_to_itself(self, bench, monkeypatch) -> None:
+        """Without stlink-server the programmer cannot read beside the server."""
+        bench.shares = False
         monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(0x01010000, 0x01000000, (0x34180500,)))
         out = call("run_firmware", elf_path=str(bench.elf))
         assert out["status"] == result.UNVERIFIED and "core" not in out
@@ -2685,8 +2826,7 @@ class TestEveryCallIsTracedToWhoAsked:
         by_id.mkdir()
         (by_id / "usb-STMicroelectronics_STLINK-V3_AAAA0001-if02").touch()
         monkeypatch.setattr(server, "_BY_ID_DIR", by_id)
-        monkeypatch.setattr(server, "server_is_held", lambda serial=None: True)
-        monkeypatch.setattr(server, "release_server", lambda serial=None: True)
+        bench.shares = False  # so read_memory refuses, and says who holds it
         bench.console_text = "tick 0\n"
         run = call("run_firmware", elf_path=str(bench.elf), probe_serial="AAAA0001", ctx=self._ctx("agent-a", "7"))
         assert run["status"] == result.VERIFIED, run
