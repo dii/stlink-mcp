@@ -1,0 +1,76 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 50FF73064977535531090387
+ST-LINK FW  : V2J48S7
+Board       : --
+Voltage     : 3.24V
+SWD freq    : 4000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x413
+Revision ID : Rev 2.0
+Device name : STM32F405xx/F407xx/F415xx/F417xx
+NVM size    : 1 MBytes
+Device type : MCU
+Device CPU  : Cortex-M4
+BL Version  : 0x31
+
+Core halted
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000EDF0
+0xE000EDF0 : 00030003
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000EDFC
+0xE000EDFC : 01000000
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : FFFFFFFF
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : FFFFFFFF
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : FFFFFFFF
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : FFFFFFFF
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : FFFFFFFF
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000ED00
+0xE000ED00 : 410FC241
+
+

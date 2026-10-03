@@ -8,6 +8,8 @@ answer.
 
 from __future__ import annotations
 
+import dataclasses
+
 import re
 import subprocess
 import tempfile
@@ -125,6 +127,83 @@ def parse_memory(output: str) -> dict[int, int]:
     return words
 
 
+#: Read last in every programmer call that connects or reads: the core's CPUID
+#: register, whose top byte is 0x41 (Arm) on every Cortex-M. On an STM32H743
+#: whose core slept on WFI, every address read 0x01010001 with no error, the
+#: device ID too, and read_memory reported it verified (2026-10-03).
+CPUID = 0xE000ED00
+_CANARY = ["-r32", f"0x{CPUID:08X}", "4"]
+
+
+def canary_problem(output: str) -> str | None:
+    """Why nothing in this call's output can be trusted, or None. A canary read
+    that failed outright is not a problem here: the caller's own reads say so."""
+    value = parse_memory(output).get(CPUID)
+    if value is None or value >> 24 == 0x41:
+        return None
+    return (
+        f"The debug connection returned 0x{value:08X} for the core's CPUID register "
+        "(0xE000ED00), which begins 0x41 on every Cortex-M part, so nothing read in "
+        "the same call can be trusted. On an STM32H743 whose core slept on WFI, every "
+        "address read 0x01010001 this way, with no error, until a connect under reset "
+        "(2026-10-03); board_state and reset_target end with one."
+    )
+
+
+DHCSR, DEMCR, DWT_PCSR = 0xE000EDF0, 0xE000EDFC, 0xE000101C
+
+
+@dataclass(frozen=True)
+class CoreState:
+    """What DHCSR, DEMCR and DWT_PCSR said, read without halting the core."""
+    dhcsr: int
+    demcr: int | None
+    pc_samples: tuple[int, ...]
+
+    @property
+    def state(self) -> str:
+        # Measured on 2026-10-03: running cores on the H7, the F407 and the N6
+        # read S_RETIRE_ST set (an instruction retired since DHCSR was last read);
+        # halted ones S_HALT, the F407 and the N6; on the N6 a fault inside the
+        # fault handler read S_LOCKUP. The H7 after that same fault, and after
+        # reset_target with its own firmware, read neither bit and S_RETIRE_ST
+        # clear, the two alike. A sleeping core could not be read on any of them.
+        if self.dhcsr & (1 << 19):
+            return "locked up"
+        if self.dhcsr & (1 << 17):
+            return "halted"
+        if self.dhcsr & (1 << 18):
+            return "sleeping"
+        if self.dhcsr & (1 << 24):
+            return "running"
+        return "not seen running"
+
+    @property
+    def sampler_on(self) -> bool:
+        """DWT_PCSR samples only while DEMCR.TRCENA is set, which a GDB session
+        does and a reset undoes: after a reset it read 0 on the H7."""
+        return self.demcr is None or bool(self.demcr & (1 << 24))
+
+
+def parse_reads_in_order(output: str) -> list[tuple[int, int]]:
+    """Each -r32 of one word, in the order printed: the same address read
+    several times gives several entries, which parse_memory would merge."""
+    return [(int(m.group(1), 16), int(m.group(2).split()[0], 16)) for m in _MEM_LINE.finditer(output)]
+
+
+def _trusted(info: TargetInfo, output: str) -> TargetInfo:
+    """A connect whose canary read is wrong is not a connect: its device ID came
+    from the same untrustworthy reads."""
+    problem = canary_problem(output) if info.connected else None
+    return dataclasses.replace(info, connected=False, errors=[*info.errors, problem]) if problem else info
+
+
+def _without_canary(words: dict[int, int], ranges: list[tuple[int, int]]) -> dict[int, int]:
+    if any(start <= CPUID < start + length for start, length in ranges):
+        return words
+    return {address: word for address, word in words.items() if address != CPUID}
+
+
 def parse_core_registers(output: str) -> dict[str, int]:
     """Parse '-coreReg' output into {register: value}."""
     return {name: int(value, 16) for name, value in _CORE_REG.findall(output)}
@@ -236,6 +315,9 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     """
     if info.connected:
         return ""
+    canary = next((e for e in info.errors if "CPUID register" in e), None)
+    if canary:
+        return canary
     if any("Old ST-LINK firmware" in e for e in info.errors):
         return (
             "The probe's firmware is too old for this STM32CubeProgrammer, which "
@@ -401,8 +483,8 @@ class Probe:
                     # Recorded before the connect, not after it succeeds: the
                     # pulse restarts the target whether or not the port answers.
                     self.target_was_reset = True
-                result = self._run(self._connect_args(port, mode), timeout=90)
-                info = parse_target_info(result.stdout)
+                result = self._run(self._connect_args(port, mode) + _CANARY, timeout=90)
+                info = _trusted(parse_target_info(result.stdout), result.stdout)
                 if info.connected:
                     self.connect_mode = mode
                     # allow_reset is forwarded, not defaulted. Without this a
@@ -468,8 +550,8 @@ class Probe:
                 # branch pulses the board and then fails, and it used to report
                 # target_was_reset False for a board it had just restarted.
                 self.target_was_reset = True
-            result = self._run(self._connect_args(wanted, attempt), timeout=90)
-            if parse_target_info(result.stdout).connected:
+            result = self._run(self._connect_args(wanted, attempt) + _CANARY, timeout=90)
+            if _trusted(parse_target_info(result.stdout), result.stdout).connected:
                 self.connect_mode = attempt
                 # Settling here does not make an unmeasured port measured. This
                 # path was reached only from a scan that answered elsewhere, and
@@ -487,14 +569,37 @@ class Probe:
         )
         return answered_on
 
+    def core_state(self, samples: int = 5) -> CoreState:
+        """DHCSR and `samples` reads of DWT_PCSR in one programmer call, none of
+        which halts the core. ProbeError when the reads cannot be trusted or did
+        not happen, as when the core sleeps on WFI."""
+        argv = self._connect_args(self.access_port, "HOTPLUG") + ["-r32", f"0x{DHCSR:08X}", "4"]
+        argv += ["-r32", f"0x{DEMCR:08X}", "4"] + ["-r32", f"0x{DWT_PCSR:08X}", "4"] * samples
+        result = self._run(argv + _CANARY, timeout=90)
+        problem = canary_problem(result.stdout)
+        if problem:
+            raise ProbeError(problem)
+        reads = parse_reads_in_order(result.stdout)
+        dhcsr = next((word for address, word in reads if address == DHCSR), None)
+        demcr = next((word for address, word in reads if address == DEMCR), None)
+        pcs = tuple(word for address, word in reads if address == DWT_PCSR)
+        if dhcsr is None or len(pcs) < samples:
+            raise ProbeError(
+                "The core's debug status could not be read without halting it: "
+                f"{len(pcs)} of {samples} program-counter samples came back. A core asleep "
+                "on WFI or WFE answered no reads on the STM32N6 and the STM32F407 "
+                "(2026-10-03).\n" + result.stdout.strip()[-400:]
+            )
+        return CoreState(dhcsr, demcr, pcs)
+
     def answers(self, timeout: float = 5.0) -> bool:
         """Whether one hotplug connect on the settled port reaches the core in
         `timeout`. A healthy one took 0.1 s; one to a closed port, 30 s to fail."""
         try:
-            result = self._run(self._connect_args(self.access_port, "HOTPLUG"), timeout=timeout)
+            result = self._run(self._connect_args(self.access_port, "HOTPLUG") + _CANARY, timeout=timeout)
         except (ToolchainError, ProbeError):
             return False
-        return parse_target_info(result.stdout).connected
+        return _trusted(parse_target_info(result.stdout), result.stdout).connected
 
     def _note_unmeasured_port(self, answered_on: int) -> None:
         """Record that the access port in use is a guess, and what else answered.
@@ -552,9 +657,12 @@ class Probe:
             "-r32",
             f"0x{address:08X}",
             str(length_bytes),
-        ]
+        ] + _CANARY
         result = self._run(argv, timeout=90)
-        words = parse_memory(result.stdout)
+        problem = canary_problem(result.stdout)
+        if problem:
+            raise ProbeError(problem)
+        words = _without_canary(parse_memory(result.stdout), [(address, length_bytes)])
         if not words:
             raise no_data_read(address, result.stdout)
         return words
@@ -565,8 +673,11 @@ class Probe:
         argv = self._connect_args(self.access_port, self.connect_mode)
         for address, length_bytes in ranges:
             argv += ["-r32", f"0x{address:08X}", str(length_bytes)]
-        result = self._run(argv, timeout=90)
-        words = parse_memory(result.stdout)
+        result = self._run(argv + _CANARY, timeout=90)
+        problem = canary_problem(result.stdout)
+        if problem:
+            raise ProbeError(problem)
+        words = _without_canary(parse_memory(result.stdout), ranges)
         if not words:
             raise no_data_read(ranges[0][0], result.stdout)
         return words
@@ -587,11 +698,14 @@ class Probe:
         port = self._try_first
         if self._access_port is not None or port is None:
             return None
-        argv = self._connect_args(port, "HOTPLUG") + ["-r32", f"0x{address:08X}", str(length_bytes)]
+        argv = self._connect_args(port, "HOTPLUG") + ["-r32", f"0x{address:08X}", str(length_bytes)] + _CANARY
         result = self._run(argv, timeout=90)
         info = parse_target_info(result.stdout)
         if not info.connected:
             return None
+        problem = canary_problem(result.stdout)
+        if problem:
+            raise ProbeError(problem)
         quirks = info.quirks
         if quirks.access_port != port or not quirks.is_measured("access_port"):
             return None

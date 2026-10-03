@@ -132,6 +132,9 @@ void reset_handler(void) {
 #ifdef CLOSE_SWD
         if (tick == 2) close_swd();
 #endif
+#ifdef SLEEP_FOREVER  /* no interrupt is enabled, so nothing wakes it */
+        if (tick == 1) for (;;) __asm volatile("wfi");
+#endif
 #ifdef FAULT_AFTER
         if (tick == FAULT_AFTER) {
 #ifdef USE_PSP   /* run on PSP from here, as an RTOS thread does; same address, so locals survive */
@@ -156,7 +159,9 @@ void reset_handler(void) {
     }
 }
 
-#ifdef CALLING_HANDLER  /* a handler that calls a function first, which overwrites LR */
+#ifdef LOCKUP  /* a fault handler that faults: the core locks up */
+__attribute__((naked)) void fault_handler(void) { __asm volatile("udf #1"); }
+#elif defined(CALLING_HANDLER)  /* a handler that calls a function first, which overwrites LR */
 __attribute__((noinline)) void handler_helper(void) { __asm volatile("nop"); }
 void fault_handler(void) { handler_helper(); for (;;) {} }
 #else

@@ -1,0 +1,30 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 0054003D3137511139383538
+ST-LINK FW  : V3J17M11
+Board       : NUCLEO-H743ZI
+Voltage     : 3.27V
+SWD freq    : 8000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x001
+Revision ID : --
+Error: Database cannot be found. DatabasePath = /opt/st/stm32cubeclt_1.22.0/STM32CubeProgrammer/bin/../Data_Base/STM32_Prog_DB_0x001.xml
+Error: flash loader cannot be loaded. FlashLoaderPath = /opt/st/stm32cubeclt_1.22.0/STM32CubeProgrammer/bin/FlashLoader/0x1.stldr
+Error: Database cannot be found. DatabasePath = /opt/st/stm32cubeclt_1.22.0/STM32CubeProgrammer/bin/../Data_Base/STM32_Prog_DB_0x001.xml
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0x24070000
+0x24070000 : 01010001
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000ED00
+0xE000ED00 : 01010001
+
+

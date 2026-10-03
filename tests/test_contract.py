@@ -318,6 +318,15 @@ class _FakeProbe:
     # test can close the port.
     answer: bool = True
 
+    # What a non-halting read of DHCSR and the PC sampler gives: by default it
+    # cannot be read, as on a sleeping core; a test sets a CoreState.
+    core: object = None
+
+    def core_state(self, samples: int = 5):
+        if self.core is None:
+            raise probe_mod.ProbeError("The core's debug status could not be read without halting it.")
+        return self.core
+
     def answers(self, timeout: float = 5.0) -> bool:
         return self.answer
 
@@ -756,6 +765,48 @@ class TestRunFirmwareLetsGoUnlessTheProgramClosesThePort:
         bench.console_text = "up\n"
         out = call("run_firmware", elf_path=str(bench.elf))
         assert released == [] and "ST's usual start-up code for STM32N6" in out["debug_port_after_run"]
+
+
+class TestWhereTheCoreRunsSaysWhetherASilentImageStarted:
+    """Program-counter samples read without halting the core lay inside the
+    running image on the H7, the F407 and the N6 (2026-10-03). The bench ELF's
+    one segment is 0x34180000 to 0x34181000."""
+
+    @pytest.fixture
+    def open_part(self, bench, monkeypatch):
+        import dataclasses
+        part = dataclasses.replace(probe_mod.for_device_id(_FakeProbe.device_id), debug_closes_on_run=False)
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: part)
+        monkeypatch.setattr(server, "release_server", lambda serial: None)
+        monkeypatch.setattr(server, "_closes_port", set())
+        bench.console_text = ""
+
+    @pytest.mark.parametrize("dhcsr, samples, status, says", [
+        (0x01010000, (0x34180500, 0x34180504), result.VERIFIED, "executing this image's code: 2 of 2"),
+        (0x01010000, (0x34180500, 0x08000100), result.UNVERIFIED, "Only 1 of 2"),
+        (0x00190001, (0x341804F8,) * 2, result.UNVERIFIED, "locked up"),
+    ])
+    def test_a_silent_run(self, bench, open_part, monkeypatch, dhcsr, samples, status, says) -> None:
+        monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(dhcsr, 0x01000000, samples))
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(out)
+        reason = out.get("verified_by") or out.get("unverified_because")
+        assert out["status"] == status and says in reason and out["core"]["pc_samples"]
+
+    def test_not_while_a_server_holds_the_probe(self, bench, monkeypatch) -> None:
+        """The bench is the STM32N6, whose usual start-up code closes the port, so
+        the server is kept and the programmer cannot read."""
+        monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(0x01010000, 0x01000000, (0x34180500,)))
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert out["status"] == result.UNVERIFIED and "core" not in out
+
+    def test_board_state_says_where_with_the_elf(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(0x01010000, 0x01000000, (0x34180500, 0x34180500, 0x34180504)))
+        monkeypatch.setattr(server, "_symbol", lambda tc, elf, addr: {"function": "loop", "file": "a.c", "line": 3,
+                                                                      "address": hex(addr)})
+        out = call("board_state", elf_path=str(bench.elf))
+        assert out["core"]["state"] == "running" and len(out["core"]["pc_samples"]) == 3
+        assert [p["address"] for p in out["core"]["pc_places"]] == ["0x34180500", "0x34180504"]
 
 
 class TestTheConsoleSettingMeansOneThingEverywhere:

@@ -6,6 +6,8 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Added
 
+- `board_state` says whether the core runs, is halted, locked up or asleep, from DHCSR, with five program-counter samples from DWT_PCSR, none of which halts the core; given `elf_path`, where in the source they fall. Measured on the H7, the F407 and the N6.
+- `run_firmware` verifies an image that prints nothing, or a board with no console, when the program-counter samples lie inside the image's loaded segments; an image that printed nothing was `unverified` before.
 - Reads that change state. `read_memory` refuses, before anything is read, a register whose read is known to change it: the UART, SPI, I2C and ADC data registers and the RTC's time registers, from a list kept by peripheral block, which reaches 227 of the 233 SVD files in STM32CubeCLT 1.22.0, and ST's own readAction marks, including another part's mark for the same block. `read_effects_ok` reads it anyway and says what the read did. Any other read in the peripheral range names the registers it covered. Measured on an STM32H743 and an STM32F407: each listed register's flag was cleared by the read, and left set by everything else; the entries not measured say so.
 - Board files take `[[read_effects]]` entries for registers the list does not cover, as `user-stated`.
 - The STM32N6's external flash measured: `flash_firmware` writes it through ST's loader for the NUCLEO-N657X0-Q and verifies it by reading it back. `tools/hwcheck --flash` now also writes the start of the N6's flash, after saving the first 128 KB, checks the erase report, and writes the saved copy back.
@@ -24,6 +26,8 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - `run_until` refuses to watch a register whose read changes state, because GDB reads a watched address when it sets the watchpoint (three times, measured on the H7), and reads no peripheral register's value itself before or after the stop.
 
 ### Fixed
+
+- Reads that returned wrong data with no error were reported `verified`. On an STM32H743 whose core slept on WFI, every address read 0x01010001, the device ID too, so `read_memory` returned it as fact and identification fell back to the generic family. Every programmer call that connects or reads now also reads the core's CPUID register, whose top byte is 0x41 on every Cortex-M part; when it is not, the read fails with that reason, and a connect counts as not made, so tools that may reset go on to a connect under reset, which cleared it.
 
 - Texts an agent reads that had gone out of date: `run_firmware`'s note on a held probe said `core_registers` could not reach it, which it can, and left out `locate_fault` and `capture_swo`, which cannot; `core_registers` said to hold a target stopped through `run_firmware`'s server, which is `run_until`'s job; `read_fault_status` gave a 120-word procedure by hand for what `locate_fault` does in one call.
 

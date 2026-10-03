@@ -1,0 +1,75 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 003C002C3335510535383531
+ST-LINK FW  : V3J15M6
+Board       : NUCLEO-N657X0-Q
+Voltage     : 3.28V
+SWD freq    : 8000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x486
+Revision ID : Rev B
+Revision ID : Rev B
+Device name : ST32N657
+Device type : MCU
+Device CPU  : Cortex-M55
+BL Version  : --
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000EDF0
+0xE000EDF0 : 00190001
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000EDFC
+0xE000EDFC : 01100000
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : 341804F8
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : 341804F8
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : 341804F8
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : 341804F8
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000101C
+0xE000101C : 341804F8
+
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000ED00
+0xE000ED00 : 411FD221
+
+

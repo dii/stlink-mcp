@@ -696,16 +696,16 @@ while other probes are held by a GDB server; those are marked as held.
 def board_state(
     probe_serial: str | None = None,
     interface: Interface = "swd",
+    elf_path: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Identify the target, the probe and the target's family.
-
-Tries access ports 0 and 1. If a hotplug connect cannot reach the core, or the
-family's recorded port, it retries with a resetting connect and sets
-`target_was_reset`. While a GDB server holds the probe it answers from cache
-and reports `unverified`. Check `family.provenance`: only `measured` values
-have been seen to work. `access_port_warning` means the port is a guess;
-identity reads fine on a port that cannot halt the core.
+    """Identify the target, the probe and its family, and say whether the core
+runs, is halted or locked up, with program-counter samples read without halting
+it; given `elf_path`, where in the source they fall. A hotplug connect that
+cannot reach the core is retried with resetting connects, and
+`target_was_reset` says so. While a GDB server holds the probe it answers from
+cache, `unverified`. Only `measured` values in `family.provenance` have been
+seen to work.
     """
     try:
         toolchain = _toolchain()
@@ -800,6 +800,15 @@ identity reads fine on a port that cannot halt the core.
             **state,
         )
 
+    with _STATE:
+        stopped = _stopped.get(serial)
+    if not cached:
+        state["core"] = _core_report(toolchain, probe, elf_path)
+    elif stopped:
+        state["core"] = {"state": "halted", "by": "run_until", "at": stopped}
+    else:
+        state["core"] = {"state": "not read", "why": "a GDB server holds the probe"}
+
     if cached:
         return unverified(
             "A GDB server is holding this probe, so nothing was run against the "
@@ -826,11 +835,12 @@ def run_firmware(
 ) -> dict[str, Any]:
     """Load an ELF into target RAM, start it, and verify that it started.
 
-Verified only by its board's console output: `unverified` if silent, `failed`
-if the load did not complete. Refuses, before loading, an image whose vector
-table is not at the family's RAM address or with a segment outside SRAM. Resets
-the target first. Lets go of the probe afterwards unless the program closes
-the debug port, as `debug_port_after_run` says. No signing.
+Verified by its board's console output, or else by program-counter samples
+inside the image, read without halting; `failed` if the load did not complete.
+Refuses, before loading, an image whose vector table is not at the family's RAM
+address or with a segment outside SRAM. Resets the target first. Lets go of the
+probe afterwards unless the program closes the debug port, as
+`debug_port_after_run` says. No signing.
     """
     too_long = _capture_seconds_problem(console_seconds, "console_seconds")
     if too_long:
@@ -1021,6 +1031,19 @@ the debug port, as `debug_port_after_run` says. No signing.
             **detail,
         )
 
+    # Without console text, where the core executes says whether the image
+    # started: program-counter samples read without halting it, which lay inside
+    # the running image on the H7, the F407 and the N6 (2026-10-03). Not while a
+    # server holds the probe, since the programmer cannot read then.
+    sampled: str | None = None
+    if not text.strip() and after_run.get("debug_port_after_run", "").startswith("open"):
+        inside, core = _samples_in_image(probe, elf)
+        detail.update(core)
+        if inside:
+            sampled = (f"the core is executing this image's code: {core['core']['samples_inside_image']} "
+                       "program-counter samples, read without halting it, lie inside the image's "
+                       "loaded segments")
+
     if console_error is not None:
         detail["console_error"] = console_error
         if text.strip():
@@ -1029,26 +1052,32 @@ the debug port, as `debug_port_after_run` says. No signing.
                 "before the capture was interrupted",
                 **detail,
             )
+        if sampled:
+            return verified(sampled, **detail)
         return unverified(
             f"The load completed, but the console could not be read: "
-            f"{console_error}. Nothing observed whether the image started.",
+            f"{console_error}. Nothing observed whether the image started."
+            + _sample_reason(detail),
             **detail,
         )
 
     if not port:
+        if sampled:
+            return verified(sampled, **detail)
         return unverified(
             "No serial console is mapped to this probe, so nothing observed "
             "whether the image started. The load itself completed. Name one with "
-            f"{settings.CONSOLE}=<probe serial>=<device path>.",
+            f"{settings.CONSOLE}=<probe serial>=<device path>." + _sample_reason(detail),
             **detail,
         )
 
     if not text.strip():
+        if sampled:
+            return verified(sampled, **detail)
         return unverified(
             "The image loaded and was started, but the target printed nothing in "
-            "the capture window. It may not be running, or it may not print. "
-            "core_registers() shows where the program counter actually is, through "
-            "the GDB server this run keeps.",
+            "the capture window. It may not be running, or it may not print."
+            + _sample_reason(detail),
             **detail,
         )
 
@@ -1096,6 +1125,61 @@ def _buffered_disclosure(text: str, *, before: str, source: str) -> dict[str, An
                if len(text) > _BUFFERED_TAIL else "")
         ),
     }
+
+
+def _core_report(toolchain: Toolchain, probe: Probe, elf_path: str | None) -> dict[str, Any]:
+    """The core's state and program-counter samples, read without halting it."""
+    try:
+        core = probe.core_state()
+    except ProbeError as exc:
+        return {"state": "not read", "why": str(exc).splitlines()[0]}
+    report: dict[str, Any] = {"state": core.state, "dhcsr": f"0x{core.dhcsr:08X}"}
+    if core.state == "not seen running":
+        report["state_note"] = ("No instruction retired between two reads of DHCSR, and neither the halt "
+                                "nor the lockup bit is set. An STM32H743 read this way after its program "
+                                "faulted inside its fault handler, and after a reset into its own firmware, "
+                                "the two alike.")
+    if not core.sampler_on:
+        report["pc_samples_note"] = ("Not sampled: the sampler is off (DEMCR.TRCENA clear) until a debugger "
+                                     "turns tracing on, as run_firmware's and run_until's sessions do.")
+    elif core.state in ("running", "locked up"):
+        report["pc_samples"] = [f"0x{pc:08X}" for pc in core.pc_samples]
+        if elf_path:
+            report["pc_places"] = [_symbol(toolchain, Path(elf_path), pc & ~1)
+                                   for pc in dict.fromkeys(core.pc_samples)]
+    return report
+
+
+def _sample_reason(detail: dict[str, Any]) -> str:
+    """What the program-counter samples showed, for an unverified run."""
+    core = detail.get("core")
+    if not core:
+        return " core_registers() shows where the program counter is."
+    if core["state"] == "not read":
+        return f" Its program counter could not be sampled: {core['why']}"
+    if core["state"] != "running":
+        return f" The core is {core['state']} (DHCSR {core['dhcsr']}); read_fault_status says whether it faulted."
+    return (f" Only {core['samples_inside_image']} program-counter samples lie inside the image, so the "
+            "core is executing other code.")
+
+
+def _samples_in_image(probe: Probe, elf: Path) -> tuple[bool, dict[str, Any]]:
+    """Whether the core runs this image's code, from program-counter samples
+    read without halting it, and the samples as a result field."""
+    try:
+        core = probe.core_state()
+    except ProbeError as exc:
+        return False, {"core": {"state": "not read", "why": str(exc).splitlines()[0]}}
+    try:
+        segments = image_mod.load_segments(elf.read_bytes())
+    except (OSError, image_mod.ImageError):
+        segments = []
+    inside = [any(seg.vaddr <= (pc & ~1) < seg.vaddr + seg.memsz for seg in segments) for pc in core.pc_samples]
+    report = {"state": core.state, "dhcsr": f"0x{core.dhcsr:08X}",
+              "pc_samples": [f"0x{pc:08X}" for pc in core.pc_samples],
+              "samples_inside_image": f"{sum(inside)} of {len(inside)}"}
+    ok = core.state == "running" and core.sampler_on and bool(inside) and all(inside)
+    return ok, {"core": report}
 
 
 #: Images seen to close the debug port once they ran, by probe and by the
