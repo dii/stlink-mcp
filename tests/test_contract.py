@@ -545,6 +545,30 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert r["gdb_server_held"] is True
         assert "release_probe" in r["gdb_server_note"]
 
+    def test_a_run_says_it_reset_the_target(self, bench) -> None:
+        """N3. The GDB batch starts with `monitor reset`, and the docstring said
+        so, but the result did not (found 2026-10-03)."""
+        bench.console_text = "tick 0\n"
+        loud = call("run_firmware", elf_path=str(bench.elf))
+        bench.console_text = ""
+        silent = call("run_firmware", elf_path=str(bench.elf))
+        assert (loud["status"], silent["status"]) == (result.VERIFIED, result.UNVERIFIED)
+        assert loud["target_was_reset"] is True and silent["target_was_reset"] is True
+
+    def test_a_batch_that_stopped_early_does_not_say_whether_it_reset(self, bench) -> None:
+        bench.markers = (None, None, None)
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert r["status"] == result.FAILED
+        assert r["target_was_reset"] is None and "not known" in r["reset_note"]
+
+    def test_a_silent_run_does_not_send_the_agent_to_release_the_probe(self, bench) -> None:
+        """core_registers reaches the core through the server the run keeps (H7
+        and N6, 2026-10-03). Releasing first, as this used to say, can close an
+        STM32N6's debug port until a power cycle."""
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert r["status"] == result.UNVERIFIED
+        assert "core_registers" in r["unverified_because"] and "release_probe" not in r["unverified_because"]
+
     def test_running_out_of_gdb_ports_is_a_result_not_an_exception(
         self, bench, monkeypatch
     ) -> None:

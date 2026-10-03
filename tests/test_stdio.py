@@ -77,5 +77,9 @@ def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
         else:
             assert prop is None, f"{name} does not connect and should not take an interface"
         assert "ctx" not in tool.input_schema.get("properties", {}), f"{name} exposes its context"
+        # AGENTS.md: an agent loads every description on every session, so each
+        # is held to the 40 to 80 words the repo sets.
+        words = len((tool.description or "").split())
+        assert 40 <= words <= 80, f"{name}'s description is {words} words"
     # N9: every call is traced to who asked, on the server's stderr.
     assert "connection 1, request" in seen["stderr"] and "list_probes(" in seen["stderr"]

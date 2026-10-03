@@ -965,6 +965,9 @@ the image says. Resets the target first and keeps the GDB server; see
         "image_initial_sp": _hex(sp),
         "image_entry_point": _hex(pc),
         "load_size_bytes": size,
+        # The GDB batch resets the target before it loads, so a batch that
+        # reached its end markers reset it; one that stopped early may not have.
+        "target_was_reset": True if sp is not None and pc is not None else None,
         "console": text,
         **_garbled_note(text),
         **_buffered_disclosure(buffered, before="this run started", source=(
@@ -997,8 +1000,9 @@ the image says. Resets the target first and keeps the GDB server; see
             f"On {quirks.name}, a typical image leaves the debug access port "
             "unreachable once it has run, and no reset reopens it. The GDB server "
             "is therefore being HELD so further run_firmware calls on this board "
-            "keep working without a power cycle. read_memory, core_registers and "
-            "flash_firmware cannot reach the probe until release_probe() is called. "
+            "keep working without a power cycle. core_registers and run_until work "
+            "through it; read_memory, flash_firmware and the other tools that "
+            "connect cannot reach the probe until release_probe() is called. "
             "This is a property of the image, not of the silicon: see the family "
             "notes in board_state for what causes it and how to remove it."
         )
@@ -1016,6 +1020,10 @@ the image says. Resets the target first and keeps the GDB server; see
             "The GDB batch did not reach its end markers, so the load did not "
             "complete. Any console output here is the PREVIOUS image still "
             "running, not the one just requested. gdb_output says why.",
+            reset_note=(
+                "The batch resets the target before it loads, and it stopped before "
+                "its end, so whether that reset ran is not known."
+            ),
             gdb_output=gdb_output.strip().splitlines()[-20:],
             **_server_output(gdb_server),
             **detail,
@@ -1047,8 +1055,8 @@ the image says. Resets the target first and keeps the GDB server; see
         return unverified(
             "The image loaded and was started, but the target printed nothing in "
             "the capture window. It may not be running, or it may not print. "
-            "core_registers() shows where the program counter actually is, after "
-            "release_probe().",
+            "core_registers() shows where the program counter actually is, through "
+            "the GDB server this run keeps.",
             **detail,
         )
 
@@ -1128,10 +1136,12 @@ def release_probe(
 ) -> dict[str, Any]:
     """Shut down held GDB servers and free their probes; with no serial, all of them.
 
-Needed before read_memory, core_registers or flash_firmware can reach a probe
-after a run. Never done implicitly: on an STM32N6 running a stock FSBL image,
-releasing is a one-way door until the board is power cycled. `unverified` if
-nothing was held.
+Resumes a core run_until holds, and reads DHCSR to say so. Needed after a run
+before read_memory, read_fault_status, locate_fault, reset_target,
+flash_firmware or capture_swo can reach the probe; core_registers and run_until
+work through the held server. Never done implicitly: on an STM32N6 running a
+stock FSBL image, releasing is a one-way door until the board is power cycled.
+`unverified` if nothing was held.
     """
     with _STATE:
         affected = [probe_serial] if probe_serial is not None else list(_held)
@@ -2013,8 +2023,8 @@ def reset_target(
 The reset is a resetting connect; the core is halted at the reset vector just
 long enough to compare the PC against word 1 of the vector table, then
 released, and that brief halt is reported. The result does not claim whether
-the core is halted now, because nothing here can observe that. To hold a
-target stopped, use the GDB server that run_firmware keeps alive.
+the core is halted now, because nothing here can observe that. To hold the
+core stopped, use run_until.
     """
     probe: Probe | None = None
     try:
@@ -2656,11 +2666,10 @@ def capture_console(
     """Capture what a target prints on its serial console for a number of seconds.
 
 The port is the one the probe list maps to this probe's serial, or the one
-STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*. Refuses when it
-cannot resolve a port for that probe. At most 60 seconds. What the probe
-buffered before the port opened comes back apart, in `console_buffered`. A
-capture that hears nothing is unverified: silence on the port cannot be told
-from a port not wired to the target.
+STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*; refused when
+there is none. At most 60 seconds. What the probe buffered before the port
+opened comes back apart, in `console_buffered`. Hearing nothing is unverified:
+silence cannot be told from a port not wired to the target.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")
     if too_long:
@@ -2786,9 +2795,9 @@ def capture_swo(
 
 `core_clock_hz` is the clock the core runs at while it writes, which only the
 firmware knows; a wrong one gives nothing or garbled text. Does not halt or
-reset, but turns the target's trace output on and leaves it on, which takes
-the SWO pin from the application until a power cycle. SWD only. Refuses while
-a GDB server holds the probe. A capture that hears nothing is unverified.
+reset, but turns trace output on and leaves it on, taking the SWO pin from the
+application until a power cycle. SWD only. Refuses while a GDB server holds the
+probe. Hearing nothing is unverified.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")
     if too_long:
