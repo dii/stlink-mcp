@@ -17,6 +17,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - On a part that boots only signed images, `flash_firmware`'s next step says to sign the image first, which it does not do; it had said only to set the boot switches.
 - `run_until` refuses to watch a register whose read changes state, because GDB reads a watched address when it sets the watchpoint (three times, measured on the H7), and reads no peripheral register's value itself before or after the stop.
 
+### Fixed
+
+- Texts an agent reads that had gone out of date: `run_firmware`'s note on a held probe said `core_registers` could not reach it, which it can, and left out `locate_fault` and `capture_swo`, which cannot; `core_registers` said to hold a target stopped through `run_firmware`'s server, which is `run_until`'s job; `read_fault_status` gave a 120-word procedure by hand for what `locate_fault` does in one call.
+
 ## [0.7.0] - 2026-10-03
 
 Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-03: `tools/hwcheck` passed 80 of 80 checks with `--f4`, `--f4-console`, `--jtag` and `--flash`, and 74 of 74 without `--flash` on the release commit. On a Windows 11 laptop with an STM32N6 board, `tools/hwcheck --n6` passed 14 of 14. docs/findings.md has what was run and what each README promise rests on.

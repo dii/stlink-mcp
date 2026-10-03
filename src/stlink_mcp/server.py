@@ -1115,9 +1115,10 @@ def _held_disclosure(serial: str | None) -> dict[str, Any]:
     disclosure: dict[str, Any] = {"gdb_server_held": held}
     if held:
         disclosure["gdb_server_note"] = (
-            "The GDB server started for run_firmware is holding this probe, so "
-            "read_memory, core_registers, reset_target, read_fault_status and "
-            "flash_firmware cannot reach it until release_probe()."
+            "The GDB server started for run_firmware is holding this probe. "
+            "core_registers, run_until and capture_console still work; read_memory, "
+            "read_fault_status, locate_fault, reset_target, flash_firmware and "
+            "capture_swo refuse until release_probe()."
         )
     return disclosure
 
@@ -2456,8 +2457,7 @@ core needed a reset. Perturbing, so never used inside routine checks.
             "The core was halted to read these registers. Whether it is still "
             "halted is not claimed: a halt made through the programmer did not "
             "outlive the command on the boards measured, and nothing here can "
-            "observe it. To hold a target stopped, use the GDB server that "
-            "run_firmware keeps alive."
+            "observe it. To hold the core stopped, use run_until."
         ),
     }
     if probe.target_was_reset:
@@ -2610,18 +2610,9 @@ registers.
         # RTOS stacks its frame on PSP, so following it gave a confident, wrong
         # faulting PC. EXC_RETURN in LR says which.
         detail["next_step"] = (
-            "locate_fault() finds WHERE it happened in one call. By hand: call "
-            "core_registers(), which halts the "
-            "core for the read. XPSR bits 0-8 give the active exception (3 is "
-            "HardFault, 0 is thread mode). In a handler, LR holds an EXC_RETURN "
-            "value (0xFFxxxxxx) whose bit 2 names the stack holding the "
-            "exception frame: clear is MSP, which is the SP a handler reports; "
-            "set is PSP, the thread stack an RTOS uses, which that SP is not. "
-            "Read 32 bytes at the frame's stack pointer with read_memory: words "
-            "0-3 are R0-R3, 4 is R12, 5 is LR, 6 is the faulting PC, 7 is XPSR. "
-            "If LR bit 4 is clear the frame also holds FP state, 104 bytes in "
-            "all. If LR is not 0xFFxxxxxx the handler has overwritten it, and "
-            "the frame cannot be located this way."
+            "Call locate_fault() while the core is still in the fault handler: it finds "
+            "the faulting instruction from the exception frame, on MSP or PSP as "
+            "EXC_RETURN says, with its function and line given the ELF."
         )
 
     if probe.degraded_reason:
@@ -2722,8 +2713,8 @@ frame.
     if number == 0:
         return failed(
             "The core is in thread mode, not in an exception handler, so there is no "
-            "exception frame to read. A fault read_fault_status reports happened "
-            "earlier, and its handler has returned or the core was reset since.",
+            "exception frame to read. A fault read_fault_status reports, if any, "
+            "happened earlier, and its handler has returned or the core was reset since.",
             **base,
         )
     lr = regs["LR"]
@@ -2917,7 +2908,7 @@ silence cannot be told from a port not wired to the target.
         # Silence on the port is not silence from the target: an adapter not
         # yet wired to the TX pin reads exactly the same.
         return unverified(
-            f"Nothing arrived on {source} in {seconds:g} seconds. That does not "
+            f"Nothing arrived on {source} in {seconds:g} s. That does not "
             "show the target is silent: it may not be running or may not print, "
             f"it may print at a baud rate other than {settings.console_baud()}, "
             "or this port may not be wired to its TX pin.",
@@ -3022,7 +3013,7 @@ probe. Hearing nothing is unverified.
     }
     if not text:
         return unverified(
-            f"Nothing arrived on ITM port {itm_port} over SWO in {seconds:g} seconds. "
+            f"Nothing arrived on ITM port {itm_port} over SWO in {seconds:g} s. "
             "That does not show the target is silent: it may not write to that "
             f"port, its core may not run at the {core_clock_hz} Hz given (twice "
             "the real clock gave nothing at all on an STM32F407), or this board "

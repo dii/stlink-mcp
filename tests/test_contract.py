@@ -546,6 +546,8 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert r["status"] == result.FAILED
         assert r["gdb_server_held"] is True
         assert "release_probe" in r["gdb_server_note"]
+        # core_registers reads through the held server (H7 and N6, 2026-10-03).
+        assert "core_registers, run_until and capture_console still work" in r["gdb_server_note"]
 
     def test_a_run_says_it_reset_the_target(self, bench) -> None:
         """N3. The GDB batch starts with `monitor reset`, and the docstring said
@@ -2010,7 +2012,7 @@ class TestFaultStatusReportsWhatsActuallyThere:
         assert out["bus_fault_address"] == "0x40001234"
         assert "0x40001234" in out["diagnosis"]
         assert "escalated" in out["diagnosis"]
-        assert "core_registers" in out["next_step"]
+        assert "locate_fault" in out["next_step"]
 
     def test_does_not_reset_the_target(self, bench) -> None:
         out = call("read_fault_status")
@@ -2086,7 +2088,9 @@ class TestFaultStatusReportsWhatsActuallyThere:
         self, bench, monkeypatch
     ) -> None:
         """Reading the frame at "the SP" is wrong for any fault in RTOS thread
-        code, whose frame is on PSP while a handler's SP is MSP."""
+        code, whose frame is on PSP while a handler's SP is MSP. The step now
+        sends the agent to locate_fault, which reads EXC_RETURN, rather than
+        through the procedure by hand."""
         from stlink_mcp import faults as fm
 
         def read_with_fault(self, address, length_bytes):
@@ -2096,7 +2100,7 @@ class TestFaultStatusReportsWhatsActuallyThere:
 
         monkeypatch.setattr(_FakeProbe, "read_memory", read_with_fault)
         step = call("read_fault_status")["next_step"]
-        assert "PSP" in step and "MSP" in step and "bit 2" in step
+        assert "locate_fault" in step and "MSP or PSP" in step and "the SP" not in step
 
     def test_the_security_bank_caveat_appears_only_where_it_can_apply(
         self, bench, monkeypatch
