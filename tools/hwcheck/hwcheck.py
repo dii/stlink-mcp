@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -450,6 +451,10 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  "N6: a stop through run_firmware's server, kept because the port can close, is unverified", _why(kept))
     await server.call("release_probe", probe_serial=s)
     stop = await server.call("run_until", probe_serial=s, elf_path=vars_elf, location="writer", seconds=5)
+    held = await server.call("core_registers", probe_serial=s, elf_path=vars_elf)
+    report.check(held["status"] == "verified" and held.get("core_after", "").startswith("still halted")
+                 and [f.get("function") for f in held.get("call_stack", [])][:2] == ["writer", "reset_handler"],
+                 "N6: core_registers gives the call stack at the stop and leaves the core halted", _why(held))
     watch = await server.call("run_until", probe_serial=s, elf_path=vars_elf, watch="g_watched", seconds=5)
     report.check(stop["status"] == "verified" and watch["status"] == "verified"
                  and watch.get("called_just_before") == "writer",
@@ -458,6 +463,8 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     released = await server.call("release_probe", probe_serial=s)
     report.check("running again" in json.dumps(released.get("core_after_release", {})),
                  "N6: release_probe resumes the core run_until held", json.dumps(released.get("core_after_release"))[:160])
+    await check_names(server, "N6", s, images, report, "n6_vars", "h7_vars", "0x46028000", "board name")
+    await server.call("release_probe", probe_serial=s)
     return True
 
 
@@ -511,11 +518,23 @@ async def main() -> int:
     parser.add_argument("--n6-closed", action="store_true",
                         help="last, close the N6's debug port and check what the tools say; "
                              "the N6 then needs a power cycle")
+    parser.add_argument("--keep-images", action="store_true",
+                        help="keep the built test images, and print where they are")
     parser.add_argument("--flash", action="store_true",
                         help="also write, read back and restore the flash of the H7 and the F4")
     args = parser.parse_args()
 
-    images = build(Path(tempfile.mkdtemp(prefix="stlink-hwcheck-")))
+    image_dir = Path(tempfile.mkdtemp(prefix="stlink-hwcheck-"))
+    try:
+        return await _run(args, build(image_dir))
+    finally:
+        if args.keep_images:
+            print(f"images kept in {image_dir}")
+        else:
+            shutil.rmtree(image_dir, ignore_errors=True)
+
+
+async def _run(args: argparse.Namespace, images: Built) -> int:
     report = Report()
     env = {"STLINK_MCP_CONSOLE": f"{args.f4}={args.f4_console}"} if args.f4 and args.f4_console else {}
     async with Server(env) as server:

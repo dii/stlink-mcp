@@ -23,6 +23,9 @@ _COMMON = [
     "-mthumb", "-O1", "-g", "-fno-tree-vectorize", "-ffreestanding",
     "-nostdlib", "-nostartfiles", "-Wall", "-Werror",
     "-Wl,--build-id=none", "-Wl,-n",
+    # A RAM image is one writable, executable segment by design; GCC 14's linker
+    # warns about each one, on every build, which buried real output.
+    "-Wl,--no-warn-rwx-segments",
     # Built from inside images/, so the debug information names its sources as
     # images/<file> and carries no path from the machine that built it.
     f"-fdebug-prefix-map={Path(__file__).parent / 'images'}=images",
