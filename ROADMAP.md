@@ -128,7 +128,7 @@ After Phase 2 most parts have a proposed layout that nobody has run a board agai
 
 - **Attachment ergonomics.** Installing it and pointing an agent client at it should not require reading the source. The self-check is DONE, `stlink-mcp --check`; a generated client config is not.
 - **CI. DONE** 2026-09-28: the suite on Python 3.11 to 3.13, with no hardware attached, and the check that the sdist file list equals `git ls-files`, run on every push.
-- **Windows.** Measured 2026-10-03 on Windows 11 with a NUCLEO-N657X0-Q: the executables are found as `.exe` under `C:\ST`, a probe's console by its USB serial as a COM port, and `tools/hwcheck --n6` passed 12 of 12 with Windows' own USB drivers. Still to run there: console text, SWO, JTAG, flash, and the H7 and F407. Whether that makes Windows supported is the owner's decision, one of the beta gates.
+- **Windows.** Measured 2026-10-03 on Windows 11 with a NUCLEO-N657X0-Q: the executables are found as `.exe` under `C:\ST`, a probe's console by its USB serial as a COM port, and `tools/hwcheck --n6` passed 14 of 14 with Windows' own USB drivers, a run verified by console text over COM3 among them. Still to run there: SWO, JTAG, flash, and the H7 and F407. Whether that makes Windows supported is the owner's decision, one of the beta gates.
 - Contributing guide asking for captured `-l` output on any parsing problem, issue templates, a changelog, and `py.typed`: DONE.
 - OpenOCD or pyOCD as a second backend. This means introducing an abstraction layer that deliberately does not exist yet, so it is last and may never be worth it.
 

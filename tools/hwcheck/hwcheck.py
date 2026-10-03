@@ -425,7 +425,8 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     printing = await server.call("run_firmware", elf_path=str(images.elf["n6_print"]), probe_serial=s,
                                  console_seconds=1.5)
     report.check(printing["status"] == "verified" and "n6 tick 0" in printing.get("console", ""),
-                 "N6: run_firmware is verified by the image's own console", _why(printing))
+                 "N6: run_firmware is verified by the image's own console",
+                 f"{_why(printing)}; port {printing.get('console_port')}")
     await server.call("release_probe", probe_serial=s)
     capture = await server.call("capture_console", probe_serial=s, seconds=2)
     report.check(capture["status"] == "verified" and "n6 tick" in capture.get("output", ""),
