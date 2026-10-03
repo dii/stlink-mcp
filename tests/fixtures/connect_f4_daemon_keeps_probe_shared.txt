@@ -1,0 +1,57 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+ST-Link Server is running on port : 7184
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+ST-LINK SN  : 50FF73064977535531090387
+ST-LINK FW  : V2J48S7
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Board       : --
+Voltage     : 3.24V
+SWD freq    : 4000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x413
+Revision ID : Rev 2.0
+Device name : STM32F405xx/F407xx/F415xx/F417xx
+NVM size    : 1 MBytes
+Device type : MCU
+Device CPU  : Cortex-M4
+BL Version  : 0x31
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000ED00
+0xE000ED00 : 410FC241
+
+

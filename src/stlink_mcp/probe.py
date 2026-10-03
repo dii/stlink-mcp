@@ -71,7 +71,43 @@ _FIELDS = {
     "revision": re.compile(r"^Revision ID\s*:\s*(.+?)\s*$", re.M),
 }
 _DEVICE_ID = re.compile(r"^Device ID\s*:\s*0x([0-9A-Fa-f]+)", re.M)
-_ERROR = re.compile(r"^Error:\s*(.+?)\s*$", re.M)
+_ERROR = re.compile(r"^(?:Error:\s*(.+?)|(ST-LINK error \(.+?\)))\s*$", re.M)
+
+#: The port ST's stlink-server listens on. GDB servers started with -t start it.
+STLINK_SERVER_PORT = 7184
+
+
+def sharing_daemon_running(proc_net: tuple[str, ...] = ("/proc/net/tcp", "/proc/net/tcp6")) -> bool:
+    """Whether ST's stlink-server is listening, so every connect must be shared.
+
+    While it runs it may keep a probe open that nothing holds: after a shared
+    read of another board, a plain connect to an STM32F407 whose GDB server had
+    been released failed with DEV_CONNECT_ERR until the daemon exited, while a
+    shared one worked (2026-10-04). With no daemon a shared connect starts one
+    and took 30 s, against 0.1 s plain, so shared is used only while it runs.
+
+    Read from the kernel's table of listening sockets where there is one, so
+    the check neither connects to the daemon nor binds its port; elsewhere, a
+    bind test, as runner.port_is_taken does."""
+    tables = [Path(t) for t in proc_net if Path(t).exists()]
+    if tables:
+        for table in tables:
+            try:
+                rows = table.read_text().splitlines()[1:]
+            except OSError:
+                continue
+            for row in rows:
+                cols = row.split()
+                if len(cols) > 3 and cols[3] == "0A" and cols[1].endswith(f":{STLINK_SERVER_PORT:04X}"):
+                    return True
+        return False
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("", STLINK_SERVER_PORT))
+        except OSError:
+            return True
+        return False
 
 # "0x34180400 : 34200000 34180841 3418089D 3418089D"
 _MEM_LINE = re.compile(r"^0x([0-9A-Fa-f]+)\s*:\s*((?:[0-9A-Fa-f]{8}\s*)+)$", re.M)
@@ -106,7 +142,8 @@ def parse_target_info(output: str) -> TargetInfo:
 
     # Deduplicate: the CLI retries the connection and repeats every error.
     seen: list[str] = []
-    for err in _ERROR.findall(output):
+    for prefixed, bare in _ERROR.findall(output):
+        err = prefixed or bare
         if err not in seen:
             seen.append(err)
     info.errors = seen
@@ -325,6 +362,13 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     canary = next((e for e in info.errors if "CPUID register" in e), None)
     if canary:
         return canary
+    if any("DEV_CONNECT_ERR" in e for e in info.errors):
+        return (
+            "The programmer could not open this probe: another program has it open. With "
+            "ST's stlink-server running this server connects in its shared mode, so it is "
+            "a program outside it, such as OpenOCD, pyOCD or an IDE debugging without "
+            "sharing. Close that session, then try again."
+        )
     if any("Old ST-LINK firmware" in e for e in info.errors):
         return (
             "The probe's firmware is too old for this STM32CubeProgrammer, which "
@@ -456,7 +500,7 @@ class Probe:
         ]
         if self.serial:
             argv.append(f"sn={self.serial}")
-        if self.shared:
+        if self.shared or sharing_daemon_running():
             argv.append("shared")
         return argv
 
@@ -1100,8 +1144,14 @@ def parse_probe_list(output: str) -> list[ProbeInfo]:
     return entries
 
 
+def _list_argv(toolchain: Toolchain) -> list[str]:
+    """`-l`, and `shared` while the daemon runs: a plain listing showed a probe
+    the daemon keeps with no firmware and no target (2026-10-04)."""
+    return [str(toolchain.programmer), "-l"] + (["shared"] if sharing_daemon_running() else [])
+
+
 def list_probes(toolchain: Toolchain) -> list[ProbeInfo]:
-    result = run_command([str(toolchain.programmer), "-l"], timeout=90)
+    result = run_command(_list_argv(toolchain), timeout=90)
     return parse_probe_list(result.stdout)
 
 
@@ -1110,7 +1160,7 @@ def list_probes_with_unreadable(
 ) -> tuple[list[ProbeInfo], int, list[str]]:
     """Readable probes, how many entries could not be read at all, and the error
     lines the programmer printed in its ST-LINK section."""
-    result = run_command([str(toolchain.programmer), "-l"], timeout=90)
+    result = run_command(_list_argv(toolchain), timeout=90)
     return (
         parse_probe_list(result.stdout),
         count_unreadable_entries(result.stdout),

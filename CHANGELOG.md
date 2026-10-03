@@ -28,6 +28,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Fixed
 
+- A board released while ST's `stlink-server` daemon ran could not be reached again: the daemon kept the probe open, a plain connect failed with DEV_CONNECT_ERR, which the parser dropped, so the tools said only "could not reach the core", and `list_probes` showed the board with no firmware. Connects and listings now go through the daemon whenever it is running, and DEV_CONNECT_ERR is reported and explained.
 - Reads that returned wrong data with no error were reported `verified`. On an STM32H743 whose core slept on WFI, every address read 0x01010001, the device ID too, so `read_memory` returned it as fact and identification fell back to the generic family. Every programmer call that connects or reads now also reads the core's CPUID register, whose top byte is 0x41 on every Cortex-M part; when it is not, the read fails with that reason, and a connect counts as not made, so tools that may reset go on to a connect under reset, which cleared it.
 
 - Texts an agent reads that had gone out of date: `run_firmware`'s note on a held probe said `core_registers` could not reach it, which it can, and left out `locate_fault` and `capture_swo`, which cannot; `core_registers` said to hold a target stopped through `run_firmware`'s server, which is `run_until`'s job; `read_fault_status` gave a 120-word procedure by hand for what `locate_fault` does in one call.
