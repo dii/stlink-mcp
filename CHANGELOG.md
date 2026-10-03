@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-03
+
+Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-03: `tools/hwcheck` passed 80 of 80 checks with `--f4`, `--f4-console`, `--jtag` and `--flash`, and 74 of 74 without `--flash` on the release commit. On a Windows 11 laptop with an STM32N6 board, `tools/hwcheck --n6` passed 14 of 14. docs/findings.md has what was run and what each README promise rests on.
+
 ### Changed
 
 - Without udev's `/dev/serial/by-id`, a named probe's console is found by the USB serial number pyserial reports for each port, instead of by listing every probe. On Windows that found COM3 for an STLINK-V3 on the first try.
@@ -142,7 +146,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dii/stlink-mcp/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dii/stlink-mcp/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dii/stlink-mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dii/stlink-mcp/compare/v0.3.0...v0.4.0
