@@ -7,7 +7,11 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 ### Changed
 
 - Without udev's `/dev/serial/by-id`, a named probe's console is found by the USB serial number pyserial reports for each port, instead of by listing every probe. On Windows that found COM3 for an STLINK-V3 on the first try.
-- On Windows the toolchain's executables are looked for with `.exe`, and `C:\ST` is searched for an install.
+- On Windows the toolchain's executables are looked for with `.exe`, and `C:\ST` is searched for an install, where STM32CubeCLT's installer puts it. A probe's console is reported as `COM3` rather than the `\\.\COM3` the programmer prints.
+
+### Added
+
+- Windows 11 measured with a NUCLEO-N657X0-Q: every check in `tools/hwcheck --n6` passed. `tools/hwcheck` builds its images on Windows, removes them at the end unless `--keep-images`, and its N6 sequence now also reads by name and takes the call stack at a stop.
 
 ### Fixed
 

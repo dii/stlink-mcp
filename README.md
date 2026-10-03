@@ -36,7 +36,7 @@ An agent driving those tools inherits every one of them. So the rule here is:
 
 Use it if your board has an ST-LINK, STM32CubeCLT is already installed, and you want an agent whose every report names what was observed on the target. It is debugging shaped for an agent rather than a person: thirteen tools, which stop the target where it is asked to and say why it stopped, and no single-stepping, RTT or memory writes.
 
-Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp) if you need single-stepping, breakpoints you manage yourself, RTT, a J-Link or DAPLink probe, a target that is not an STM32, or Windows. [Related projects](#related-projects) has the comparison.
+Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp) if you need single-stepping, breakpoints you manage yourself, RTT, a J-Link or DAPLink probe, a target that is not an STM32, or Windows support beyond what is measured here. [Related projects](#related-projects) has the comparison.
 
 ## Status
 
@@ -48,7 +48,7 @@ Plans are in [ROADMAP.md](ROADMAP.md). The measurements behind the claims in thi
 
 ## Requirements
 
-* [STM32CubeCLT](https://www.st.com/en/development-tools/stm32cubeclt.html). It bundles STM32CubeProgrammer, the GDB server and the Arm toolchain. Found automatically in `stm32cubeclt*` directories under `/opt/st`, `~/st` or `/usr/local/st`. Anywhere else, set `STLINK_MCP_CLT_ROOT` to the install directory.
+* [STM32CubeCLT](https://www.st.com/en/development-tools/stm32cubeclt.html). It bundles STM32CubeProgrammer, the GDB server and the Arm toolchain. Found automatically in `stm32cubeclt*` directories under `/opt/st`, `~/st` or `/usr/local/st`, and on Windows under `C:\ST`, where its installer puts it. Anywhere else, set `STLINK_MCP_CLT_ROOT` to the install directory.
 * Python 3.11 or newer.
 * An ST-LINK, which on most development boards is on the board itself.
 * On Linux, membership of the `dialout` group for the serial console, and ST's udev rules for the probe (STM32CubeCLT installs these).
@@ -220,7 +220,7 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * It does not build your firmware. That is your build system's job.
 * It does not sign images, because signing needs keys and options that belong to your project rather than to a programmer.
 * Only ST-LINK with STM32CubeCLT is supported. There is no abstraction layer waiting for a second backend: adding OpenOCD would mean introducing one first.
-* Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q, NUCLEO-H743ZI and STM32H753I-EVAL2 boards, and with two ST-LINK/V2s, one on the NUCLEO-H743ZI's JTAG connector (firmware V2J38S7) and one on a custom STM32F407IGT6 board (V2J48S7), over SWD and JTAG. Other Linux distributions should work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to the install there. Windows is not supported: the executable names and device paths are wrong for it throughout.
+* Tested on Fedora Linux 44 with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0), Python 3.12 and on-board ST-LINK V3 probes, on NUCLEO-N657X0-Q, NUCLEO-H743ZI and STM32H753I-EVAL2 boards, and with two ST-LINK/V2s, one on the NUCLEO-H743ZI's JTAG connector (firmware V2J38S7) and one on a custom STM32F407IGT6 board (V2J48S7), over SWD and JTAG. Other Linux distributions should work and have not been run. macOS is untried; set `STLINK_MCP_CLT_ROOT` to the install there. Windows 11 has been run with one NUCLEO-N657X0-Q, through STM32CubeCLT 1.22.0 and Windows' own USB drivers: every N6 check passed, from loading a RAM image to `run_until` and reading by name, and a probe's console is found as its COM port. Not yet run on Windows: reading console text, SWO, JTAG, writing flash, and the H7 and F407 boards.
 * Three device families are verified on hardware, STM32N6, STM32H7 and STM32F4. Parts seeded from the vendor database can run firmware, as the F407 did before its family was measured; anything unrecognised can be identified and read but not run.
 * The probes it has run against are on-board ST-LINK V3s and two ST-LINK/V2s. An ST-LINK/V2-1 has not been tried. If you hit a parsing problem on any probe, the captured `-l` output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
