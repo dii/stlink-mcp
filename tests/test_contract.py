@@ -1050,6 +1050,25 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         out = call("run_until", elf_path=self.ELF, **args)
         assert out["status"] == result.FAILED and "one of location or watch" in out["error"]
 
+    @pytest.mark.parametrize("fails_in", ["run_until", "registers"])
+    def test_a_gdb_error_midway_resumes_the_core_and_says_so(self, bench, monkeypatch, fails_in) -> None:
+        """GDB halts the core when it attaches. An error after that, before the
+        stop or after it, disconnected and left the core halted, and the server
+        this call started held, with a failure that said neither (N4)."""
+        from stlink_mcp import debugger
+        self._rig(monkeypatch, stop=self._stop(debugger))
+
+        def gdb_error(*a, **kw):
+            raise server.gdbmi.MiError("-break-list: Remote connection closed")
+
+        monkeypatch.setattr(server.debugger_mod, fails_in, gdb_error)
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "Remote connection closed" in out["error"]
+        assert self._Session.closes == [True], "detached, so the core runs on"
+        assert self.dropped, "the server it started is stopped"
+        assert out["core_after"].startswith("resumed") and server._stopped == {}
+
     def test_a_server_held_over_another_interface_is_not_reused(self, bench, monkeypatch) -> None:
         """run_until and core_registers reused a held JTAG server for a call that
         asked for SWD, through the second ST-LINK on the H7 on 2026-10-03, and

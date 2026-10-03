@@ -1685,6 +1685,12 @@ def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
     return server, None, None, True
 
 
+_DETACH_RESUMED = (
+    "resumed: GDB's detach resumed the core on the H7, the F407 and the N6; "
+    "not observed for this call"
+)
+
+
 def _drop_debug_server(serial: str | None) -> None:
     """Stop a server a refused call started, so the probe is left as it was
     found; stopping it lets the program run on (measured)."""
@@ -1743,11 +1749,7 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
         "probe_serial": serial,
         "interface": server.interface,
         "halted_to_read_registers": True,
-        "core_after": (
-            "still halted where run_until stopped it" if was_halted else
-            "resumed: GDB's detach resumed the core on the H7, the F407 and the N6; "
-            "not observed for this call"
-        ),
+        "core_after": "still halted where run_until stopped it" if was_halted else _DETACH_RESUMED,
         "target_was_reset": False,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
     }
@@ -1829,9 +1831,18 @@ keeps running. release_probe resumes the core.
         session.close(detach=False)
         session = None
     except (gdbmi.MiError, RunError, ProbeError, ToolchainError, OSError) as exc:
+        after: dict[str, Any] = {}
         if session is not None:
-            session.close(detach=False)
-        return failed(str(exc), probe_serial=serial,
+            # GDB halted the core when it attached, and the error can come at any
+            # point after that. Disconnecting left it halted where no result said;
+            # detaching resumes it, and says so.
+            session.close(detach=True)
+            with _STATE:
+                _stopped.pop(serial, None)
+            if started:
+                _drop_debug_server(serial)
+            after["core_after"] = _DETACH_RESUMED
+        return failed(str(exc), probe_serial=serial, **after,
                       **({"gdb_server_held": True} if serial and server_is_held(serial) else {}))
 
     top = stop.frames[0] if stop.frames else {}
