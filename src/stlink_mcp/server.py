@@ -48,6 +48,7 @@ from . import gdbmi
 from . import faults as faults_mod
 from . import image as image_mod
 from . import quirks as quirks_mod
+from . import read_effects as read_effects_mod
 from . import settings
 from . import svd as svd_mod
 from . import symbols as symbols_mod
@@ -1353,6 +1354,7 @@ def read_memory(
     elf_path: str | None = None,
     register: str | None = None,
     svd: str | None = None,
+    read_effects_ok: bool = False,
     probe_serial: str | None = None,
     interface: Interface = "swd",
     ctx: Context | None = None,
@@ -1360,10 +1362,9 @@ def read_memory(
     """Read target memory without halting or resetting it, given one of: `address`
 (4-byte aligned, `length_bytes` a multiple of 4, at most 1024); `symbol`, a
 variable decoded with the types in `elf_path`; or `register`, such as "RCC.CR",
-decoded from ST's SVD file (`svd` names one when the part is ambiguous).
-Reading some registers changes state, such as a UART's data register.
-Hotplug-only: refuses rather than reset at a closed port. Cannot reach a probe
-held by a GDB server.
+decoded from ST's SVD file (`svd` names one). Refuses to read a register known
+to change state when read, such as a UART's data register, unless
+`read_effects_ok`. Refuses rather than reset at a closed port.
     """
     given = [name for name, value in (("address", address), ("symbol", symbol), ("register", register))
              if value is not None]
@@ -1373,9 +1374,9 @@ held by a GDB server.
             + (f"; this call gave {' and '.join(given)}." if given else ".")
         )
     if symbol is not None:
-        return _read_symbol(symbol, elf_path, probe_serial, interface)
+        return _read_symbol(symbol, elf_path, probe_serial, interface, read_effects_ok)
     if register is not None:
-        return _read_register(register, svd, probe_serial, interface)
+        return _read_register(register, svd, probe_serial, interface, read_effects_ok)
     try:
         start = _address(address)
     except ValueError as exc:
@@ -1392,6 +1393,11 @@ held by a GDB server.
     if start + length_bytes > 1 << 32:
         return failed(f"A {length_bytes}-byte read at 0x{start:08X} runs past the end of the address space.")
 
+    # In the peripheral and device regions a read may change what it reads, so
+    # the part is identified first and the range looked up in its SVD file.
+    in_device = read_effects_mod.in_device_region(start, length_bytes)
+    covered: dict[str, Any] = {}
+    effects: list[dict[str, Any]] = []
     probe: Probe | None = None
     try:
         toolchain = _toolchain()
@@ -1403,7 +1409,7 @@ held by a GDB server.
                 _HELD_MESSAGE, probe_serial=serial, held_serials=held_serials(), **_held_by_disclosure(serial)
             )
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
-        one_call = probe.identify_and_read(start, length_bytes)
+        one_call = None if in_device else probe.identify_and_read(start, length_bytes)
         if one_call is not None:
             info, words = one_call
         else:
@@ -1418,6 +1424,11 @@ held by a GDB server.
                     **_connection_fields(probe, info),
                     hint=explain_connect_failure(info, interface),
                 )
+            if in_device:
+                covered, effects = _registers_covered(toolchain, info, start, length_bytes, svd)
+                if effects and not read_effects_ok:
+                    return failed(_effects_refusal(effects), probe_serial=serial, read_effects=effects,
+                                  **covered, **_connection_fields(probe, info))
             words = probe.read_memory(start, length_bytes)
     except Exception as exc:  # noqa: BLE001
         return failed(str(exc), **_after_failure(probe))
@@ -1433,6 +1444,8 @@ held by a GDB server.
         **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "words": {f"0x{a:08X}": f"0x{words[a]:08X}" for a in wanted if a in words},
+        **covered,
+        **_effects_disclosure(in_device, effects),
     }
     if missing:
         return failed(
@@ -1446,6 +1459,63 @@ held by a GDB server.
         return unverified(probe.degraded_reason, **detail)
 
     return verified("words read back from the target", **detail)
+
+
+def _registers_covered(toolchain: Toolchain, info: TargetInfo, start: int, length: int,
+                       svd: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """For a read in the device region: result fields naming the registers it
+    covers, and what reading each is known to do."""
+    directory = svd_mod.svd_dir(toolchain.root)
+    try:
+        files, how = svd_mod.choose(directory, svd=svd, device_name=info.device_name,
+                                    board=info.board, cpu=info.cpu)
+        vendor = svd_mod.vendor_marks(directory)
+    except (svd_mod.SvdError, OSError) as exc:
+        return {"registers_note": (
+            f"{exc} So which registers this read covers, and whether reading them changes "
+            "anything, is not known."
+        )}, []
+    found: dict[str, tuple[svd_mod.Register, str]] = {}
+    undescribed: dict[str, int] = {}
+    unmapped: int | None = None
+    for path in files:
+        coverage = svd_mod.covering(path, start, length)
+        for register in coverage.registers:
+            found.setdefault(f"{register.peripheral}.{register.name}", (register, path.name))
+        for peripheral, count in coverage.undescribed.items():
+            undescribed[peripheral] = max(undescribed.get(peripheral, 0), count)
+        unmapped = coverage.unmapped if unmapped is None else min(unmapped, coverage.unmapped)
+    effects = [{"register": key, **read_effects_mod.describe(effect)}
+               for key, (register, file_name) in found.items()
+               for effect in svd_mod.effects(register, file_name, vendor)]
+    detail: dict[str, Any] = {"registers_read": list(found), "svd": ", ".join(f.name for f in files),
+                              "svd_source": how}
+    gaps = []
+    if undescribed:
+        gaps.append(f"{sum(undescribed.values())} of the words are in {', '.join(undescribed)} but in no "
+                    "register this tool reads from the SVD file")
+    if unmapped:
+        gaps.append(f"{unmapped} are in no peripheral the file describes")
+    if gaps:
+        detail["registers_note"] = "; ".join(gaps) + ", so what reading them does is not known."
+    return detail, effects
+
+
+def _effects_refusal(effects: list[dict[str, Any]]) -> str:
+    first = effects[0]
+    more = f" ({len(effects) - 1} more in read_effects)" if len(effects) > 1 else ""
+    return (
+        f"Not read: this covers {first['register']}, and reading it {first['effect']} "
+        f"({first['provenance']}: {first['established']}){more}. Pass read_effects_ok=true to "
+        "read it anyway, or leave it out of the range."
+    )
+
+
+def _effects_disclosure(in_device: bool, effects: list[dict[str, Any]]) -> dict[str, Any]:
+    if effects:
+        return {"read_effects": effects,
+                "read_effects_note": "Read because read_effects_ok was set: each effect listed has happened."}
+    return {"read_side_effects_note": _READ_SIDE_EFFECT_NOTE} if in_device else {}
 
 
 def _probe_for_read(
@@ -1478,7 +1548,8 @@ def _probe_for_read(
 _IMAGE_CHECK_BYTES = 64
 
 
-def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, interface: str) -> dict[str, Any]:
+def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, interface: str,
+                 read_effects_ok: bool = False) -> dict[str, Any]:
     if not elf_path:
         return failed("symbol needs elf_path: the ELF the target runs gives the variable's address and type.")
     try:
@@ -1502,7 +1573,14 @@ def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, in
         ready, refusal = _probe_for_read(probe_serial, interface)
         if refusal:
             return refusal
-        _, serial, probe, info = ready
+        toolchain, serial, probe, info = ready
+        covered: dict[str, Any] = {}
+        effects: list[dict[str, Any]] = []
+        in_device = read_effects_mod.in_device_region(start, end - start)
+        if in_device:
+            covered, effects = _registers_covered(toolchain, info, start, end - start, None)
+            if effects and not read_effects_ok:
+                return failed(_effects_refusal(effects), probe_serial=serial, read_effects=effects, **covered)
         words = probe.read_ranges(ranges)
     except ProbeError as exc:
         # Measured 2026-10-02: an STM32H7 ELF's g_state, at 0x24000130, read on an
@@ -1535,6 +1613,8 @@ def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, in
         "type": variable.type_name,
         "declared_in": variable.scope,
         "elf_path": elf_path,
+        **covered,
+        **_effects_disclosure(in_device, effects),
     }
     if data is None:
         return failed(f"The read did not return all {variable.size} bytes of {symbol}.", **detail)
@@ -1567,14 +1647,15 @@ def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, in
 
 #: Every register read says this unless the file marks the read, which is refused.
 _READ_SIDE_EFFECT_NOTE = (
-    "The SVD file marks no side effect for reading this register, which does not "
-    "mean it has none: on an STM32H7 a read of USART3's RDR returned the received "
-    "byte and cleared RXNE, so the firmware never saw it, and the H743 file does "
-    "not mark it."
+    "No effect of reading this is known, which does not mean it has none. ST's SVD "
+    "files mark few such registers, the H743's and the F407's none, and this tool's "
+    "own list covers the UART, SPI, I2C and ADC data registers and the RTC's time "
+    "registers, by peripheral block."
 )
 
 
-def _read_register(register: str, svd: str | None, probe_serial: str | None, interface: str) -> dict[str, Any]:
+def _read_register(register: str, svd: str | None, probe_serial: str | None, interface: str,
+                   read_effects_ok: bool = False) -> dict[str, Any]:
     probe: Probe | None = None
     try:
         ready, refusal = _probe_for_read(probe_serial, interface)
@@ -1587,9 +1668,13 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
                 svd_mod.svd_dir(toolchain.root), register, svd=svd,
                 device_name=info.device_name, board=info.board, cpu=info.cpu,
             )
-            svd_mod.refuse_marked_read(found, file_name)
+            vendor = svd_mod.vendor_marks(svd_mod.svd_dir(toolchain.root))
         except svd_mod.SvdError as exc:
             return failed(str(exc), **connection)
+        effects = [{"register": f"{found.peripheral}.{found.name}", **read_effects_mod.describe(e)}
+                   for e in svd_mod.effects(found, file_name, vendor)]
+        if effects and not read_effects_ok:
+            return failed(_effects_refusal(effects), read_effects=effects, **connection)
         aligned = found.address & ~3
         words = probe.read_memory(aligned, 4)
     except Exception as exc:  # noqa: BLE001
@@ -1610,7 +1695,7 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
     detail.update({
         "value": f"0x{value:0{max(1, found.size_bits // 4)}X}",
         "fields": svd_mod.decode(found, value),
-        "read_side_effects_note": _READ_SIDE_EFFECT_NOTE,
+        **_effects_disclosure(True, effects),
     })
     if probe.degraded_reason:
         return unverified(probe.degraded_reason, **detail)
@@ -1819,8 +1904,17 @@ keeps running. release_probe resumes the core.
                 f"Refused: {mismatch}, so a breakpoint would land in another program's code. "
                 "Load this ELF, or give the one the target runs.", probe_serial=serial,
             )
+        with _STATE:
+            held_info = (_held.get(serial) or (None, None, None))[1]
+
+        def read_effects(address: int, size: int) -> list[dict[str, Any]]:
+            if held_info is None:
+                return []
+            return _registers_covered(toolchain, held_info, address, size, None)[1]
+
         try:
-            stop = debugger_mod.run_until(session, server, location=location, watch=watch, seconds=seconds)
+            stop = debugger_mod.run_until(session, server, location=location, watch=watch, seconds=seconds,
+                                          read_effects=read_effects)
         except debugger_mod.DebugError as exc:
             session.close(detach=not was_halted)
             session = None
@@ -2018,7 +2112,9 @@ def load_board_config() -> tuple[int, Path | None]:
     if path is None:
         return 0, None
     boards = quirks_mod.load_user_boards(path)
+    effects = read_effects_mod.load_user_effects(path)
     quirks_mod.set_user_boards(boards)
+    read_effects_mod.set_user_effects(effects)
     return len(boards), path
 
 

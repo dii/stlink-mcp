@@ -121,13 +121,42 @@ class TestDecoding:
 
 
 class TestReadsThatChangeState:
-    def test_a_read_the_file_marks_is_refused(self, svd_dir) -> None:
-        register = svd.find(svd_dir / "STM32N657.svd", "ETH.MACISR")
-        with pytest.raises(svd.SvdError, match="marks reading ETH.ETH_MACISR as changing state"):
-            svd.refuse_marked_read(register, "STM32N657.svd")
+    """What a read is known to do, from read_effects.py's list and ST's own
+    readAction, on the files of the three boards measured."""
 
-    def test_an_unmarked_read_is_not_refused(self, svd_dir) -> None:
+    def test_the_files_own_mark_is_used(self, svd_dir) -> None:
+        register = svd.find(svd_dir / "STM32N657.svd", "ETH.MACISR")
+        assert svd.own_mark(register)
+        [effect] = svd.effects(register, "STM32N657.svd", {})
+        assert effect.provenance == "vendor-db" and "STM32N657.svd" in effect.established
+
+    def test_an_unmarked_register_is_caught_by_its_block(self, svd_dir) -> None:
         """USART3's RDR on the H743 changes state when read (measured), and the
-        file does not mark it; the read goes ahead and its result says so."""
+        file does not mark it."""
         register = svd.find(svd_dir / "STM32H743.svd", "USART3.RDR")
-        svd.refuse_marked_read(register, "STM32H743.svd")
+        assert register.group == "USART" and svd.own_mark(register) is None
+        [effect] = svd.effects(register, "STM32H743.svd", {})
+        assert effect.provenance == "measured" and "RXNE" in effect.effect
+
+    def test_the_same_names_are_matched_in_every_familys_file(self, svd_dir) -> None:
+        """The N657 file prefixes names with the peripheral's type, USART_RDR."""
+        for file_name, query in (("STM32N657.svd", "USART1.RDR"), ("STM32F407.svd", "UART5.DR"),
+                                 ("STM32F407.svd", "SPI1.DR"), ("STM32F407.svd", "ADC1.DR"),
+                                 ("STM32H743.svd", "ADC3.DR"), ("STM32H743.svd", "RTC.SSR")):
+            register = svd.find(svd_dir / file_name, query)
+            assert [e.provenance for e in svd.effects(register, file_name, {})] == ["measured"], query
+
+    def test_a_register_with_nothing_known_has_no_effect(self, svd_dir) -> None:
+        assert svd.effects(svd.find(svd_dir / "STM32H743.svd", "RCC.CR"), "STM32H743.svd", {}) == []
+
+    def test_another_files_mark_reaches_the_same_block(self, svd_dir) -> None:
+        """The H743 file does not mark FDCAN_ECR; STM32G0B1's marks the same
+        block's register (2026-10-03)."""
+        register = svd.find(svd_dir / "STM32H743.svd", "FDCAN1.FDCAN_ECR")
+        [effect] = svd.effects(register, "STM32H743.svd", svd.vendor_marks(svd_dir))
+        assert effect.provenance == "vendor-db" and "another part's file" in effect.established
+
+    def test_a_range_names_the_registers_it_covers(self, svd_dir) -> None:
+        coverage = svd.covering(svd_dir / "STM32H743.svd", 0x40004800, 0x30)
+        names = [f"{r.peripheral}.{r.name}" for r in coverage.registers]
+        assert "USART3.ISR" in names and "USART3.RDR" in names and coverage.unmapped == 0

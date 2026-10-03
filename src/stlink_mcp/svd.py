@@ -3,7 +3,7 @@ install.
 
 The files are read at run time from the install, the same rule as the device
 database: ST's SVD files are Apache-2.0, but nothing parsed from them is kept
-in this repository. STM32CubeCLT 1.22.0 has 235 of them.
+in this repository. STM32CubeCLT 1.22.0 has 233 of them.
 
 Which file describes the part is not something the target says. The device
 database names no SVD file, and one device ID covers several parts: 0x413 is
@@ -23,12 +23,16 @@ from __future__ import annotations
 
 import difflib
 import functools
+import hashlib
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from . import read_effects as read_effects_mod
 
 
 class SvdError(ValueError):
@@ -53,6 +57,8 @@ class Register:
     description: str
     fields: tuple[Field, ...]
     read_action: str | None = None
+    group: str | None = None
+    """The SVD file's groupName for the peripheral: the block it is an instance of."""
 
     def layout(self) -> tuple[Any, ...]:
         """What must match for two files to describe the same register."""
@@ -117,6 +123,7 @@ class _Device:
         elements = {p.findtext("name"): p for p in root.iter("peripheral")}
         self.peripherals: dict[str, dict[str, Register]] = {}
         self.unread: set[str] = set()
+        self.blocks: list[tuple[int, int, str]] = []
         for name, element in elements.items():
             if not name:
                 continue
@@ -125,6 +132,11 @@ class _Device:
                 source = elements[element.get("derivedFrom")]
             base = _int(element.findtext("baseAddress"), 0)
             size = _int(source.findtext("size"), default_size)
+            group = _text(element, "groupName") or _text(source, "groupName")
+            for span in element.findall("addressBlock") or source.findall("addressBlock"):
+                offset, length = _int(span.findtext("offset"), 0), _int(span.findtext("size"), 0)
+                if length:
+                    self.blocks.append((base + offset, base + offset + length, name))
             registers: dict[str, Register] = {}
             block = source.find("registers")
             if block is not None:
@@ -139,9 +151,11 @@ class _Device:
                     registers[reg_name.upper()] = Register(
                         name, reg_name, base + _int(reg.findtext("addressOffset"), 0),
                         _int(reg.findtext("size"), size), _text(reg, "description") or "",
-                        fields, _text(reg, "readAction"),
+                        fields, _text(reg, "readAction"), group,
                     )
             self.peripherals[name.upper()] = registers
+        self.ordered = sorted((r for regs in self.peripherals.values() for r in regs.values()),
+                              key=lambda r: r.address)
 
 
 @functools.lru_cache(maxsize=8)
@@ -236,9 +250,10 @@ def candidates(directory: Path, *, device_name: str | None, board: str | None,
     return [], ""
 
 
-def resolve(directory: Path, query: str, *, svd: str | None, device_name: str | None,
-            board: str | None, cpu: str | None) -> tuple[Register, str, str]:
-    """(register, the file it came from, how that file was chosen)."""
+def choose(directory: Path, *, svd: str | None, device_name: str | None, board: str | None,
+           cpu: str | None) -> tuple[list[Path], str]:
+    """The files that describe the part, and how they were chosen: the one the
+    caller named, or the candidates from what the probe reports."""
     if svd:
         path = Path(svd)
         if not path.is_file():
@@ -246,8 +261,7 @@ def resolve(directory: Path, query: str, *, svd: str | None, device_name: str | 
         if not path.is_file():
             near = difflib.get_close_matches(Path(svd).stem.upper(), [f.stem.upper() for f in directory.glob("*.svd")], n=5)
             raise SvdError(f"No SVD file {svd} in {directory}." + (f" Close names: {', '.join(near)}." if near else ""))
-        return find(path, query), path.name, "named by the caller"
-
+        return [path], "named by the caller"
     files, how = candidates(directory, device_name=device_name, board=board, cpu=cpu)
     if not files:
         raise SvdError(
@@ -255,6 +269,15 @@ def resolve(directory: Path, query: str, *, svd: str | None, device_name: str | 
             f"(device {device_name or 'unknown'}, board {board or 'none'}). Name one with "
             f"svd, from {directory}."
         )
+    return files, how
+
+
+def resolve(directory: Path, query: str, *, svd: str | None, device_name: str | None,
+            board: str | None, cpu: str | None) -> tuple[Register, str, str]:
+    """(register, the file it came from, how that file was chosen)."""
+    files, how = choose(directory, svd=svd, device_name=device_name, board=board, cpu=cpu)
+    if how == "named by the caller":
+        return find(files[0], query), files[0].name, how
     found: dict[Path, Register] = {}
     errors: list[str] = []
     for path in files:
@@ -276,15 +299,110 @@ def resolve(directory: Path, query: str, *, svd: str | None, device_name: str | 
     return register, path.name, f"all {len(files)} files that could be this part agree on it ({names}), chosen from {how}"
 
 
-def refuse_marked_read(register: Register, file_name: str) -> None:
-    marked = [f"{f.name} ({f.read_action})" for f in register.fields if f.read_action]
+def own_mark(register: Register) -> str | None:
+    """What the file's readAction says of the register or its fields, or None."""
+    marked = [f"{f.name}: {f.read_action}" for f in register.fields if f.read_action]
     if register.read_action:
-        marked.insert(0, f"the whole register ({register.read_action})")
-    if marked:
-        raise SvdError(
-            f"{file_name} marks reading {register.peripheral}.{register.name} as changing "
-            f"state: {', '.join(marked)}. It is not read by name; read the address if you mean to."
-        )
+        marked.insert(0, f"the whole register: {register.read_action}")
+    return ", ".join(marked) or None
+
+
+def effects(register: Register, file_name: str,
+            vendor: dict[tuple[str, str], tuple[str, str]]) -> list[read_effects_mod.ReadEffect]:
+    return read_effects_mod.effects_of(
+        peripheral=register.peripheral, name=register.name, group=register.group,
+        own_mark=own_mark(register), file_name=file_name, vendor=vendor,
+    )
+
+
+@dataclass
+class Coverage:
+    registers: list[Register]
+    undescribed: dict[str, int]
+    """Words in a peripheral's address block that no register read from the file
+    covers (arrays and clusters, or gaps), by peripheral."""
+    unmapped: int
+    """Words in no peripheral's address block."""
+
+
+def covering(path: Path, start: int, length: int) -> Coverage:
+    """The registers a read of `length` bytes at `start` touches, in one file."""
+    device = _load(path)
+    end = start + length
+    registers = [r for r in device.ordered if r.address < end and r.address + max(1, r.size_bits // 8) > start]
+    undescribed: dict[str, int] = {}
+    unmapped = 0
+    for word in range(start, end, 4):
+        if any(r.address < word + 4 and r.address + max(1, r.size_bits // 8) > word for r in registers):
+            continue
+        owner = next((name for low, high, name in device.blocks if low <= word < high), None)
+        if owner is None:
+            unmapped += 1
+        else:
+            undescribed[owner] = undescribed.get(owner, 0) + 1
+    return Coverage(registers, undescribed, unmapped)
+
+
+def _cache_dir() -> Path | None:
+    root = os.environ.get("XDG_CACHE_HOME") or os.environ.get("LOCALAPPDATA")
+    try:
+        return Path(root) / "stlink-mcp" if root else Path.home() / ".cache" / "stlink-mcp"
+    except RuntimeError:
+        return None
+
+
+@functools.lru_cache(maxsize=2)
+def _vendor_marks(directory: str, signature: str) -> dict[tuple[str, str], tuple[str, str]]:
+    cache = _cache_dir()
+    stored = cache / f"svd-read-actions-{signature[:16]}.json" if cache else None
+    if stored is not None and stored.is_file():
+        try:
+            return {tuple(k.split("|", 1)): tuple(v) for k, v in json.loads(stored.read_text()).items()}
+        except (OSError, ValueError):
+            pass
+    marks: dict[tuple[str, str], tuple[str, str]] = {}
+    for path in sorted(Path(directory).glob("*.svd")):
+        try:
+            if b"<readAction>" not in path.read_bytes():
+                continue
+            root = ET.parse(path).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        elements = {p.findtext("name"): p for p in root.iter("peripheral")}
+        for name, element in elements.items():
+            source = elements.get(element.get("derivedFrom"), element) if element.find("registers") is None else element
+            group = _text(element, "groupName") or _text(source, "groupName")
+            for reg in source.iter("register"):
+                marked = [f"{_text(f, 'name')}: {_text(f, 'readAction')}" for f in reg.iter("field")
+                          if f.find("readAction") is not None]
+                if reg.find("readAction") is not None:
+                    marked.insert(0, f"the whole register: {_text(reg, 'readAction')}")
+                reg_name = reg.findtext("name")
+                if marked and name and reg_name:
+                    key = (group or "", read_effects_mod.base_name(reg_name, name, group))
+                    marks.setdefault(key, (path.name, ", ".join(marked)))
+    if stored is not None:
+        try:
+            stored.parent.mkdir(parents=True, exist_ok=True)
+            stored.write_text(json.dumps({f"{g}|{n}": list(v) for (g, n), v in marks.items()}))
+        except OSError:
+            pass
+    return marks
+
+
+def vendor_marks(directory: Path) -> dict[tuple[str, str], tuple[str, str]]:
+    """Every register any SVD file in the install marks with readAction, by its
+    block and its name without the peripheral's prefix: (file, what it says).
+
+    14 of the 233 files in STM32CubeCLT 1.22.0 mark anything, and parsing them
+    takes about five seconds, so the result is kept in the user's cache
+    directory, keyed by the files' names, sizes and times. Read from the user's
+    own install, like everything else here, and never kept in this repository."""
+    files = sorted(Path(directory).glob("*.svd"))
+    signature = hashlib.sha256(
+        "\n".join(f"{f.name} {f.stat().st_size} {f.stat().st_mtime_ns}" for f in files).encode()
+    ).hexdigest()
+    return _vendor_marks(str(directory), signature)
 
 
 def decode(register: Register, value: int) -> dict[str, Any]:

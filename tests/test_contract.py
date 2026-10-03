@@ -18,6 +18,8 @@ surface, and they must hold on a machine with no STM32 attached at all.
 
 from __future__ import annotations
 
+import re
+
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
@@ -938,7 +940,7 @@ class TestReadingByName:
         assert out["status"] == result.VERIFIED, out
         assert out["value"] == "0x00000083" and out["fields"]["HSION"] == 1
         assert out["svd"] == "STM32H743.svd" and "NUCLEO-H743ZI" in out["svd_source"]
-        assert "USART3" in out["read_side_effects_note"]
+        assert "No effect of reading this is known" in out["read_side_effects_note"]
 
     def test_a_read_the_file_marks_is_refused(self, bench, monkeypatch) -> None:
         self._svd(monkeypatch)
@@ -946,7 +948,98 @@ class TestReadingByName:
         monkeypatch.setattr(_FakeProbe, "board", "NUCLEO-N657X0-Q")
         out = call("read_memory", address=None, register="ETH.MACISR")
         assert_contract(out)
-        assert out["status"] == result.FAILED and "changing state" in out["error"]
+        assert out["status"] == result.FAILED and "as ST's SVD file marks it" in out["error"]
+        assert out["read_effects"][0]["provenance"] == "vendor-db"
+
+
+class TestReadsThatChangeStateAreRefused:
+    """A read the list in read_effects.py, ST's readAction or the user's board
+    file says changes state is refused unless read_effects_ok; what each listed
+    read does was measured on an STM32H743 and an STM32F407 on 2026-10-03. These
+    use the installed SVD files, and skip without them."""
+
+    H7 = {"device_id": 0x450, "cpu": "Cortex-M7", "device_name": "STM32H7xx", "board": "NUCLEO-H743ZI"}
+
+    def _h7(self, monkeypatch, vendor: dict | None = None) -> list:
+        TestReadingByName._svd(self, monkeypatch)
+        for name, value in self.H7.items():
+            monkeypatch.setattr(_FakeProbe, name, value)
+        if vendor is not None:
+            monkeypatch.setattr(server.svd_mod, "vendor_marks", lambda directory: vendor)
+        reads: list = []
+        real = _FakeProbe.read_memory
+
+        def recording(probe, address, length_bytes):
+            reads.append((address, length_bytes))
+            return real(probe, address, length_bytes)
+
+        monkeypatch.setattr(_FakeProbe, "read_memory", recording)
+        return reads
+
+    def test_a_uart_receive_register_in_a_range_is_not_read(self, bench, monkeypatch) -> None:
+        reads = self._h7(monkeypatch, vendor={})
+        out = call("read_memory", address="0x40004800", length_bytes=0x30)
+        assert_contract(out)
+        assert out["status"] == result.FAILED and reads == [], "refused before anything was read"
+        assert "USART3.RDR" in out["error"] and "read_effects_ok" in out["error"]
+        assert out["read_effects"][0]["provenance"] == "measured" and "USART3.ISR" in out["registers_read"]
+
+    def test_with_read_effects_ok_it_is_read_and_says_what_happened(self, bench, monkeypatch) -> None:
+        reads = self._h7(monkeypatch, vendor={})
+        out = call("read_memory", address="0x40004824", length_bytes=4, read_effects_ok=True)
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and reads == [(0x40004824, 4)]
+        assert out["read_effects"][0]["register"] == "USART3.RDR" and "has happened" in out["read_effects_note"]
+
+    def test_a_peripheral_register_with_nothing_known_is_read_and_named(self, bench, monkeypatch) -> None:
+        self._h7(monkeypatch, vendor={})
+        out = call("read_memory", address="0x58024400", length_bytes=4)
+        assert out["status"] == result.VERIFIED and out["registers_read"] == ["RCC.CR"]
+        assert "does not mean it has none" in out["read_side_effects_note"]
+
+    def test_ram_is_read_without_looking_anything_up(self, bench, monkeypatch) -> None:
+        self._h7(monkeypatch, vendor={})
+        monkeypatch.setattr(server.svd_mod, "choose", lambda *a, **kw: pytest.fail("looked up an SVD file"))
+        out = call("read_memory", address="0x24000000", length_bytes=8)
+        assert out["status"] == result.VERIFIED
+        assert not {"registers_read", "read_side_effects_note", "read_effects"} & set(out)
+
+    @pytest.mark.parametrize("register, refused", [("ADC3.DR", True), ("ADC3.ISR", False), ("RTC.SSR", True)])
+    def test_by_name_as_by_address(self, bench, monkeypatch, register, refused) -> None:
+        reads = self._h7(monkeypatch, vendor={})
+        out = call("read_memory", address=None, register=register)
+        assert_contract(out)
+        assert (out["status"] == result.FAILED) is refused and bool(reads) is not refused
+
+    def test_without_an_svd_file_for_the_part_it_says_it_cannot_tell(self, bench, monkeypatch) -> None:
+        self._h7(monkeypatch, vendor={})
+        monkeypatch.setattr(_FakeProbe, "device_name", "STM32Q9xx")
+        monkeypatch.setattr(_FakeProbe, "board", None)
+        out = call("read_memory", address="0x40004824", length_bytes=4)
+        assert out["status"] == result.VERIFIED and "is not known" in out["registers_note"]
+
+    def test_a_board_file_entry_is_user_stated(self, bench, monkeypatch, tmp_path) -> None:
+        from stlink_mcp import read_effects
+        self._h7(monkeypatch, vendor={})
+        board_file = tmp_path / "boards.toml"
+        board_file.write_text('[[read_effects]]\nblock = "GPIO"\nregisters = ["IDR"]\n'
+                              'effect = "starts a conversion on the board this was written for"\n')
+        monkeypatch.setattr(read_effects, "_user", read_effects.load_user_effects(board_file))
+        out = call("read_memory", address=None, register="GPIOA.IDR")
+        assert out["status"] == result.FAILED and out["read_effects"][0]["provenance"] == "user-stated"
+
+    @pytest.mark.parametrize("text, says", [
+        ('[[read_effects]]\nblock = "GPIO"\nregisters = ["IDR"]\neffect = "x"\nprovenance = "measured"\n',
+         "cannot carry a provenance"),
+        ('[[read_effects]]\nblock = "GPIO("\nregisters = ["IDR"]\neffect = "x"\n', "not a regular expression"),
+        ('read_effects = "GPIO"\n', "[[read_effects]] tables"),
+    ])
+    def test_a_bad_board_file_entry_is_refused_whole(self, tmp_path, text, says) -> None:
+        from stlink_mcp import quirks, read_effects
+        board_file = tmp_path / "boards.toml"
+        board_file.write_text(text)
+        with pytest.raises(quirks.BoardConfigError, match=re.escape(says)):
+            read_effects.load_user_effects(board_file)
 
 
 class TestRunUntilClaimsOnlyWhatTheChipSaid:

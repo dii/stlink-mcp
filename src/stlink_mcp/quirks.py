@@ -602,6 +602,8 @@ def load_user_boards(path: Path) -> dict[int, FamilyQuirks]:
 
     boards: dict[int, FamilyQuirks] = {}
     for key, table in raw.items():
+        if key == "read_effects":  # read_effects.load_user_effects reads these
+            continue
         if not isinstance(table, dict):
             raise BoardConfigError(
                 f"{path}: top-level '{key}' must be a table naming a device ID, "

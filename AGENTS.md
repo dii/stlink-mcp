@@ -69,6 +69,8 @@ Unmeasured values are allowed in the table, but they arrive from elsewhere and t
 
 Every entry carries `notes`, and that field is the point rather than decoration: it is what stops the next person rediscovering the quirk the hard way.
 
+Registers whose read changes state live in the same spirit in `src/stlink_mcp/read_effects.py`, keyed by peripheral block and register name rather than by part, with the same labels: an entry is `measured` only with the part and the date it was measured on, and `assumed` says what is missing. `tests/test_read_effects.py` enforces both.
+
 ## Tests
 
 `uv run pytest`. Parser samples are real captured tool output, never invented, because an invented sample tests the parser against your belief about the format, which is the thing most likely to be wrong. Hardware-dependent paths are not unit tested; they are exercised by hand against a board and the result recorded in the commit message.

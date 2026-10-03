@@ -596,3 +596,85 @@
 > -gdb-exit
 (gdb) 
 ^exit
+## h7-watch-tdr: a watch on USART3's TDR, 0x40004828, with h7_ram printing
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_ram.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x24000130 in delay (n=3000000) at beacon.c:102\n"
+&"warning: 102\tbeacon.c: No such file or directory\n"
+*stopped,frame={addr="0x24000130",func="delay",args=[{name="n",value="3000000"}],file="beacon.c",fullname="images/beacon.c",line="102",arch="armv3m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824610000246101002461010024610100246101002461010024610100240000000000000000000000006101002461010024000000006101002461010024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof(*(unsigned int *)0x40004828)"
+(gdb) 
+^done,value="4"
+> -data-evaluate-expression "&(*(unsigned int *)0x40004828)"
+(gdb) 
+^done,value="0x40004828"
+> -break-watch "*(unsigned int *)0x40004828"
+(gdb) 
+^done,wpt={number="1",exp="*(unsigned int *)0x40004828"}
+> -break-list
+(gdb) 
+^done,BreakpointTable={nr_rows="1",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="10",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="hw watchpoint",disp="keep",enabled="y",what="*(unsigned int *)0x40004828",thread-groups=["i1"],times="0",original-location="*(unsigned int *)0x40004828"}]}
+> -exec-continue
+(gdb) 
+^running
+*running,thread-id="all"
+(gdb) 
+~"\nProgram"
+~" received signal SIGTRAP, Trace/breakpoint trap.\n"
+~"0x2400005a in puts_ (s=<optimized out>) at beacon.c:99\n"
+~"99\tin beacon.c\n"
+*stopped,reason="signal-received",signal-name="SIGTRAP",signal-meaning="Trace/breakpoint trap",frame={addr="0x2400005a",func="puts_",args=[{name="s",value="<optimized out>"}],file="beacon.c",fullname="images/beacon.c",line="99",arch="armv3m"},thread-id="1",stopped-threads="all",core="0"
+> -stack-list-frames 0 8
+^done,stack=[frame={level="0",addr="0x2400005a",func="puts_",file="beacon.c",fullname="images/beacon.c",line="99",arch="armv3m"}]
+> -stack-list-variables --thread 1 --frame 0 --all-values
+(gdb) 
+^done,variables=[{name="s",arg="1",value="<optimized out>"}]
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x24000165"},{number="1",value="0x74"},{number="2",value="0x40004000"},{number="3",value="0x6000d0"},{number="4",value="0x4"},{number="5",value="0x24000164"},{number="6",value="0x24070000"},{number="7",value="0xc0ffee00"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x2407ffe5"},{number="13",value="0x2407ffd8"},{number="14",value="0x240000e5"},{number="15",value="0x2400005a"},{number="25",value="0x1000000"}]
+> -data-disassemble -s 0x240000E0 -e 0x240000E4 -- 0
+(gdb) 
+^done,asm_insns=[{address="0x240000e0",func-name="reset_handler",offset="128",inst="bl\t0x24000040 <puts_>"}]
+> -break-delete
+(gdb) 
+^done
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x24000165"},{number="1",value="0x74"},{number="2",value="0x40004000"},{number="3",value="0x6000d0"},{number="4",value="0x4"},{number="5",value="0x24000164"},{number="6",value="0x24070000"},{number="7",value="0xc0ffee00"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x2407ffe5"},{number="13",value="0x2407ffd8"},{number="14",value="0x240000e5"},{number="15",value="0x2400005a"},{number="25",value="0x1000000"}]
+> -target-disconnect
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+^done
+> -gdb-exit
+(gdb) 
+^exit

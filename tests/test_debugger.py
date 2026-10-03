@@ -300,3 +300,30 @@ class TestAWatchpointNamesNoWriterItCannotKnow:
         assert stop.detail["returned_from"] == "reached_tick_five"
         from stlink_mcp import server
         assert "stopped_at" in server._WRITE_NOTE and "Nothing here tells which" in server._WRITE_NOTE
+
+
+class TestAWatchedPeripheralRegisterIsNotReadByThisTool:
+    """GDB read 0x40004828 three times when it set the watchpoint there, on the
+    H7 on 2026-10-03, before the watchpoint itself, so a register whose read
+    changes state is refused before GDB is asked; any other peripheral register
+    is watched, and this tool reads its value no further."""
+
+    TDR = "0x40004828"
+
+    def test_a_register_known_to_change_when_read_is_refused_before_gdb_sees_it(self, monkeypatch) -> None:
+        session, gdb = _replay(monkeypatch, "h7-watch-tdr")
+        effect = {"register": "USART3.TDR", "effect": "clears a flag", "provenance": "measured",
+                  "established": "a test"}
+        with pytest.raises(debugger.DebugError, match="GDB reads a watched address when it sets the watchpoint"):
+            debugger.run_until(session, _LoggedServer(), location=None, watch=self.TDR, seconds=5,
+                               read_effects=lambda address, size: [effect])
+        assert not [c for c in gdb.sent if c.startswith("-break-watch")]
+
+    def test_any_other_is_watched_and_its_value_left_alone(self, monkeypatch) -> None:
+        session, gdb = _replay(monkeypatch, "h7-watch-tdr")
+        stop = debugger.run_until(session, _LoggedServer(), location=None, watch=self.TDR, seconds=5,
+                                  read_effects=lambda address, size: [])
+        assert stop.reached and "value_before" not in stop.detail["watched"]
+        assert "GDB read it when it set the watchpoint" in stop.detail["watched"]["value_note"]
+        assert not [c for c in gdb.sent if c.startswith("-data-evaluate-expression") and "sizeof" not in c and "&(" not in c]
+

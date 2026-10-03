@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .gdbmi import MiError, Session
+from .read_effects import in_device_region
 
 FP_CTRL, DWT_CTRL = 0xE0002000, 0xE0001000
 DFSR_HALTED, DFSR_BKPT, DFSR_DWTTRAP, DFSR_VCATCH, DFSR_EXTERNAL = 0x1, 0x2, 0x4, 0x8, 0x10
@@ -216,13 +217,15 @@ class Stop:
 
 
 def run_until(session: Session, server: Any, *, location: str | None, watch: str | None,
-              seconds: float) -> Stop:
+              seconds: float, read_effects: Any = None) -> Stop:
     """Insert one breakpoint or watchpoint, continue, and wait at most `seconds`.
 
     Leaves the core halted, at the stop or where it was interrupted, with the
     breakpoint or watchpoint removed. Refuses, before continuing, anything the
     part cannot do: a hardware breakpoint its unit does not cover, a watch the
-    server would narrow to one byte or that is not aligned to its size, or a
+    server would narrow to one byte or that is not aligned to its size, a watch
+    on a register `read_effects(address, size)` says changes state when read,
+    since GDB reads a watched address when it sets the watchpoint, or a
     watchpoint GDB could only do in software, by single-stepping."""
     units = comparators(session)
     detail: dict[str, Any] = {}
@@ -273,6 +276,15 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                     "accepted such a watch and it never stopped the core, though one of its bytes was "
                     "written. Watch an aligned 1, 2 or 4 bytes that hold it."
                 )
+            peripheral = target_address is None or in_device_region(target_address, size or 4)
+            known = read_effects(target_address, size or 4) if read_effects and target_address is not None else []
+            if peripheral and known:
+                first = known[0]
+                raise DebugError(
+                    f"{watch} is {first['register']}, and reading it {first['effect']} ({first['provenance']}: "
+                    f"{first['established']}). GDB reads a watched address when it sets the watchpoint, "
+                    "three times on an STM32H743 (2026-10-03), so it is not watched."
+                )
             try:
                 session.command(f"-break-watch {_quote(expression)}")
             except MiError as exc:
@@ -284,9 +296,18 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                     f"{watch} would be a software watchpoint, which GDB does by single-stepping "
                     "the program; refused. A hardware watchpoint covers an aligned 1, 2 or 4 bytes."
                 )
+            # A peripheral register may change when read, so this tool reads its
+            # value no further than GDB itself did in setting the watchpoint.
             detail["watched"] = {"expression": watch,
-                                 "address": f"0x{target_address:08X}" if target_address is not None else None,
-                                 "value_before": evaluate(session, expression)}
+                                 "address": f"0x{target_address:08X}" if target_address is not None else None}
+            if peripheral:
+                detail["watched"]["value_note"] = (
+                    "Not read before or after the stop: the address is a peripheral's, or not known. "
+                    "GDB read it when it set the watchpoint, as it does any watched address; no "
+                    "effect of reading it is known, which does not mean it has none."
+                )
+            else:
+                detail["watched"]["value_before"] = evaluate(session, expression)
             if units is not None and units.watchpoints == 0:
                 raise DebugError("This part reports no watchpoint comparators.")
 
@@ -310,7 +331,8 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
         result = Stop(reached, elapsed, pc, stop.results.get("reason") or stop.results.get("signal-name"),
                       server.halt_reasons_since(offset), listed, cut, detail)
         if watch is not None:
-            detail["watched"]["value_now"] = evaluate(session, expression)
+            if "value_before" in detail["watched"]:
+                detail["watched"]["value_now"] = evaluate(session, expression)
             lr = registers(session).get("LR")
             if lr is not None:
                 detail["lr"] = f"0x{lr:08X}"

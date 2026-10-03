@@ -347,3 +347,25 @@ Through the ST-LINK/V2 on the H7's JTAG connector, with `h7_vars` loaded over JT
 
 The texts an agent reads said that a release was needed before `core_registers` could reach a probe after a run. Checked on the H7 and the N6, each with `run_firmware`'s server holding its probe: `core_registers` read the registers through that server on both; `board_state` answered from its cache, `unverified`; `capture_console` read the H7's console; and `read_memory`, `read_fault_status`, `locate_fault`, `reset_target`, `flash_firmware` and `capture_swo` refused, `flash_firmware` before it touched the probe. `run_firmware`'s silent-run result told the agent to release the probe and then call `core_registers`, which on an STM32N6 running ST's start-up code can close the debug port until a power cycle; it no longer does. Listing the probes took 11.4 seconds while the H7's server was held and 1.4 seconds while none was.
 
+## Reads that change state (2026-10-03)
+
+ST's SVD files have a field for a register whose read changes it, readAction. Of the 233 files in STM32CubeCLT 1.22.0, 14 use it: all four STM32N6 files, six H7, two H5 and two G0. They mark 45 registers, all Ethernet, DFSDM or the FDCAN error counter, and not one UART, SPI, I2C or ADC data register; a block's register is marked in some files and not others, the FDCAN error counter in 2 of the 79 files that have it. The CMSIS headers say only read-only or read-write. Keyed by peripheral block, as the SVD file's groupName names it, and by the register's name without the peripheral's prefix, eight entries match registers in 227 of the 233 files, counted with the tool's own matcher.
+
+Measured with a program written for it, `read_effects.c`, which leaves each peripheral holding data and never reads it again. Each register was read by address through `read_memory`: the flag, the flag again, the data register, the flag. In every case the second read of the flag left it as it was, and the read of the data register cleared it.
+
+- H7, USART3 with `h7_ram`, a byte sent from the host through the probe's virtual COM port: ISR 0x006000F0, RDR 0x5A, then ISR 0x006000D0, RXNE clear and IDLE still set.
+- F407, UART5 receiving on PD2, a byte sent through the USB serial adapter, which showed that adapter's transmit line is wired to that pin: SR 0x000001F2, DR 0x00, then SR 0x000001C0, with RXNE, IDLE and the framing error cleared by the status read followed by the data read.
+- F407, SPI1 as master, one frame: SR 0x00000003, DR 0x00, then SR 0x00000002.
+- F407, ADC1 converting the internal reference: SR 0x00000012, DR 0x5D4, then SR 0x00000010. H7, ADC3: ISR 0x0000100F, DR 0x18B7, then ISR 0x0000100B.
+- H7, RTC from the LSI: after a read of SSR, TR read 0x614 three and five seconds later; after a read of DR it read 0x619, and went on counting. A read of TR alone did not hold TR. The hold lasts across debugger connections: a 48-byte read across the RTC's registers earlier in the session, which ends at SSR, had held TR at 0x558 for over a minute, and nothing reported it.
+
+Not measured, and entered as `assumed`: I2C, which needs a second device on the bus to receive anything; the newer SPI block's RXDR, since the H7's SPI4 as master never completed a frame (a mode fault while its CR1 was written after CFG2, then a transfer that stayed loaded with nothing sent, from both its bus clock and the HSI); and TR holding DR, which shows only across midnight. ST's reference manuals did not download from the bench machine, so none of these rests on one.
+
+What went wrong on the way. The first pass read the registers while the program was still setting them up, and its results were about the program's timing. Half-duplex mode, tried as a way to receive without wiring, receives on the pin, which the program does not configure, so nothing arrived. The first RTC test read SSR at the newer block's offset, 0x08; the H743's RTC is the older block, with SSR at 0x28. And RCC_APB4ENR read with RTCAPBEN clear while the RTC's registers read normally, which is not explained.
+
+GDB reads a watched address when it sets the watchpoint: on the H7, a watch on USART3's TDR showed three reads of 0x40004828 in the server's log before the watchpoint went in. So `run_until` refuses to watch a register whose read changes state, and reads no peripheral register's value itself.
+
+The program leaves the H7's RTC running from the LSI until power is removed: RCC_BDCR reads 0x8200.
+
+`tools/hwcheck` checks the refusal and the read on both boards' ADCs, and the watch on the H7's: 79 of 79 with `--f4`, `--f4-console` and `--jtag`.
+

@@ -91,6 +91,10 @@ VARIANTS: list[Image] = [
           notes="prints on the ST-LINK's virtual COM port, USART1, and counts"),
     Image("n6_ram", _N6 + _SOFT, "n6_ram.ld", notes="counts in AXISRAM2, prints nothing"),
     Image("n6_fault", _N6 + _SOFT + _FAULT, "n6_ram.ld", notes="udf after four ticks"),
+    Image("h7_read_effects", ["-mcpu=cortex-m7", "-DH7"] + _SOFT, "h7_ram.ld", source="read_effects.c",
+          notes="SPI4, ADC3 and the RTC left holding data, never read again"),
+    Image("f4_read_effects", ["-mcpu=cortex-m4", "-DF4"] + _SOFT, "f4_ram.ld", source="read_effects.c",
+          notes="SPI1 and ADC1 left holding data, UART5 listening on PD2, never read again"),
     Image("n6_close", _N6 + _SOFT + ["-DCLOSE_AP1"], "n6_ram.ld",
           notes="turns the SYSCFG clock off as ST's start-up code does, closing AP1 until a power cycle"),
 ]

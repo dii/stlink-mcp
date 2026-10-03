@@ -239,12 +239,51 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
 
     await check_names(server, "H7", s, images, report, "h7_vars", "f4_vars", "0x58024400", "board name")
     await check_stops(server, "H7", s, images, report, "h7_vars", "f4_vars", "h7_vars_hang")
+    await check_read_effects(server, "H7", s, images, report, "h7_read_effects", "ADC3", 0x58026000, 2, 0x58026040)
 
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
     idle = await server.call("release_probe", probe_serial=s)
     report.check(idle["status"] == "unverified", "H7: release_probe with nothing held is unverified", _why(idle))
     return True
+
+
+async def check_read_effects(server: Server, label: str, serial: str, images: Built, report: Report,
+                             image: str, adc: str, flag_at: int, flag_bit: int, data_at: int) -> None:
+    """A read that changes state is refused by name and by address, leaves the
+    flag as it was, and with read_effects_ok happens and says so. The image
+    leaves the ADC holding a conversion it never reads."""
+    s, elf = serial, str(images.elf[image])
+    await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=0.5)
+    await server.call("release_probe", probe_serial=s)
+    await anyio.sleep(1.0)
+
+    async def flag() -> int | None:
+        out = await server.call("read_memory", address=f"0x{flag_at:08X}", length_bytes=4, probe_serial=s)
+        word = _counter(out, f"0x{flag_at:08X}")
+        return None if word is None else (word >> flag_bit) & 1
+
+    by_name = await server.call("read_memory", register=f"{adc}.DR", probe_serial=s)
+    by_address = await server.call("read_memory", address=f"0x{data_at:08X}", length_bytes=4, probe_serial=s)
+    before = await flag()
+    report.check(by_name["status"] == "failed" and by_address["status"] == "failed"
+                 and "read_effects_ok" in by_name.get("error", "") and f"{adc}.DR" in by_address.get("error", "")
+                 and before == 1,
+                 f"{label}: {adc}.DR, which clears EOC when read, is refused by name and by address, and EOC is still set",
+                 f"{_why(by_name)}; {_why(by_address)}; EOC {before}")
+    taken = await server.call("read_memory", address=f"0x{data_at:08X}", length_bytes=4, probe_serial=s,
+                              read_effects_ok=True)
+    after = await flag()
+    report.check(taken["status"] == "verified" and taken.get("read_effects", [{}])[0].get("register") == f"{adc}.DR"
+                 and after == 0,
+                 f"{label}: with read_effects_ok the read happens, says what it did, and EOC is clear",
+                 f"{_why(taken)}; EOC {after}")
+    if label == "H7":
+        watch = await server.call("run_until", probe_serial=s, elf_path=elf, watch=f"0x{data_at:08X}", seconds=2)
+        report.check(watch["status"] == "failed" and "GDB reads a watched address" in watch.get("error", ""),
+                     f"{label}: run_until refuses to watch {adc}.DR, which GDB would read to set the watchpoint",
+                     _why(watch))
+        await server.call("release_probe", probe_serial=s)
 
 
 async def check_names(server: Server, label: str, serial: str, images: Built, report: Report,
@@ -405,6 +444,7 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
                  "F4: capture_swo at twice the core clock hears nothing and says the clock may be wrong", _why(double))
     await check_names(server, "F4", s, images, report, "f4_vars", "h7_vars", "0x40023800", "all 4 files")
     await check_stops(server, "F4", s, images, report, "f4_vars", "h7_vars", "f4_vars_hang")
+    await check_read_effects(server, "F4", s, images, report, "f4_read_effects", "ADC1", 0x40012000, 1, 0x4001204C)
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "F4: reset_target halts at the reset handler", _why(reset))
     return True
