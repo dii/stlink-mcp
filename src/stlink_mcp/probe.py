@@ -870,7 +870,10 @@ def _console_ports(output: str) -> dict[str, str]:
     for match in re.finditer(
         r"ST-LINK SN:[^\S\n]*(\S+).*?^Location:[^\S\n]*(\S+)", uart, re.M | re.S
     ):
-        mapping[match.group(1)] = match.group(2)
+        # On Windows the Location is the Win32 device path, \\.\COM3, beside
+        # "Port: COM3" (captured on the Windows laptop, 2026-10-02). It is reported as COM3,
+        # the name a user and pyserial's port list give it; pyserial opens both.
+        mapping[match.group(1)] = match.group(2).removeprefix("\\\\.\\")
     return mapping
 
 

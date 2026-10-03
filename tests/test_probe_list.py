@@ -334,3 +334,26 @@ class TestListingErrors:
         errors = listing_errors(_fixture("probe_list_with_unreadable_entries.txt"))
         assert errors and all(errors.count(e) == 1 for e in errors)
         assert any("DEV_USB_COMM_ERR" in e for e in errors)
+
+
+class TestAWindowsListing:
+    """`STM32_Programmer_CLI -l` on Windows 11, captured on the Windows laptop on 2026-10-02
+    with one NUCLEO-N657X0-Q attached: 882 bytes with CRLF line ends, SHA-256
+    E4FBB4D4...DCF26D85. Its UART section gives "Port: COM3" and then the
+    Win32 device path, "Location: \\\\.\\COM3"."""
+
+    RAW = (_FIXTURES / "probe_list_windows_n657.txt").read_bytes()
+
+    def test_as_the_tool_reads_it(self) -> None:
+        """run_command reads text, which turns CRLF into LF."""
+        probes = parse_probe_list(_fixture("probe_list_windows_n657.txt"))
+        assert [(p.serial, p.firmware, p.board, p.console_port) for p in probes] == [
+            ("003E00463234510337333934", "V3J15M6", "NUCLEO-N657X0-Q", "COM3")
+        ]
+
+    def test_with_its_crlf_left_in(self) -> None:
+        assert b"\r\n" in self.RAW
+        probes = parse_probe_list(self.RAW.decode("ascii"))
+        assert [(p.serial, p.firmware, p.console_port) for p in probes] == [
+            ("003E00463234510337333934", "V3J15M6", "COM3")
+        ]

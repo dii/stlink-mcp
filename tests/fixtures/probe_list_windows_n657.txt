@@ -1,0 +1,32 @@
+      -------------------------------------------------------------------
+                       STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+=====  DFU Interface   =====
+
+No STM32 device in DFU mode connected
+
+===== J-Link Interface =====
+No J-Link/flasher probe detected.
+===== STLink Interface =====
+
+-------- Connected ST-LINK Probes List --------
+
+ST-Link Probe 0 :
+   ST-LINK SN  : 003E00463234510337333934
+   ST-LINK FW  : V3J15M6
+   Access Port Number  : 3
+   Board Name  : NUCLEO-N657X0-Q
+-----------------------------------------------
+
+=====  UART Interface  =====
+
+Total number of serial ports available: 1
+
+Board Name  : NUCLEO-N657X0-Q
+ST-LINK SN: 003E00463234510337333934
+Port: COM3
+Location: \\.\COM3
+Description: STLINK-V3
+Manufacturer: STMicroelectronics
+
