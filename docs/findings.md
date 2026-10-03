@@ -261,7 +261,7 @@ After it ran, through the server: a held probe refused `read_memory` as before. 
 
 Two of those answers were the programmer's or the server's words alone. The read's line is also what a read across the end of a memory region gives on the F407 and the H7, so the read now names both causes; the server's points at cabling, so its failure now says first that a closed port looks exactly like this and that `board_state` tells them apart. The captures are fixtures.
 
-The order of a JTAG session and SWD loads on the H7 was also tried, as the cause of its two failed loads on 2026-10-01: three rounds of a JTAG run through the ST-LINK/V2 followed by two SWD runs through the V3E all came back as expected. That ordering is not the cause, and the cause is not known.
+The order of a JTAG session and SWD loads on the H7 was also tried, as the cause of its two failed loads on 2026-10-01: three rounds of a JTAG run through the ST-LINK/V2 followed by two SWD runs through the V3E all came back as expected. That ordering is not the cause, and the cause is not known. On 2026-10-03 a longer run tried for a rate: 200 loads of `h7_ram` through the V3E, each verified by the console text and followed by a release, with a JTAG load through the ST-LINK/V2 and its release before every tenth, took 367 seconds, and all 200 SWD loads and all 20 JTAG loads came back as expected. If the failure recurs at all, it is rarer than 1 in 200, or it needs something that run did not do.
 
 ## SWO, measured and then built (2026-10-02)
 
