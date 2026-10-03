@@ -425,6 +425,18 @@ async def check_jtag(server: Server, serial: str, images: Built, report: Report)
     report.check(other["status"] == "failed" and "uses JTAG" in other.get("error", ""),
                  "JTAG: a server held over JTAG is not reused for SWD", _why(other))
     await server.call("release_probe", probe_serial=serial)
+    vars_elf = str(images.elf["h7_vars"])
+    await server.call("run_firmware", elf_path=vars_elf, probe_serial=serial, console_seconds=1, interface="jtag")
+    stop = await server.call("run_until", probe_serial=serial, elf_path=vars_elf, location="writer", seconds=5,
+                             interface="jtag")
+    watch = await server.call("run_until", probe_serial=serial, elf_path=vars_elf, watch="g_watched", seconds=5,
+                              interface="jtag")
+    report.check(stop["status"] == "verified" and watch["status"] == "verified" and watch.get("returned_from") == "writer",
+                 "JTAG: run_until stops at a function and after a write, both verified", f"{_why(stop)}; {_why(watch)}")
+    swd = await server.call("run_until", probe_serial=serial, elf_path=vars_elf, location="writer", seconds=5)
+    report.check(swd["status"] == "failed" and "uses JTAG" in swd.get("error", ""),
+                 "JTAG: run_until does not reuse a server held over JTAG for SWD", _why(swd))
+    await server.call("release_probe", probe_serial=serial)
 
 
 async def check_n6(server: Server, serial: str, images: Built, report: Report) -> bool:

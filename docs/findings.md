@@ -339,3 +339,7 @@ Also measured: ST's GDB server describes everything outside flash as read-write 
 
 The tests replay GDB's output from these runs through the real session code, and fail against the code before the fixes for the reasons above. `tools/hwcheck` now also checks the wide watch and a write by the caller on the H7 and the F407: 72 of 72 with `--f4`, `--f4-console` and `--jtag`.
 
+## run_until over JTAG (2026-10-03)
+
+Through the ST-LINK/V2 on the H7's JTAG connector, with `h7_vars` loaded over JTAG: a breakpoint at `writer` stopped `verified` on 0x00000003 in 0.7 seconds, the call stack read, a watchpoint on `g_watched` was `verified` on 0x00000005 with `writer` as the call that returned, and the 36-byte watch was refused as over SWD. The same run found a gap. A `run_until` that asked for SWD while that JTAG server held the probe reused it and stopped `verified`, and its result did not say which interface it went through, though the README says every connecting tool reports it. `run_firmware` already refused that case; `run_until` and `core_registers` took the held server before the check. All three now use one check, and the two report the interface. `tools/hwcheck --jtag` checks both: 74 of 74 with `--f4`, `--f4-console` and `--jtag`.
+

@@ -131,7 +131,7 @@ Every tool call writes one line to the server's stderr, which MCP clients keep i
 
 ### SWD or JTAG
 
-Every tool that connects takes `interface`, `swd` (the default) or `jtag`, and its result reports the interface and the clock the probe's connect banner gave for it. Not every probe does JTAG. On the boards measured, the NUCLEO-N657X0-Q's own probe does; the NUCLEO-H743ZI's own STLINK-V3E does not, and answers a JTAG connect exactly as if no target were attached, so the result's hint names that first. A JTAG failure there also takes over a minute, because the tool tries both access ports and a resetting connect. An ST-LINK/V2 does both, on the H743's JTAG connector and on an F407 board's. There is no automatic fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.
+Every tool that connects takes `interface`, `swd` (the default) or `jtag`, and its result reports the interface and, where the call connected through the programmer, the clock the probe's connect banner gave for it. Not every probe does JTAG. On the boards measured, the NUCLEO-N657X0-Q's own probe does; the NUCLEO-H743ZI's own STLINK-V3E does not, and answers a JTAG connect exactly as if no target were attached, so the result's hint names that first. A JTAG failure there also takes over a minute, because the tool tries both access ports and a resetting connect. An ST-LINK/V2 does both, on the H743's JTAG connector and on an F407 board's. There is no automatic fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.
 
 ### Names instead of addresses
 

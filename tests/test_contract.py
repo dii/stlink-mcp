@@ -936,6 +936,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
     class _Server:
         port = 61234
         attach = True
+        interface = "swd"
 
     class _Session:
         closes: list[bool] = []
@@ -973,6 +974,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert_contract(out)
         assert out["status"] == result.VERIFIED and "names a breakpoint (0x00000003)" in out["verified_by"]
         assert out["target_halted"] is True and "watchdogs" in out["halted_note"]
+        assert out["interface"] == "swd", "N8: the result says which interface the stop went through"
         assert self._Session.closes == [False], "disconnected, leaving the core halted"
 
     def test_a_watchpoint_says_the_write_came_before(self, bench, monkeypatch) -> None:
@@ -1024,6 +1026,19 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         out = call("run_until", elf_path=self.ELF, **args)
         assert out["status"] == result.FAILED and "one of location or watch" in out["error"]
 
+    def test_a_server_held_over_another_interface_is_not_reused(self, bench, monkeypatch) -> None:
+        """run_until and core_registers reused a held JTAG server for a call that
+        asked for SWD, through the second ST-LINK on the H7 on 2026-10-03, and
+        said nothing of it; run_firmware already refused that."""
+        jtag = SimpleNamespace(port=61234, attach=True, interface="jtag")
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(gdb=Path("arm-none-eabi-gdb"), root=Path("/")))
+        monkeypatch.setattr(server, "held_server", lambda serial: jtag)
+        monkeypatch.setattr(server.gdbmi, "Session", lambda *a, **kw: pytest.fail("a GDB session was started"))
+        for out in (call("run_until", elf_path=self.ELF, location="writer", interface="swd"),
+                    call("core_registers", elf_path=self.ELF, interface="swd")):
+            assert_contract(out)
+            assert out["status"] == result.FAILED and "uses JTAG, and this call asked for SWD" in out["error"]
+
     def test_core_registers_leaves_a_stopped_core_halted(self, bench, monkeypatch) -> None:
         from stlink_mcp import debugger
         self._rig(monkeypatch, stop=self._stop(debugger))
@@ -1033,7 +1048,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         out = call("core_registers", elf_path=self.ELF)
         assert_contract(out)
         assert out["status"] == result.VERIFIED and out["call_stack"] == [{"function": "writer"}]
-        assert out["core_after"].startswith("still halted")
+        assert out["core_after"].startswith("still halted") and out["interface"] == "swd"
         assert self._Session.closes == [False, False]
 
 

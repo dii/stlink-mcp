@@ -69,6 +69,7 @@ from .runner import (
     acquire_server,
     held_serials,
     held_server,
+    interface_mismatch,
     load_and_run,
     release_server,
     server_is_held,
@@ -1637,11 +1638,15 @@ def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
     server is kept, and a stop through it cannot be verified."""
     held = held_server(serial)
     if held is not None and held.attach:
-        return held, None, None, False
+        mismatch = interface_mismatch(held, interface)
+        return held, None, failed(mismatch, probe_serial=serial) if mismatch else None, False
     if held is not None:
         with _STATE:
             cached = _held.get(serial)
         if cached is not None and cached[1].quirks.debug_closes_on_run:
+            mismatch = interface_mismatch(held, interface)
+            if mismatch:
+                return held, None, failed(mismatch, probe_serial=serial), False
             return held, (
                 "the GDB server holding the probe is run_firmware's, which runs without "
                 "the log that records the chip's own reason for a stop, and on this "
@@ -1698,6 +1703,9 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
         except symbols_mod.SymbolError as exc:
             return failed(str(exc))
     server = held_server(serial)
+    mismatch = interface_mismatch(server, interface) if server is not None else None
+    if mismatch:
+        return failed(mismatch, probe_serial=serial)
     temporary = server is None
     session: gdbmi.Session | None = None
     with _STATE:
@@ -1723,6 +1731,7 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        "interface": server.interface,
         "halted_to_read_registers": True,
         "core_after": (
             "still halted where run_until stopped it" if was_halted else
@@ -1823,6 +1832,7 @@ keeps running. release_probe resumes the core.
     exception = regs.get("XPSR", 0) & 0x1FF
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        "interface": server.interface,
         "elf_path": elf_path,
         **stop.detail,
         "stopped_at": where,

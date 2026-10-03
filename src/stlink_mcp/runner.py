@@ -343,6 +343,18 @@ def prune_dead_servers() -> list[str | None]:
         return dead
 
 
+def interface_mismatch(server: GdbServer, interface: str) -> str | None:
+    """Why a held server cannot serve a call that asked for `interface`; None if it can."""
+    if server.interface == interface:
+        return None
+    return (
+        f"The GDB server holding this probe uses {server.interface.upper()}, "
+        f"and this call asked for {interface.upper()}. Reusing it would run "
+        "over the interface you did not ask for. Call release_probe() first, "
+        "or pass the interface the server uses."
+    )
+
+
 def acquire_server(
     toolchain: Toolchain,
     access_port: int,
@@ -359,13 +371,9 @@ def acquire_server(
 
         existing = _sessions.get(serial)
         if existing is not None:
-            if existing.interface != interface:
-                raise RunError(
-                    f"The GDB server holding this probe uses {existing.interface.upper()}, "
-                    f"and this call asked for {interface.upper()}. Reusing it would run "
-                    "over the interface you did not ask for. Call release_probe() first, "
-                    "or pass the interface the server uses."
-                )
+            mismatch = interface_mismatch(existing, interface)
+            if mismatch:
+                raise RunError(mismatch)
             return existing
 
         # A held server must not outlive this process. If it does it keeps holding
