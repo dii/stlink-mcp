@@ -15,7 +15,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from stlink_mcp.toolchain import find_toolchain
+from stlink_mcp.toolchain import _EXE, find_toolchain
 
 IMAGES = Path(__file__).parent / "images"
 
@@ -100,7 +100,7 @@ class Built:
 def build(out_dir: Path) -> Built:
     toolchain = find_toolchain()
     gnu = toolchain.root / "GNU-tools-for-STM32" / "bin"
-    gcc, objcopy = gnu / "arm-none-eabi-gcc", gnu / "arm-none-eabi-objcopy"
+    gcc, objcopy = gnu / f"arm-none-eabi-gcc{_EXE}", gnu / f"arm-none-eabi-objcopy{_EXE}"
     if not gcc.exists():
         raise SystemExit(f"No arm-none-eabi-gcc under {gnu}; STM32CubeCLT includes one.")
     out_dir.mkdir(parents=True, exist_ok=True)
