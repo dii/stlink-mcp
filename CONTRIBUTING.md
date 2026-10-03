@@ -11,7 +11,7 @@ uv run pytest
 
 No hardware is needed. The tests that read a real STM32CubeCLT install skip when there is none, and everything else fakes the probe. Anything that talks to a board is exercised by hand instead, and the commit message records what was run, on which board, probe firmware and STM32CubeCLT version, and what it showed. If you have not run a change on hardware, say so in the commit message; that is a fact about the change, not an apology.
 
-If you have a NUCLEO-H743ZI or a NUCLEO-N657X0-Q, `uv run python tools/hwcheck/hwcheck.py` runs the README's promises against it through the server and prints what held; see [tools/hwcheck/README.md](tools/hwcheck/README.md).
+If you have a NUCLEO-H743ZI2 or a NUCLEO-N657X0-Q, `uv run python tools/hwcheck/hwcheck.py` runs the README's promises against it through the server and prints what held; see [tools/hwcheck/README.md](tools/hwcheck/README.md).
 
 ## Reporting a problem
 

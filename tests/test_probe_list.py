@@ -206,7 +206,7 @@ class TestUnreadableProbesAreNotProbes:
 
 
 class TestEmptyFieldsDoNotCaptureTheNextLine:
-    """Captured with four NUCLEO-N657X0-Q and one NUCLEO-H743ZI attached.
+    """Captured with four NUCLEO-N657X0-Q and one NUCLEO-H743ZI2 attached.
 
     The N6 boards were running firmware, so their debug ports were closed and
     the probe reported blank `ST-LINK FW` and `Board Name` for all four, with
@@ -258,7 +258,7 @@ class TestEmptyFieldsDoNotCaptureTheNextLine:
 
 class TestANonNucleoBoardWithAnOlderProbe:
     """Captured 2026-08-16 with an STM32H753I-EVAL2 attached beside the usual
-    four N657X0-Q and the H743ZI, making six probes.
+    four N657X0-Q and the H743ZI2, making six probes.
 
     It is here because it is the only board in the sample that is not a Nucleo,
     and every field it reports differs in shape from the boards the parser was
@@ -298,7 +298,7 @@ class TestANonNucleoBoardWithAnOlderProbe:
 
 
 class TestAnStLinkV2Listing:
-    """Captured 2026-10-01: an ST-LINK/V2 (V2J38S7) wired to a NUCLEO-H743ZI's
+    """Captured 2026-10-01: an ST-LINK/V2 (V2J38S7) wired to a NUCLEO-H743ZI2's
     JTAG connector, beside that board's own STLINK-V3E and a NUCLEO-N657X0-Q.
     The first V2 this project has seen. It replaces a test that asserted every
     captured probe was a V3, which existed to fail on this day."""

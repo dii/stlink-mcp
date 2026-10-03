@@ -6,7 +6,7 @@
                                            [--n6-closed]
 
 Starts the server over stdio, as an MCP client does, and runs each check as
-tool calls against a NUCLEO-H743ZI and a NUCLEO-N657X0-Q, whichever are
+tool calls against a NUCLEO-H743ZI2 and a NUCLEO-N657X0-Q, whichever are
 attached. Without serials it finds them by board name in list_probes. The test
 images are built fresh from images/ with STM32CubeCLT's compiler.
 
@@ -51,6 +51,7 @@ from build_images import Built, build  # noqa: E402
 
 from stlink_mcp.toolchain import _EXE, find_toolchain  # noqa: E402
 
+# The board names the probes report: a NUCLEO-H743ZI2 (MB1364C) reports NUCLEO-H743ZI.
 H7_BOARD, N6_BOARD = "NUCLEO-H743ZI", "NUCLEO-N657X0-Q"
 H7_COUNTER, N6_COUNTER, F4_COUNTER = "0x24070000", "0x341B0000", "0x2001F000"
 
@@ -635,7 +636,7 @@ async def check_together(server: Server, h7: str, n6: str, report: Report) -> No
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--h7", help="serial of the NUCLEO-H743ZI's own probe")
+    parser.add_argument("--h7", help="serial of the NUCLEO-H743ZI2's own probe")
     parser.add_argument("--n6", help="serial of the NUCLEO-N657X0-Q's own probe")
     parser.add_argument("--jtag", help="serial of an ST-LINK on the H7's JTAG connector")
     parser.add_argument("--f4", help="serial of the ST-LINK on an STM32F407 board")

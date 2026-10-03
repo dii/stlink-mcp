@@ -1,5 +1,5 @@
 """GDB/MI parsing and the stop helpers, against output captured from a
-NUCLEO-H743ZI on 2026-10-02.
+NUCLEO-H743ZI2 on 2026-10-02.
 
 gdbmi_h7_transcript.txt is everything GDB printed in one session through
 ST-LINK_gdbserver in attach mode, on the H7 running tools/hwcheck's h7_vars: the

@@ -1,8 +1,8 @@
 """N8: the debug interface is a parameter, not an assumption.
 
 The connect banners are captured from real probes on 2026-10-01: an
-ST-LINK/V2 on a NUCLEO-H743ZI's JTAG connector, the NUCLEO-N657X0-Q's own
-probe asked for JTAG (it does it), and the NUCLEO-H743ZI's own STLINK-V3E asked
+ST-LINK/V2 on a NUCLEO-H743ZI2's JTAG connector, the NUCLEO-N657X0-Q's own
+probe asked for JTAG (it does it), and the NUCLEO-H743ZI2's own STLINK-V3E asked
 for JTAG (it does not, and says so in the words a missing target uses).
 """
 

@@ -1,5 +1,5 @@
 # GDB/MI from run_until's own sessions through ST-LINK_gdbserver in attach mode,
-# 2026-10-03: a NUCLEO-H743ZI running h7_vars and an STM32F407 running f4_vars,
+# 2026-10-03: a NUCLEO-H743ZI2 running h7_vars and an STM32F407 running f4_vars,
 # both from RAM, built by tools/hwcheck. "> " marks each command run_until sent;
 # the lines after it are everything GDB printed until the next command.
 ## h7-unmapped: a breakpoint at 0x60000000, where nothing answers on the H7

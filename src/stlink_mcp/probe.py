@@ -26,7 +26,7 @@ class ProbeError(RuntimeError):
 
 #: The debug interfaces a probe can be asked for. SWD is the default because
 #: every probe that does JTAG also does SWD, and the on-board STLINK-V3E of a
-#: NUCLEO-H743ZI does only SWD (measured 2026-10-01).
+#: NUCLEO-H743ZI2 does only SWD (measured 2026-10-01).
 SWD = "swd"
 JTAG = "jtag"
 INTERFACES = (SWD, JTAG)
@@ -256,7 +256,7 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
         hints.append(
             "The probe may not do JTAG, or not be wired for it. A probe that "
             "cannot answers exactly as if no target were attached: the on-board "
-            "STLINK-V3E of a NUCLEO-H743ZI reports 'Unable to get core ID' over "
+            "STLINK-V3E of a NUCLEO-H743ZI2 reports 'Unable to get core ID' over "
             "JTAG while SWD works. Try interface 'swd', or a probe on the "
             "target's JTAG connector."
         )
@@ -687,7 +687,7 @@ class Probe:
         """Reset the target and halt it, returning the program counter.
 
         THE RESET HAS TO BE THE CONNECT, not a command issued after one.
-        Measured on a NUCLEO-H743ZI 2026-08-16, whose reset handler is at
+        Measured on a NUCLEO-H743ZI2 2026-08-16, whose reset handler is at
         0x0807FA98:
 
             -c mode=HOTPLUG -rst -halt -coreReg   PC = 0x0807FC2C
@@ -724,7 +724,7 @@ class Probe:
         download complete", `core_registers` requires a PC - and this one was the
         exception until a red-team pass pointed at it.
 
-        "Core run" is what the CLI prints on success, observed on a NUCLEO-H743ZI
+        "Core run" is what the CLI prints on success, observed on a NUCLEO-H743ZI2
         on 2026-08-16 immediately after a HWRSTPULSE connect and `-halt`.
         """
         argv = self._connect_args(access_port, "HOTPLUG") + ["-run"]

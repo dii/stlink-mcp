@@ -3,7 +3,7 @@
 The fixtures are tools/hwcheck/images/debug_target.c built for an STM32H7 with
 STM32CubeCLT's GCC 14.3 at DWARF 5, 4 and 3; GCC encodes bitfields one way for
 5 and the older way for 4 and 3, so both are covered. DUMP is g_state's 36 bytes
-read from a NUCLEO-H743ZI running that program, without halting it, on
+read from a NUCLEO-H743ZI2 running that program, without halting it, on
 2026-10-02.
 """
 

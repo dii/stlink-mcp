@@ -8,7 +8,7 @@ uv run python tools/hwcheck/hwcheck.py --h7 <serial> --n6 <serial> --jtag <seria
 uv run python tools/hwcheck/hwcheck.py --f4 <serial> --f4-console /dev/serial/by-id/<adapter>
 ```
 
-It knows the NUCLEO-H743ZI and the NUCLEO-N657X0-Q, and finds them by board name in `list_probes` when no serial is given. An STM32F407 board has no board name to find it by, so `--f4` names its probe. Each check prints PASS or FAIL and what it saw, and when a check fails, every call result since the previous check, whole. A board whose first call fails gets one FAIL and SKIP for the rest, since each of its other checks would fail too, at up to a minute each. The exit status is 1 when any failed.
+It knows the NUCLEO-H743ZI2, whose probe reports the board name NUCLEO-H743ZI, and the NUCLEO-N657X0-Q, and finds them by that name in `list_probes` when no serial is given. An STM32F407 board has no board name to find it by, so `--f4` names its probe. Each check prints PASS or FAIL and what it saw, and when a check fails, every call result since the previous check, whole. A board whose first call fails gets one FAIL and SKIP for the rest, since each of its other checks would fail too, at up to a minute each. The exit status is 1 when any failed.
 
 ## What it changes on the boards
 

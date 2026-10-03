@@ -861,7 +861,7 @@ class TestSwoIsCapturedAndItsSideEffectSaid:
 
 class TestReadingByName:
     """read_memory's symbol and register paths. The variable side uses the ELF
-    fixtures and the bytes read from a NUCLEO-H743ZI on 2026-10-02; the register
+    fixtures and the bytes read from a NUCLEO-H743ZI2 on 2026-10-02; the register
     side needs the SVD files of an STM32CubeCLT install, and skips without one."""
 
     ELF = str(Path(__file__).parent / "fixtures" / "elf" / "h7_vars_dwarf5.elf")
@@ -1413,7 +1413,7 @@ class TestResetIsNotClaimedUnlessItWasSeen:
     The three shapes here are the three real hardware produces, and all three
     were measured on 2026-08-16 rather than imagined:
 
-      landed on the vector   NUCLEO-H743ZI, reset handler 0x0807FA98, reached
+      landed on the vector   NUCLEO-H743ZI2, reset handler 0x0807FA98, reached
                              exactly by a HWRSTPULSE connect
       landed elsewhere       the same board via `-rst -halt`, which resets fine
                              and then loses the race, ending at 0x0807FC2C
@@ -1645,7 +1645,7 @@ class TestReleaseCoreChecksItsOwnEffect:
             p.release_core(0)
 
     def test_it_accepts_the_confirmation_the_cli_actually_prints(self, monkeypatch) -> None:
-        """Measured on a NUCLEO-H743ZI: the CLI prints "Core run"."""
+        """Measured on a NUCLEO-H743ZI2: the CLI prints "Core run"."""
         from stlink_mcp import probe as pm
         from stlink_mcp.toolchain import CommandResult
 

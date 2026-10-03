@@ -1,6 +1,6 @@
 # Findings
 
-The README states conclusions. This file holds the measurements behind them and the things this project got wrong on the way to them, because a claim without its provenance is the failure this project exists to remove. Dates are when the measurement was made. Boards: NUCLEO-N657X0-Q, NUCLEO-H743ZI, STM32H753I-EVAL2, all with on-board ST-LINK V3, driven by STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0) on Fedora 44.
+The README states conclusions. This file holds the measurements behind them and the things this project got wrong on the way to them, because a claim without its provenance is the failure this project exists to remove. Dates are when the measurement was made. Boards: NUCLEO-N657X0-Q, NUCLEO-H743ZI2, STM32H753I-EVAL2, all with on-board ST-LINK V3, driven by STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0) on Fedora 44.
 
 ## The result contract came out of a defect in this tool (2026-08-15)
 
@@ -30,7 +30,7 @@ An established GDB connection keeps working across repeated load-and-run cycles,
 
 ## The reset has to be the connect (2026-08-16)
 
-NUCLEO-H743ZI, reset handler at `0x0807FA98`:
+NUCLEO-H743ZI2, reset handler at `0x0807FA98`:
 
 | sequence | PC afterwards |
 | --- | --- |
@@ -43,7 +43,7 @@ Both non-resetting orders reset the part correctly and then lose the race to hal
 
 ## A halt does not survive the invocation that made it (2026-08-17)
 
-`reset_target` had a `leave_halted` option for one day. Sampling the PC across separate reads after a reset-and-halt on a NUCLEO-H743ZI gave `0x0807FA98`, then `0x0807FE96`, `0x08060AFC`, `0x08080482`; the STM32H753I-EVAL2 behaved the same. The option reported `core_halted: true` while the core was demonstrably running, so it was removed. Nothing in this project claims whether the core is halted now: a static program counter is what a halted core looks like and also what a tight loop looks like, and on an N6 sitting in its boot ROM the PC read identically three times while proving nothing either way. To hold a target stopped, use the GDB server that `run_firmware` keeps alive.
+`reset_target` had a `leave_halted` option for one day. Sampling the PC across separate reads after a reset-and-halt on a NUCLEO-H743ZI2 gave `0x0807FA98`, then `0x0807FE96`, `0x08060AFC`, `0x08080482`; the STM32H753I-EVAL2 behaved the same. The option reported `core_halted: true` while the core was demonstrably running, so it was removed. Nothing in this project claims whether the core is halted now: a static program counter is what a halted core looks like and also what a tight loop looks like, and on an N6 sitting in its boot ROM the PC read identically three times while proving nothing either way. To hold a target stopped, use the GDB server that `run_firmware` keeps alive.
 
 ## Identity reads correctly on a port that cannot halt the core (2026-08-14)
 
@@ -111,7 +111,7 @@ None of the fixes has been run on a board. They change what results claim, add r
 
 ## First hardware run of the 2026-09-28 changes (2026-10-01)
 
-Run on the NUCLEO-H743ZI through its on-board STLINK-V3E (firmware V3J7M2) and through an ST-LINK/V2 (V2J38S7) wired to its CN5 connector with an Olimex ARM-JTAG-20-10 adapter, and on a NUCLEO-N657X0-Q (STLINK-V3, V3J15M6), with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0). Every call went to the server over stdio, as a client makes it. The images were written for the run: an H7 RAM image that prints numbered lines on USART3 and counts in AXI SRAM, a variant that executes an undefined instruction after four lines, the same counter for the N6 with no console, and a flash-linked `.bin`.
+Run on the NUCLEO-H743ZI2 through its on-board STLINK-V3E (firmware V3J7M2) and through an ST-LINK/V2 (V2J38S7) wired to its CN5 connector with an Olimex ARM-JTAG-20-10 adapter, and on a NUCLEO-N657X0-Q (STLINK-V3, V3J15M6), with STM32CubeCLT 1.22.0 (STM32CubeProgrammer 2.23.0). Every call went to the server over stdio, as a client makes it. The images were written for the run: an H7 RAM image that prints numbered lines on USART3 and counts in AXI SRAM, a variant that executes an undefined instruction after four lines, the same counter for the N6 with no console, and a flash-linked `.bin`.
 
 What held:
 
@@ -140,7 +140,7 @@ How the STLINK-V3E (V3J7M2) fills its buffer, measured with an H7 image printing
 
 ## A reset can leave USART3 on the H7 without its clock (2026-10-01)
 
-The NUCLEO-H743ZI's own firmware clocks USART3 from PLL3. After a reset taken while it was running, a RAM image that set up USART3 from the reset defaults (kernel clock from the APB1 bus clock) wrote every register as intended and got no transmitter acknowledge: ISR stayed 0 and the first byte never left. Selecting the internal oscillator as the kernel clock, and forcing it on for peripherals, changed nothing. Turning PLL3 on made ISR read 0x006000D0 at once. The likely reading is that the kernel clock selector, which switches only on edges of both clocks, was left on PLL3 when the reset stopped it; that part is inference. A run after the image's own earlier runs was unaffected, which is why it looked intermittent. `run_firmware` reported every one of these runs `unverified`, which was correct. A RAM image that follows firmware like this should turn PLL3 on before using a peripheral that firmware clocked from it.
+The NUCLEO-H743ZI2's own firmware clocks USART3 from PLL3. After a reset taken while it was running, a RAM image that set up USART3 from the reset defaults (kernel clock from the APB1 bus clock) wrote every register as intended and got no transmitter acknowledge: ISR stayed 0 and the first byte never left. Selecting the internal oscillator as the kernel clock, and forcing it on for peripherals, changed nothing. Turning PLL3 on made ISR read 0x006000D0 at once. The likely reading is that the kernel clock selector, which switches only on edges of both clocks, was left on PLL3 when the reset stopped it; that part is inference. A run after the image's own earlier runs was unaffected, which is why it looked intermittent. `run_firmware` reported every one of these runs `unverified`, which was correct. A RAM image that follows firmware like this should turn PLL3 on before using a peripheral that firmware clocked from it.
 
 ## Flash is read back before it is verified (2026-10-01)
 
@@ -148,7 +148,7 @@ The NUCLEO-H743ZI's own firmware clocks USART3 from PLL3. After a reset taken wh
 
 ## JTAG, measured and then made a parameter (2026-10-01)
 
-By hand first, with STM32_Programmer_CLI and the GDB server, then through the tool. The ST-LINK/V2 (V2J38S7) through an Olimex ARM-JTAG-20-10 into the NUCLEO-H743ZI's CN5: a hotplug connect, a connect under reset and a reset-pulse connect followed by a halt all worked at `JTAG freq : 9000 KHz`, the last halting at the reset handler, 0x0807FA98. The GDB server started without `-d`, which is how it selects JTAG (it has no flag for it), loaded the RAM image, and the console verified it. With `-d` the server's option list includes `SWD Debug : Enabled`; without it the line is absent. The NUCLEO-N657X0-Q's own probe (V3J15M6) does JTAG too, at 21333 kHz by hand and 8000 kHz through the tool, and ran the N6 RAM image over it, its counter advancing. The NUCLEO-H743ZI's own STLINK-V3E (V3J7M2) does not: `Error: Unable to get core ID` and `No STM32 target found`, the words a missing target produces, which is why the hint for a failed JTAG connect now names the probe first. Through the tool that failure took 72 seconds, since identification tries two access ports and a resetting connect and the programmer retries each, and a resetting connect was issued along the way. A run over SWD on the V2 while its GDB server was held over JTAG was refused rather than reusing the server.
+By hand first, with STM32_Programmer_CLI and the GDB server, then through the tool. The ST-LINK/V2 (V2J38S7) through an Olimex ARM-JTAG-20-10 into the NUCLEO-H743ZI2's CN5: a hotplug connect, a connect under reset and a reset-pulse connect followed by a halt all worked at `JTAG freq : 9000 KHz`, the last halting at the reset handler, 0x0807FA98. The GDB server started without `-d`, which is how it selects JTAG (it has no flag for it), loaded the RAM image, and the console verified it. With `-d` the server's option list includes `SWD Debug : Enabled`; without it the line is absent. The NUCLEO-N657X0-Q's own probe (V3J15M6) does JTAG too, at 21333 kHz by hand and 8000 kHz through the tool, and ran the N6 RAM image over it, its counter advancing. The NUCLEO-H743ZI2's own STLINK-V3E (V3J7M2) does not: `Error: Unable to get core ID` and `No STM32 target found`, the words a missing target produces, which is why the hint for a failed JTAG connect now names the probe first. Through the tool that failure took 72 seconds, since identification tries two access ports and a resetting connect and the programmer retries each, and a resetting connect was issued along the way. A run over SWD on the V2 while its GDB server was held over JTAG was refused rather than reusing the server.
 
 ## The fault location in one call (2026-10-01)
 
@@ -213,7 +213,7 @@ Images made to produce each case. An image with its vector table in AXI SRAM and
 
 ## A JTAG failure cannot be cut short by the missing clock line (2026-10-01, rejected)
 
-A JTAG connect through a probe that does not do JTAG, the NUCLEO-H743ZI's own STLINK-V3E, took 72 seconds to fail through the tool: two access ports, then a resetting connect, each retried by the programmer. Its output has no `JTAG freq` line, while every successful connect has a clock line, so stopping after the first attempt when no clock line appears looked safe. It is not. The captured connect to an STM32N6 whose running image had closed the debug port (the `NO_CORE` sample in tests/test_parsing.py, over SWD) has no clock line either, and that is the case the resetting connect exists to recover. The two failures print the same thing, so the tool keeps trying, and the README says a JTAG failure on a probe without it takes over a minute.
+A JTAG connect through a probe that does not do JTAG, the NUCLEO-H743ZI2's own STLINK-V3E, took 72 seconds to fail through the tool: two access ports, then a resetting connect, each retried by the programmer. Its output has no `JTAG freq` line, while every successful connect has a clock line, so stopping after the first attempt when no clock line appears looked safe. It is not. The captured connect to an STM32N6 whose running image had closed the debug port (the `NO_CORE` sample in tests/test_parsing.py, over SWD) has no clock line either, and that is the case the resetting connect exists to recover. The two failures print the same thing, so the tool keeps trying, and the README says a JTAG failure on a probe without it takes over a minute.
 
 ## Who asked: the first step on N9 (2026-10-01)
 
@@ -380,4 +380,8 @@ Its next step said only to set the boot switches. The N6 boots only a signed ima
 Not measured: booting the N6 from its flash, which needs a signed image and the boot switches moved.
 
 `tools/hwcheck --flash` now writes the start of the N6's flash too, after saving the first 128 KB, and writes the saved copy back: 87 of 87 with `--f4`, `--f4-console`, `--jtag` and `--flash`.
+
+## The H7 board is a NUCLEO-H743ZI2 (2026-10-03)
+
+The H7 board measured throughout is a NUCLEO-H743ZI2, MB1364C, as printed on it and confirmed by the owner. Its on-board probe, an STLINK-V3E (USB product ID 0x374E), reports the board name NUCLEO-H743ZI, which is what this file and the README said until now; the original NUCLEO-H743ZI, MB1137, has an ST-LINK/V2-1. The entries above now name the board, and keep NUCLEO-H743ZI where they mean the name the probe reports, which is also what `svd` chooses the STM32H743 file by and what `tools/hwcheck` finds the board by.
 
