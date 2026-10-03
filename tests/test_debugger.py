@@ -11,6 +11,9 @@ watchpoint stops.
 
 from __future__ import annotations
 
+import queue
+import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -137,3 +140,163 @@ class TestTheServerLogGivesTheStopReason:
 @pytest.mark.parametrize("line", ["(gdb) ", ""])
 def test_the_prompt_is_not_a_record(line) -> None:
     assert gdbmi.parse(line) is None
+
+
+CASES = (FIXTURES / "gdbmi_run_until_cases.txt").read_text()
+
+
+def _recorded(name: str) -> dict[str, list[list[str]]]:
+    """What GDB printed for each command in one recorded run_until, in order."""
+    section = CASES.split(f"\n## {name}:", 1)[1].split("\n## ", 1)[0]
+    answers: dict[str, list[list[str]]] = {}
+    lines: list[str] | None = None
+    for line in section.splitlines()[1:]:
+        if line.startswith("> "):
+            command = "-target-select" if line.startswith("> -target-select") else line[2:]
+            lines = []
+            answers.setdefault(command, []).append(lines)
+        elif lines is not None:
+            lines.append(line)
+    return answers
+
+
+class _Gdb:
+    """The GDB process, replayed: each command a Session writes is answered with
+    what GDB printed for it in the recording, so the real Session code reads
+    real output. A command the recording does not have fails the test."""
+
+    def __init__(self, answers: dict[str, list[list[str]]]) -> None:
+        self.answers, self.sent = answers, []
+        self.out: queue.Queue[str | None] = queue.Queue()
+        self.stdin, self.stdout = self, iter(self.out.get, None)
+
+    def write(self, text: str) -> None:
+        command = text.rstrip("\n")
+        self.sent.append(command)
+        key = "-target-select" if command.startswith("-target-select") else command
+        if not self.answers.get(key):
+            raise AssertionError(f"{command!r} is not in the recording")
+        for line in self.answers[key].pop(0):
+            self.out.put(line + "\n")
+
+    def flush(self) -> None:
+        pass
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.out.put(None)
+        return 0
+
+
+class _LoggedServer:
+    def log_size(self) -> int:
+        return 0
+
+    def halt_reasons_since(self, offset: int) -> list[int]:
+        return []
+
+
+def _replay(monkeypatch, name: str, **overrides: list[str]) -> tuple[gdbmi.Session, _Gdb]:
+    answers = _recorded(name)
+    for command, lines in overrides.items():
+        answers[command] = [lines]
+    gdb = _Gdb(answers)
+    process = SimpleNamespace(**{name: getattr(subprocess, name) for name in ("PIPE", "STDOUT", "TimeoutExpired")})
+    process.Popen = lambda *a, **kw: gdb
+    monkeypatch.setattr(gdbmi, "subprocess", process)
+    return gdbmi.Session(Path("arm-none-eabi-gdb"), None, 61234), gdb
+
+
+class TestRunUntilRefusesWhatWouldNotStopTheCore:
+    """debugger.run_until against GDB's own answers, from the H7 and the F407 on
+    2026-10-03. The contract tests fake this function whole, so until these
+    nothing ran its refusals."""
+
+    def test_a_breakpoint_gdb_cannot_insert_fails_at_once_with_gdbs_reason(self, monkeypatch) -> None:
+        """GDB said ^running, then that it could not insert the breakpoint. Read
+        as a run, it waited out the time limit and an interrupt, 12 s in all,
+        and reported a target that did not stop, which had never run."""
+        session, gdb = _replay(monkeypatch, "h7-unmapped")
+        started = time.monotonic()
+        with pytest.raises(debugger.DebugError, match="did not run the program: Cannot insert breakpoint 1. "
+                                                      "Cannot access memory at address 0x60000000"):
+            debugger.run_until(session, _LoggedServer(), location="0x60000000", watch=None, seconds=2)
+        assert time.monotonic() - started < 1 and "-exec-interrupt" not in gdb.sent
+
+    def test_a_location_gdb_cannot_find_says_what_gdb_said(self, monkeypatch) -> None:
+        session, _ = _replay(monkeypatch, "h7-no-function")
+        with pytest.raises(debugger.DebugError, match='Function \\\\?"no_such_function\\\\?" not defined'):
+            debugger.run_until(session, _LoggedServer(), location="no_such_function", watch=None, seconds=2)
+
+    def test_a_watch_gdb_would_do_by_single_stepping_is_refused(self, monkeypatch) -> None:
+        session, gdb = _replay(monkeypatch, "h7-register")
+        with pytest.raises(debugger.DebugError, match="software watchpoint"):
+            debugger.run_until(session, _LoggedServer(), location=None, watch="$pc", seconds=2)
+        assert "-exec-continue" not in gdb.sent
+
+    def test_a_watch_wider_than_the_server_watches_is_refused_before_it_is_set(self, monkeypatch) -> None:
+        """GDB took a 36-byte g_state as one hardware watchpoint; ST's server
+        logged "Unsupported value of length (36), patching to 1-byte", replied OK,
+        and the run reported no write in 3 s while the program wrote g_state.samples
+        on every tick, on the H7 and the F407. 8 bytes went the same way."""
+        session, gdb = _replay(monkeypatch, "h7-struct")
+        with pytest.raises(debugger.DebugError, match="g_state is 36 bytes at 0x24000130; a watchpoint covers 1, 2 or 4"):
+            debugger.run_until(session, _LoggedServer(), location=None, watch="g_state", seconds=3)
+        assert not [c for c in gdb.sent if c.startswith("-break-watch")]
+
+    def test_a_watch_not_aligned_to_its_size_is_refused(self, monkeypatch) -> None:
+        """Two bytes at 0x2400013D, one of them g_state.samples[0]'s low byte,
+        written every fourth tick: the server took the watch without a warning
+        and it never stopped the core in 5 s, on the H7 or the F407."""
+        session, gdb = _replay(monkeypatch, "h7-misaligned")
+        with pytest.raises(debugger.DebugError, match="2 bytes at 0x2400013D, which is not aligned"):
+            debugger.run_until(session, _LoggedServer(), location=None,
+                               watch="*(unsigned short *)(0x24000000+0x13D)", seconds=5)
+        assert not [c for c in gdb.sent if c.startswith("-break-watch")]
+
+    def test_a_breakpoint_the_unit_cannot_reach_is_refused(self, monkeypatch) -> None:
+        """The F407's unit is revision 1. ST's server marks RAM read-write, so GDB
+        asks for a software breakpoint at writer there; without a map, which is
+        GDB's answer below (captured from GDB with no target), it would ask for
+        a hardware one that never fires."""
+        no_map = ['~"Using memory regions provided by the target.\\n"',
+                  '~"There are no memory regions defined.\\n"', "^done"]
+        session, gdb = _replay(monkeypatch, "f4-writer", **{'-interpreter-exec console "info mem"': no_map})
+        with pytest.raises(debugger.DebugError, match="revision 1\\) covers only addresses below 0x20000000"):
+            debugger.run_until(session, _LoggedServer(), location="writer", watch=None, seconds=5)
+        assert "-exec-continue" not in gdb.sent
+
+    def test_the_servers_map_marks_what_is_not_flash_read_write(self, monkeypatch) -> None:
+        """So "software" says what GDB asks for, not that there is RAM: on the
+        F407 nothing answers at 0x60000000 either."""
+        session, _ = _replay(monkeypatch, "f4-writer")
+        assert debugger.writable(session, 0x60000000) is True
+
+
+class TestAWatchpointNamesNoWriterItCannotKnow:
+    """The core stops one to four instructions after the write. PC and LR alone
+    gave the same picture for a write by the function that returned and for a
+    write by its caller, so a returned call is offered as a candidate only."""
+
+    def _watch(self, monkeypatch, name: str, expression: str) -> debugger.Stop:
+        session, _ = _replay(monkeypatch, name)
+        return debugger.run_until(session, _LoggedServer(), location=None, watch=expression, seconds=5)
+
+    def test_a_call_the_core_is_still_in_is_not_named(self, monkeypatch) -> None:
+        """reset_handler wrote, then called level1; the H7 stopped inside it, and
+        level1 was named as the call before LR."""
+        stop = self._watch(monkeypatch, "h7-member2", "g_state.samples[1]")
+        assert stop.reached and stop.frames[0]["function"] == "level1"
+        assert "returned_from" not in stop.detail and "called_just_before" not in stop.detail
+
+    def test_the_function_that_wrote_and_returned_is_named(self, monkeypatch) -> None:
+        stop = self._watch(monkeypatch, "h7-watched", "g_watched")
+        assert stop.frames[0]["function"] == "reset_handler" and stop.detail["returned_from"] == "writer"
+
+    def test_a_returned_call_is_a_candidate_even_when_the_caller_wrote(self, monkeypatch) -> None:
+        """reset_handler wrote here; LR was left from the call at tick five. This
+        is why the result says it cannot tell which."""
+        stop = self._watch(monkeypatch, "f4-member2", "g_state.samples[1]")
+        assert stop.frames[0]["function"] == "reset_handler"
+        assert stop.detail["returned_from"] == "reached_tick_five"
+        from stlink_mcp import server
+        assert "stopped_at" in server._WRITE_NOTE and "Nothing here tells which" in server._WRITE_NOTE

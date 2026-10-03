@@ -12,13 +12,19 @@ an STM32H7, an STM32F407 and an STM32N6 on 2026-10-02, before it was built
 - GDB reports a breakpoint stop as breakpoint-hit, but a watchpoint stop as a
   bare SIGTRAP, because the server's stop reply names no reason.
 - A watchpoint stops after the writing instruction, never on it: one more
-  instruction on the F407 and the N6, two to four on the H7. LR still held the
-  address after the call to the function that wrote.
+  instruction on the F407 and the N6, two to four on the H7. Where a function
+  wrote and returned, LR still held the address after the call to it.
 - The STM32F4's breakpoint unit is revision 1, which covers only addresses
   below 0x20000000. GDB and the server accepted a hardware breakpoint in RAM
   there and it never fired, so the tool checks the unit itself.
 - Disconnecting GDB leaves a halted core halted and the server serving;
   detaching resumes it; stopping the server resumes it.
+
+And on 2026-10-03, on the H7 and the F407: the server accepts a watchpoint of
+any length and, for any but 1, 2 or 4 bytes, watches only the first byte,
+saying so only in its log, and one at an address not aligned to its size never
+fired; and its memory map marks everything but flash read-write, so GDB asks
+for a software breakpoint at any other address.
 """
 
 from __future__ import annotations
@@ -110,9 +116,12 @@ _REGION = re.compile(r"^\s*\d+\s+y\s+(0x[0-9a-fA-F]+)\s+(0x[0-9a-fA-F]+)\s+(.*)$
 
 
 def writable(session: Session, address: int) -> bool | None:
-    """Whether GDB's memory map, from the server, has RAM at `address`. GDB puts
-    a software breakpoint there and a hardware one in flash or ROM, and reports
-    both as type "breakpoint", so the type cannot say which. None if unknown."""
+    """Whether GDB's memory map, from the server, marks `address` read-write.
+    GDB asks for a software breakpoint there and a hardware one elsewhere, and
+    reports both as type "breakpoint", so the type cannot say which. None if
+    unknown. ST-LINK_gdbserver marks everything but flash read-write, ROM and
+    addresses with nothing behind them included (H7 and F407, 2026-10-03), so
+    this says which kind GDB will ask for, not that there is RAM."""
     try:
         text = session.command('-interpreter-exec console "info mem"').text
     except MiError:
@@ -175,9 +184,11 @@ def registers(session: Session) -> dict[str, int]:
 
 
 def call_before(session: Session, lr: int) -> str | None:
-    """The function called by the instruction before LR, when it is a BL: after
-    a watchpoint stop that is the function that just returned, which on the
-    boards measured was the one that wrote."""
+    """The function called by the instruction before LR, when it is a BL. After
+    a watchpoint stop it is only a candidate for the writer: on the H7 and the
+    F407 it was the writer when the write was the last thing a function did,
+    and named a function that wrote nothing when the caller wrote, whether the
+    stop was before LR or inside a call just made (2026-10-03)."""
     try:
         insns = session.command(f"-data-disassemble -s 0x{(lr & ~1) - 4:08X} -e 0x{lr & ~1:08X} -- 0")
     except MiError:
@@ -210,7 +221,8 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
 
     Leaves the core halted, at the stop or where it was interrupted, with the
     breakpoint or watchpoint removed. Refuses, before continuing, anything the
-    part cannot do: a hardware breakpoint its unit does not cover, or a
+    part cannot do: a hardware breakpoint its unit does not cover, a watch the
+    server would narrow to one byte or that is not aligned to its size, or a
     watchpoint GDB could only do in software, by single-stepping."""
     units = comparators(session)
     detail: dict[str, Any] = {}
@@ -228,12 +240,16 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                     "give a file:line or an address."
                 )
             target_address = int(bkpt["addr"], 16)
-            in_ram = writable(session, target_address)
-            hardware = in_ram is not True
+            hardware = writable(session, target_address) is not True
             detail["location"] = {"address": f"0x{target_address:08X}", "function": bkpt.get("func"),
                                   "file": bkpt.get("file"), "line": _int(bkpt.get("line"))}
-            detail["breakpoint"] = "software, in RAM" if not hardware else "hardware"
-            if hardware and units is not None and (units.breakpoints == 0 or not units.covers(target_address)):
+            detail["breakpoint"] = "hardware" if hardware else "software"
+            if hardware and units is not None and units.breakpoints == 0:
+                raise DebugError(
+                    f"{location} at 0x{target_address:08X} needs a hardware breakpoint, and this part "
+                    "reports no breakpoint comparators."
+                )
+            if hardware and units is not None and not units.covers(target_address):
                 raise DebugError(
                     f"{location} at 0x{target_address:08X} needs a hardware breakpoint, and this part's "
                     f"breakpoint unit (revision {units.breakpoint_unit_revision + 1}) covers only "
@@ -242,6 +258,21 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                 )
         else:
             expression = f"*(unsigned int *){watch}" if re.fullmatch(r"0x[0-9a-fA-F]+", watch or "") else watch
+            size = _int(evaluate(session, f"sizeof({expression})"))
+            target_address = _int(evaluate(session, f"&({expression})"))
+            at = f" at 0x{target_address:08X}" if target_address is not None else ""
+            if size is not None and size not in (1, 2, 4):
+                raise DebugError(
+                    f"{watch} is {size} bytes{at}; a watchpoint covers 1, 2 or 4 bytes. ST's GDB server "
+                    "accepts any other length and watches only the first byte, so a write to the rest "
+                    "would not stop the core. Watch one member or element of it."
+                )
+            if size is not None and (target_address or 0) % size:
+                raise DebugError(
+                    f"{watch} is {size} bytes{at}, which is not aligned to its size. ST's GDB server "
+                    "accepted such a watch and it never stopped the core, though one of its bytes was "
+                    "written. Watch an aligned 1, 2 or 4 bytes that hold it."
+                )
             try:
                 session.command(f"-break-watch {_quote(expression)}")
             except MiError as exc:
@@ -253,7 +284,6 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                     f"{watch} would be a software watchpoint, which GDB does by single-stepping "
                     "the program; refused. A hardware watchpoint covers an aligned 1, 2 or 4 bytes."
                 )
-            target_address = _int(evaluate(session, f"&({expression})"))
             detail["watched"] = {"expression": watch,
                                  "address": f"0x{target_address:08X}" if target_address is not None else None,
                                  "value_before": evaluate(session, expression)}
@@ -262,8 +292,11 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
 
         offset = server.log_size()
         started = time.monotonic()
-        session.resume()
-        stop = session.wait_stopped(seconds)
+        try:
+            session.resume()
+            stop = session.wait_stopped(seconds)
+        except MiError as exc:
+            raise DebugError(f"GDB did not run the program: {exc}") from exc
         reached = stop is not None
         if not reached:
             session.command("-exec-interrupt")
@@ -281,9 +314,10 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
             lr = registers(session).get("LR")
             if lr is not None:
                 detail["lr"] = f"0x{lr:08X}"
-                caller = call_before(session, lr)
-                if caller:
-                    detail["called_just_before"] = caller
+                callee = call_before(session, lr)
+                # Still inside that call, it has not returned, so it is no candidate.
+                if callee and not (listed and listed[0].get("function") == callee):
+                    detail["returned_from"] = callee
         if location is not None:
             detail["at_location"] = pc == target_address
         return result

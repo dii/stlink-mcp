@@ -294,8 +294,20 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
                  f"{label}: a location not reached in time is unverified, and says where the core is", _why(never))
     watch = await server.call("run_until", probe_serial=s, elf_path=elf, watch="g_watched", seconds=5)
     report.check(watch["status"] == "verified" and any("DWTTRAP" in r for r in watch.get("stop_reason_from_chip", []))
-                 and watch.get("called_just_before") == "writer" and "before this stop" in watch.get("write_note", ""),
-                 f"{label}: run_until stops after a write to a variable, and names the writer", _why(watch))
+                 and watch.get("returned_from") == "writer" and "before this stop" in watch.get("write_note", ""),
+                 f"{label}: run_until stops after a write to a variable, and names the function that returned",
+                 _why(watch))
+    # The program writes g_state.samples on every tick, from reset_handler itself
+    # and straight before a call, and ST's server narrows a 36-byte watch to its
+    # first byte, which nothing writes.
+    wide = await server.call("run_until", probe_serial=s, elf_path=elf, watch="g_state", seconds=3)
+    report.check(wide["status"] == "failed" and "36 bytes" in wide.get("error", ""),
+                 f"{label}: run_until refuses a watch wider than the server watches", _why(wide))
+    member = await server.call("run_until", probe_serial=s, elf_path=elf, watch="g_state.samples[1]", seconds=5)
+    inside = [f.get("function") for f in member.get("call_stack", [])][:1]
+    report.check(member["status"] == "verified" and member.get("returned_from") not in inside,
+                 f"{label}: a write by the caller stops verified, and never names a call the core is still in",
+                 f"{_why(member)}; returned_from {member.get('returned_from')}, in {inside}")
     released = await server.call("release_probe", probe_serial=s)
     report.check("running again" in json.dumps(released.get("core_after_release", {})),
                  f"{label}: release_probe resumes a core run_until held, read from DHCSR",
@@ -466,7 +478,7 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  "N6: core_registers gives the call stack at the stop and leaves the core halted", _why(held))
     watch = await server.call("run_until", probe_serial=s, elf_path=vars_elf, watch="g_watched", seconds=5)
     report.check(stop["status"] == "verified" and watch["status"] == "verified"
-                 and watch.get("called_just_before") == "writer",
+                 and watch.get("returned_from") == "writer",
                  "N6: after a release, run_until stops at a function and after a write, both verified",
                  f"{_why(stop)}; {_why(watch)}")
     released = await server.call("release_probe", probe_serial=s)

@@ -1618,10 +1618,11 @@ _HALTED_NOTE = (
 )
 
 _WRITE_NOTE = (
-    "The write came before this stop, not at it: a watchpoint stopped one to four "
-    "instructions after the writing instruction on the parts measured, past a "
-    "return or a branch. called_just_before names the function the instruction "
-    "before LR called, which on the boards measured was the one that wrote."
+    "The write came before this stop, not at it: one to four instructions before, "
+    "on the parts measured, which can be past a return, a branch or into a call. "
+    "It was made either just before stopped_at, or in returned_from, the function "
+    "the last call before LR went to, if that call returned in those instructions. "
+    "Nothing here tells which; the source of both does."
 )
 
 
@@ -1757,7 +1758,8 @@ def run_until(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Run the target until it reaches `location` (a function, "file.c:line" or an
-address) or writes `watch` (a variable or an address), for at most `seconds`,
+address) or writes `watch` (a variable or an address, of 1, 2 or 4 aligned
+bytes), for at most `seconds`,
 and leave the core halted there, with the call stack. Needs the ELF the target
 runs, and refuses another. Verified only when the chip's debug status register
 names the stop; a watchpoint stops just after the write. The rest of the chip

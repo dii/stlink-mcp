@@ -11,10 +11,15 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Added
 
+- `tools/hwcheck` checks that `run_until` refuses a wide watch and stops verified on a write by the caller, on the H7 and the F407: 72 of 72 on 2026-10-03 with `--f4`, `--f4-console` and `--jtag`.
 - Windows 11 measured with a NUCLEO-N657X0-Q: every check in `tools/hwcheck --n6` passed, 14 of 14, a run verified by its console text over COM3 among them. `tools/hwcheck` builds its images on Windows, removes them at the end unless `--keep-images`, and its N6 sequence now also reads by name and takes the call stack at a stop. Its new `n6_print` image prints on the N6 board's virtual COM port, so a run on the N6 is verified by console.
 
 ### Fixed
 
+- `run_until` refuses a watch that is not 1, 2 or 4 bytes at an address aligned to its size. ST's GDB server accepted a 36-byte one, watched only its first byte, and the run reported no write while the program wrote the rest on every tick; a 2-byte one at an odd address was accepted and never fired.
+- `run_until` fails at once, with GDB's reason, when GDB cannot insert a breakpoint, as at an address where nothing answers. It read GDB's `^running` as a run, waited out the time limit and an interrupt, and reported a target that did not stop, which had never run.
+- A watchpoint result's `called_just_before` is now `returned_from`, is left out when the core is still inside that call, and is described as a candidate for the writer only. It had named a function that wrote nothing, on the H7 and the F407, whenever the caller made the write.
+- A breakpoint's kind reads `software` rather than `software, in RAM`: ST's GDB server describes everything but flash as read-write, ROM included.
 - A register named after its peripheral's type, as the STM32N657 file names USART1's (`USART_BRR`), is found by `USART1.BRR`, and one the file gives in two forms (`USART_ISR_FIFO_ENABLED`, `USART_ISR_FIFO_DISABLED`) is refused with both named, where it was "no register".
 - Tests that assumed POSIX path separators, symlinks or chmod now pass or skip on Windows, and `.gitattributes` keeps git from rewriting the line endings of captured fixtures on checkout.
 

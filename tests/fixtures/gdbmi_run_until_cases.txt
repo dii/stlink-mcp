@@ -1,0 +1,598 @@
+# GDB/MI from run_until's own sessions through ST-LINK_gdbserver in attach mode,
+# 2026-10-03: a NUCLEO-H743ZI running h7_vars and an STM32F407 running f4_vars,
+# both from RAM, built by tools/hwcheck. "> " marks each command run_until sent;
+# the lines after it are everything GDB printed until the next command.
+## h7-unmapped: a breakpoint at 0x60000000, where nothing answers on the H7
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000e2 in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000e2",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -break-insert "*0x60000000"
+(gdb) 
+^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x60000000",thread-groups=["i1"],times="0",original-location="*0x60000000"}
+> -interpreter-exec console "info mem"
+(gdb) 
+~"Using memory regions provided by the target.\n"
+~"Num Enb Low Addr   High Addr  Attrs \n"
+~"0   y  \t0x00000000 0x08000000 rw nocache \n"
+~"1   y  \t0x08000000 0x08200000 flash blocksize 0x400 nocache \n"
+~"2   y  \t0x08200000 0xffffffff rw nocache \n"
+^done
+> -exec-continue
+(gdb) 
+^running
+*running,thread-id="all"
+&"Warning:\n"
+&"Cannot insert breakpoint 1.\n"
+&"Cannot access memory at address 0x60000000\n"
+&"\n"
+^error,msg="Command aborted."
+> -break-delete
+(gdb) 
+^done
+> -target-detach
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+~"[Inferior 1 (Remote target) detached]\n"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## h7-no-function: a location that is not in the ELF
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000e8 in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000e8",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -break-insert "no_such_function"
+(gdb) 
+^error,msg="Function \"no_such_function\" not defined."
+> -break-delete
+(gdb) 
+^done
+> -target-detach
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+~"[Inferior 1 (Remote target) detached]\n"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## h7-register: a watch on $pc, which GDB can only do in software
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000e4 in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000e4",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof($pc)"
+(gdb) 
+^done,value="4"
+> -data-evaluate-expression "&($pc)"
+(gdb) 
+^error,msg="Attempt to take address of value not located in memory."
+> -break-watch "$pc"
+(gdb) 
+^done,wpt={number="1",exp="$pc"}
+> -break-list
+(gdb) 
+^done,BreakpointTable={nr_rows="1",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="10",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="watchpoint",disp="keep",enabled="y",what="$pc",thread-groups=["i1"],times="0",original-location="$pc"}]}
+> -break-delete
+(gdb) 
+^done
+> -target-detach
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+~"[Inferior 1 (Remote target) detached]\n"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## h7-struct: a watch on g_state, 36 bytes
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000e4 in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000e4",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof(g_state)"
+(gdb) 
+^done,value="36"
+> -data-evaluate-expression "&(g_state)"
+(gdb) 
+^done,value="0x24000130 <g_state>"
+> -break-delete
+(gdb) 
+^done
+> -target-detach
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+~"[Inferior 1 (Remote target) detached]\n"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## h7-member2: a watch on g_state.samples[1], written by reset_handler just before it calls level1
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000e4 in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000e4",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof(g_state.samples[1])"
+(gdb) 
+^done,value="2"
+> -data-evaluate-expression "&(g_state.samples[1])"
+(gdb) 
+^done,value="0x24000140 <g_state+16>"
+> -break-watch "g_state.samples[1]"
+(gdb) 
+^done,wpt={number="1",exp="g_state.samples[1]"}
+> -break-list
+(gdb) 
+^done,BreakpointTable={nr_rows="1",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="10",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="hw watchpoint",disp="keep",enabled="y",what="g_state.samples[1]",thread-groups=["i1"],times="0",original-location="g_state.samples[1]"}]}
+> -data-evaluate-expression "g_state.samples[1]"
+(gdb) 
+^done,value="6"
+> -exec-continue
+(gdb) 
+^running
+*running,thread-id="all"
+(gdb) 
+~"\nProgram"
+~" received signal SIGTRAP, Trace/breakpoint trap.\n"
+~"level1 (depth=depth@entry=0) at debug_target.c:45\n"
+~"45\tin debug_target.c\n"
+*stopped,reason="signal-received",signal-name="SIGTRAP",signal-meaning="Trace/breakpoint trap",frame={addr="0x2400008a",func="level1",args=[{name="depth",value="0"},{name="depth@entry",value="0"}],file="debug_target.c",fullname="images/debug_target.c",line="45",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+> -stack-list-frames 0 8
+^done,stack=[frame={level="0",addr="0x2400008a",func="level1",file="debug_target.c",fullname="images/debug_target.c",line="45",arch="armv7e-m"},frame={level="1",addr="0x240000d6",func="reset_handler",file="debug_target.c",fullname="images/debug_target.c",line="58",arch="armv7e-m"},frame={level="2",addr="0xffffffff",func="<signal handler called>"}]
+> -stack-list-variables --thread 1 --frame 0 --all-values
+(gdb) 
+^done,variables=[{name="depth",arg="1",value="0"},{name="depth@entry",arg="1",value="0"}]
+> -stack-list-variables --thread 1 --frame 1 --all-values
+(gdb) 
+^done,variables=[]
+> -data-evaluate-expression "g_state.samples[1]"
+(gdb) 
+^done,value="7"
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x0"},{number="1",value="0x0"},{number="2",value="0x7"},{number="3",value="0x2400013a"},{number="4",value="0x24000160"},{number="5",value="0x0"},{number="6",value="0x24000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2407ffe0"},{number="14",value="0x240000d7"},{number="15",value="0x2400008a"},{number="25",value="0x1000000"}]
+> -data-disassemble -s 0x240000D2 -e 0x240000D6 -- 0
+(gdb) 
+^done,asm_insns=[{address="0x240000d2",func-name="reset_handler",offset="64",inst="bl\t0x24000088 <level1>"}]
+> -break-delete
+(gdb) 
+^done
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x0"},{number="1",value="0x0"},{number="2",value="0x7"},{number="3",value="0x2400013a"},{number="4",value="0x24000160"},{number="5",value="0x0"},{number="6",value="0x24000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2407ffe0"},{number="14",value="0x240000d7"},{number="15",value="0x2400008a"},{number="25",value="0x1000000"}]
+> -target-disconnect
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## f4-member2: the same on the F407
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from f4_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61238
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x200000e4 in delay (n=500000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x200000e4",func="delay",args=[{name="n",value="500000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x20000000 64
+(gdb) 
+^done,memory=[{begin="0x20000000",offset="0x00000000",end="0x20000040",contents="00000220930000204100002041000020410000204100002041000020000000000000000000000000000000004100002041000020000000004100002041000020"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="60020000"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof(g_state.samples[1])"
+(gdb) 
+^done,value="2"
+> -data-evaluate-expression "&(g_state.samples[1])"
+(gdb) 
+^done,value="0x20000140 <g_state+16>"
+> -break-watch "g_state.samples[1]"
+(gdb) 
+^done,wpt={number="1",exp="g_state.samples[1]"}
+> -break-list
+(gdb) 
+^done,BreakpointTable={nr_rows="1",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="10",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="hw watchpoint",disp="keep",enabled="y",what="g_state.samples[1]",thread-groups=["i1"],times="0",original-location="g_state.samples[1]"}]}
+> -data-evaluate-expression "g_state.samples[1]"
+(gdb) 
+^done,value="3"
+> -exec-continue
+(gdb) 
+^running
+*running,thread-id="all"
+(gdb) 
+~"\nProgram"
+~" received signal SIGTRAP, Trace/breakpoint trap.\n"
+~"0x200000d2 in reset_handler () at debug_target.c:58\n"
+~"58\tin debug_target.c\n"
+*stopped,reason="signal-received",signal-name="SIGTRAP",signal-meaning="Trace/breakpoint trap",frame={addr="0x200000d2",func="reset_handler",args=[],file="debug_target.c",fullname="images/debug_target.c",line="58",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+> -stack-list-frames 0 8
+^done,stack=[frame={level="0",addr="0x200000d2",func="reset_handler",file="debug_target.c",fullname="images/debug_target.c",line="58",arch="armv7e-m"},frame={level="1",addr="0xffffffff",func="<signal handler called>"}]
+> -stack-list-variables --thread 1 --frame 0 --all-values
+(gdb) 
+^done,variables=[]
+> -data-evaluate-expression "g_state.samples[1]"
+(gdb) 
+^done,value="4"
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x0"},{number="1",value="0x0"},{number="2",value="0x4"},{number="3",value="0x2000013a"},{number="4",value="0x20000160"},{number="5",value="0x0"},{number="6",value="0x20000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2001ffe8"},{number="14",value="0x2000010d"},{number="15",value="0x200000d2"},{number="25",value="0x1000000"}]
+> -data-disassemble -s 0x20000108 -e 0x2000010C -- 0
+(gdb) 
+^done,asm_insns=[{address="0x20000108",func-name="reset_handler",offset="118",inst="bl\t0x20000054 <reached_tick_five>"}]
+> -break-delete
+(gdb) 
+^done
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x0"},{number="1",value="0x0"},{number="2",value="0x4"},{number="3",value="0x2000013a"},{number="4",value="0x20000160"},{number="5",value="0x0"},{number="6",value="0x20000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2001ffe8"},{number="14",value="0x2000010d"},{number="15",value="0x200000d2"},{number="25",value="0x1000000"}]
+> -target-disconnect
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## h7-watched: a watch on g_watched, written by writer as the last thing it does
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000e8 in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000e8",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof(g_watched)"
+(gdb) 
+^done,value="4"
+> -data-evaluate-expression "&(g_watched)"
+(gdb) 
+^done,value="0x24000164 <g_watched>"
+> -break-watch "g_watched"
+(gdb) 
+^done,wpt={number="1",exp="g_watched"}
+> -break-list
+(gdb) 
+^done,BreakpointTable={nr_rows="1",nr_cols="6",hdr=[{width="7",alignment="-1",col_name="number",colhdr="Num"},{width="14",alignment="-1",col_name="type",colhdr="Type"},{width="4",alignment="-1",col_name="disp",colhdr="Disp"},{width="3",alignment="-1",col_name="enabled",colhdr="Enb"},{width="10",alignment="-1",col_name="addr",colhdr="Address"},{width="40",alignment="2",col_name="what",colhdr="What"}],body=[bkpt={number="1",type="hw watchpoint",disp="keep",enabled="y",what="g_watched",thread-groups=["i1"],times="0",original-location="g_watched"}]}
+> -data-evaluate-expression "g_watched"
+(gdb) 
+^done,value="40"
+> -exec-continue
+(gdb) 
+^running
+*running,thread-id="all"
+(gdb) 
+~"\nProgram"
+~" received signal SIGTRAP, Trace/breakpoint trap.\n"
+~"reset_handler () at debug_target.c:57\n"
+~"57\tin debug_target.c\n"
+*stopped,reason="signal-received",signal-name="SIGTRAP",signal-meaning="Trace/breakpoint trap",frame={addr="0x240000be",func="reset_handler",args=[],file="debug_target.c",fullname="images/debug_target.c",line="57",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+> -stack-list-frames 0 8
+^done,stack=[frame={level="0",addr="0x240000be",func="reset_handler",file="debug_target.c",fullname="images/debug_target.c",line="57",arch="armv7e-m"},frame={level="1",addr="0xffffffff",func="<signal handler called>"}]
+> -stack-list-variables --thread 1 --frame 0 --all-values
+(gdb) 
+^done,variables=[]
+> -data-evaluate-expression "g_watched"
+(gdb) 
+^done,value="42"
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x2a"},{number="1",value="0x0"},{number="2",value="0x15"},{number="3",value="0x15"},{number="4",value="0x24000160"},{number="5",value="0x0"},{number="6",value="0x24000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2407ffe8"},{number="14",value="0x24000103"},{number="15",value="0x240000be"},{number="25",value="0x21000000"}]
+> -data-disassemble -s 0x240000FE -e 0x24000102 -- 0
+(gdb) 
+^done,asm_insns=[{address="0x240000fe",func-name="reset_handler",offset="108",inst="bl\t0x24000042 <writer>"}]
+> -break-delete
+(gdb) 
+^done
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x2a"},{number="1",value="0x0"},{number="2",value="0x15"},{number="3",value="0x15"},{number="4",value="0x24000160"},{number="5",value="0x0"},{number="6",value="0x24000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2407ffe8"},{number="14",value="0x24000103"},{number="15",value="0x240000be"},{number="25",value="0x21000000"}]
+> -target-disconnect
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## f4-writer: a breakpoint at writer on the F407
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from f4_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61238
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x200000e8 in delay (n=500000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x200000e8",func="delay",args=[{name="n",value="500000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x20000000 64
+(gdb) 
+^done,memory=[{begin="0x20000000",offset="0x00000000",end="0x20000040",contents="00000220930000204100002041000020410000204100002041000020000000000000000000000000000000004100002041000020000000004100002041000020"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="60020000"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -break-insert "writer"
+(gdb) 
+^done,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x20000042",func="writer",file="debug_target.c",fullname="images/debug_target.c",line="39",thread-groups=["i1"],times="0",original-location="writer"}
+> -interpreter-exec console "info mem"
+(gdb) 
+~"Using memory regions provided by the target.\n"
+~"Num Enb Low Addr   High Addr  Attrs \n"
+~"0   y  \t0x00000000 0x08000000 rw nocache \n"
+~"1   y  \t0x08000000 0x08100000 flash blocksize 0x4000 nocache \n"
+~"2   y  \t0x08100000 0xffffffff rw nocache \n"
+^done
+> -exec-continue
+(gdb) 
+^running
+*running,thread-id="all"
+(gdb) 
+=breakpoint-modified,bkpt={number="1",type="breakpoint",disp="keep",enabled="y",addr="0x20000042",func="writer",file="debug_target.c",fullname="images/debug_target.c",line="39",thread-groups=["i1"],times="1",original-location="writer"}
+~"\n"
+~"Breakpoint 1, writer (v=28) at debug_target.c:39\n"
+~"39\tin debug_target.c\n"
+*stopped,reason="breakpoint-hit",disp="keep",bkptno="1",frame={addr="0x20000042",func="writer",args=[{name="v",value="28"}],file="debug_target.c",fullname="images/debug_target.c",line="39",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+> -stack-list-frames 0 8
+^done,stack=[frame={level="0",addr="0x20000042",func="writer",file="debug_target.c",fullname="images/debug_target.c",line="39",arch="armv7e-m"},frame={level="1",addr="0x20000102",func="reset_handler",file="debug_target.c",fullname="images/debug_target.c",line="55",arch="armv7e-m"},frame={level="2",addr="0xffffffff",func="<signal handler called>"}]
+> -stack-list-variables --thread 1 --frame 0 --all-values
+(gdb) 
+^done,variables=[{name="v",arg="1",value="28"},{name="s_count",value="13"}]
+> -stack-list-variables --thread 1 --frame 1 --all-values
+(gdb) 
+^done,variables=[]
+> -break-delete
+(gdb) 
+^done
+> -data-list-register-names
+(gdb) 
+^done,register-names=["r0","r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","sp","lr","pc","","","","","","","","","","xpsr","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","","d0","d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","","","","","","","","","","","","","","","","","fpscr","msp","psp","primask","basepri","faultmask","control","s0","s1","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","s12","s13","s14","s15","s16","s17","s18","s19","s20","s21","s22","s23","s24","s25","s26","s27","s28","s29","s30","s31"]
+> -data-list-register-values x 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 25
+(gdb) 
+^done,register-values=[{number="0",value="0x1c"},{number="1",value="0x0"},{number="2",value="0x7a11f"},{number="3",value="0x2a"},{number="4",value="0x20000160"},{number="5",value="0x0"},{number="6",value="0x20000130"},{number="7",value="0x0"},{number="8",value="0x0"},{number="9",value="0x0"},{number="10",value="0x0"},{number="11",value="0x0"},{number="12",value="0x0"},{number="13",value="0x2001ffe8"},{number="14",value="0x20000103"},{number="15",value="0x20000042"},{number="25",value="0x1000000"}]
+> -target-disconnect
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+^done
+> -gdb-exit
+(gdb) 
+^exit
+## h7-misaligned: a 2-byte watch at 0x2400013D, not aligned to its size
+> -gdb-set mi-async on
+=thread-group-added,id="i1"
+~"Reading symbols from h7_vars.elf...\n"
+(gdb) 
+^done
+> -gdb-set confirm off
+(gdb) 
+^done
+> -gdb-set pagination off
+(gdb) 
+^done
+> -target-select extended-remote localhost:61234
+(gdb) 
+=thread-group-started,id="i1",pid="42000"
+=thread-created,id="1",group-id="i1"
+~"0x240000ea in delay (n=2000000) at debug_target.c:48\n"
+&"warning: 48\tdebug_target.c: No such file or directory\n"
+*stopped,frame={addr="0x240000ea",func="delay",args=[{name="n",value="2000000"}],file="debug_target.c",fullname="images/debug_target.c",line="48",arch="armv7e-m"},thread-id="1",stopped-threads="all",core="0"
+^connected
+> -data-read-memory-bytes 0x24000000 64
+(gdb) 
+^done,memory=[{begin="0x24000000",offset="0x00000000",end="0x24000040",contents="00000824930000244100002441000024410000244100002441000024000000000000000000000000000000004100002441000024000000004100002441000024"}]
+> -data-read-memory-bytes 0xE0002000 4
+(gdb) 
+^done,memory=[{begin="0xe0002000",offset="0x00000000",end="0xe0002004",contents="81000010"}]
+> -data-read-memory-bytes 0xE0001000 4
+(gdb) 
+^done,memory=[{begin="0xe0001000",offset="0x00000000",end="0xe0001004",contents="01000040"}]
+> -data-evaluate-expression "sizeof(*(unsigned short *)(0x24000000+0x13D))"
+(gdb) 
+^done,value="2"
+> -data-evaluate-expression "&(*(unsigned short *)(0x24000000+0x13D))"
+(gdb) 
+^done,value="0x2400013d <g_state+13>"
+> -break-delete
+(gdb) 
+^done
+> -target-detach
+(gdb) 
+=thread-exited,id="1",group-id="i1"
+=thread-group-exited,id="i1"
+~"[Inferior 1 (Remote target) detached]\n"
+^done
+> -gdb-exit
+(gdb) 
+^exit

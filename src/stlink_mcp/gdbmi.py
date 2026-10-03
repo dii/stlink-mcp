@@ -192,13 +192,22 @@ class Session:
         self.command("-exec-continue")
 
     def wait_stopped(self, timeout: float) -> Record | None:
+        """The next stop, or None after `timeout`. GDB answers a continue with
+        ^running before it inserts the breakpoints, so one it cannot insert
+        arrives here as ^error, with the reason in its log stream (measured
+        2026-10-03); that raises MiError, and the target was not resumed."""
         if self._pending_stop is not None:
             stop, self._pending_stop = self._pending_stop, None
             return stop
         deadline = time.monotonic() + timeout
+        log: list[str] = []
         while (record := self._next(deadline)) is not None:
             if record.kind == "*" and record.klass == "stopped":
                 return record
+            if record.kind == "&" and record.text.strip() not in ("", "Warning:"):
+                log.append(record.text.strip())
+            if record.kind == "^" and record.klass == "error":
+                raise MiError(" ".join(log) or str(record.results.get("msg", record.results)))
         return None
 
     def close(self, detach: bool) -> None:
