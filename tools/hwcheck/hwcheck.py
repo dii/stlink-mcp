@@ -384,8 +384,10 @@ async def check_flash(server: Server, label: str, serial: str, flash_size: int,
     print(f"      saved the {label}'s flash to {backup} ({used} bytes in use)", flush=True)
     try:
         flash = await server.call("flash_firmware", image_path=str(image), probe_serial=serial)
-        report.check(flash["status"] == "verified" and "identical" in flash.get("verified_by", ""),
-                     f"{label} flash: flash_firmware is verified by reading the range back", _why(flash))
+        report.check(flash["status"] == "verified" and "identical" in flash.get("verified_by", "")
+                     and "erased_beyond_image" in flash,
+                     f"{label} flash: flash_firmware is verified by reading the range back, and says what its "
+                     "erase took beyond the image", f"{_why(flash)}; erased {flash.get('erased_beyond_image')}")
         booted = await server.call("reset_target", probe_serial=serial)
         report.check(booted["status"] == "verified",
                      f"{label} flash: the written image's reset handler is where the core starts", _why(booted))
@@ -477,6 +479,56 @@ async def check_jtag(server: Server, serial: str, images: Built, report: Report)
     report.check(swd["status"] == "failed" and "uses JTAG" in swd.get("error", ""),
                  "JTAG: run_until does not reuse a server held over JTAG for SWD", _why(swd))
     await server.call("release_probe", probe_serial=serial)
+
+
+N6_LOADER = "MX25UM51245G_STM32N6570-NUCLEO.stldr"
+
+
+async def check_n6_flash(server: Server, serial: str, report: Report) -> None:
+    """Write the start of the N6's external flash through flash_firmware, which
+    erases whole 64 KB sectors there, and put back what was there: a board's
+    boot image lives at 0x70000000. The first sector is filled with data first,
+    so the erase shows whatever the board held."""
+    from stlink_mcp.probe import Probe
+
+    await server.call("release_probe", probe_serial=serial)
+    probe = Probe(find_toolchain(), serial=serial)
+    if not probe.identify(allow_reset=False).connected:
+        report.check(False, "N6 flash: reach the board to save its flash", "no connect")
+        return
+    base, kept = 0x70000000, 0x20000
+    folder = Path(tempfile.mkdtemp(prefix="stlink-hwcheck-flash-"))
+    backup, filler, pattern = folder / "n6-flash-128k.bin", folder / "filler.bin", folder / "pattern.bin"
+    try:
+        saved = probe.read_back(base, kept, N6_LOADER)
+    except Exception as exc:  # noqa: BLE001
+        report.check(False, "N6 flash: save the first 128 KB before writing", str(exc)[-300:])
+        return
+    backup.write_bytes(saved)
+    print(f"      saved the N6's first 128 KB of flash to {backup}", flush=True)
+    try:
+        filler.write_bytes(b"\x11" * 0x10000)
+        probe.program_flash(str(filler), base, N6_LOADER)
+        pattern.write_bytes(bytes((i * 7 + 3) & 0x7F for i in range(0x4000)))
+        out = await server.call("flash_firmware", image_path=str(pattern), probe_serial=serial)
+        erased = out.get("erased_beyond_image") if isinstance(out.get("erased_beyond_image"), dict) else {}
+        report.check(out["status"] == "verified" and "identical" in out.get("verified_by", "")
+                     and "sign it" in out.get("next_step", "")
+                     and (erased.get("from"), erased.get("to")) == ("0x70004000", "0x70010000"),
+                     "N6 flash: flash_firmware writes the external flash through its loader, verified by "
+                     "reading back, says to sign, and reports the rest of the 64 KB sector erased",
+                     f"{_why(out)}; erased {erased}")
+    finally:
+        try:
+            probe.program_flash(str(backup), base, N6_LOADER)
+            restored = probe.read_back(base, kept, N6_LOADER) == saved
+        except Exception as exc:  # noqa: BLE001
+            restored, why = False, str(exc)[-300:]
+        else:
+            why = "identical" if restored else "differs"
+        report.check(restored, "N6 flash: the first 128 KB are written back and verified", why)
+        if restored:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 async def check_n6(server: Server, serial: str, images: Built, report: Report) -> bool:
@@ -594,7 +646,7 @@ async def main() -> int:
     parser.add_argument("--keep-images", action="store_true",
                         help="keep the built test images, and print where they are")
     parser.add_argument("--flash", action="store_true",
-                        help="also write, read back and restore the flash of the H7 and the F4")
+                        help="also write, read back and restore the flash of the H7, the N6 and the F4")
     args = parser.parse_args()
 
     image_dir = Path(tempfile.mkdtemp(prefix="stlink-hwcheck-"))
@@ -623,6 +675,8 @@ async def _run(args: argparse.Namespace, images: Built) -> int:
                 await check_flash(server, "H7", h7, 0x200000, images.bin["h7_flash"], report)
         if n6:
             n6_up = await check_n6(server, n6, images, report)
+            if n6_up and args.flash:
+                await check_n6_flash(server, n6, report)
         if h7_up and n6_up:
             await check_together(server, h7, n6, report)
         if n6_up and args.n6_closed:

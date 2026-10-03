@@ -369,3 +369,15 @@ The program leaves the H7's RTC running from the LSI until power is removed: RCC
 
 `tools/hwcheck` checks the refusal and the read on both boards' ADCs, and the watch on the H7's: 79 of 79 with `--f4`, `--f4-console` and `--jtag`.
 
+## The N6's external flash, and what an erase takes (2026-10-03)
+
+The owner set the F407 and N6 boards aside as test hardware, with nothing on them to keep, which let the N6's flash path be written without a copy of its contents to protect. `flash_firmware` with a 16 KB pattern at 0x70000000, through ST's MX25UM51245G_STM32N6570-NUCLEO loader, on access port 1, in the board's development boot mode: `verified`, the readback identical, in 5.4 seconds. A second, different pattern: the same, in 4.2 seconds, so the match was not with what the flash already held. The board answered on access port 1 afterwards.
+
+Reading 128 KB back then showed what the result had not said. Everything from 0x70004000 to 0x7000FFFF read 0xFF, and data resumed at 0x70010000: the programmer's output said "Erasing external memory sector 0", and that sector is 64 KB, so writing 16 KB took the other 48 KB with it. The programmer names the sector and not its size. The same is true of any small image on internal flash: the H7's sectors are 128 KB, the F407's 16 to 128 KB. `flash_firmware` now reads the bytes after the image, up to the next 128 KB boundary, before and after the write, and reports those that held data and read 0xFF afterwards. Through `tools/hwcheck --flash` the same day: on the N6, after filling its first sector with data, 0x70004000 to 0x70010000, 49,152 bytes; on the H7, 273 bytes from 0x08000187 to 0x08000298, which is all its own firmware puts in sector 0 before its code starts at 0x08020000; on the F407, none, its sector 0 having held the same test image. `to` is just past the last byte that changed, so 0xFF bytes at the end of the old data make it short, and a sector larger than 128 KB, which none of the measured parts has, would show only in part.
+
+Its next step said only to set the boot switches. The N6 boots only a signed image, and this tool does not sign, so for such a part it now says to sign first.
+
+Not measured: booting the N6 from its flash, which needs a signed image and the boot switches moved.
+
+`tools/hwcheck --flash` now writes the start of the N6's flash too, after saving the first 128 KB, and writes the saved copy back: 87 of 87 with `--f4`, `--f4-console`, `--jtag` and `--flash`.
+

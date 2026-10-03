@@ -2141,6 +2141,15 @@ class TestFlashIsReadBackBeforeItIsVerified:
         assert out["status"] == result.VERIFIED
         assert "read back 16 bytes" in out["verified_by"]
 
+    def test_a_part_that_boots_only_signed_images_is_told_to_sign(self, bench) -> None:
+        """The bench is an STM32N6, whose boot ROM starts only a signed image. Its
+        next step said only to set the boot switches (found 2026-10-03, writing
+        the N6's external flash for the first time)."""
+        bench.bin.write_bytes(bytes(range(16)))
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert out["status"] == result.VERIFIED and out["signing_required"] is True
+        assert "sign it" in out["next_step"]
+
     def test_flash_that_differs_from_the_image_fails_and_says_where(self, bench) -> None:
         bench.bin.write_bytes(bytes(range(16)))
         flash = bytearray(range(16)); flash[5] = 0xFF
@@ -2158,6 +2167,57 @@ class TestFlashIsReadBackBeforeItIsVerified:
         assert_contract(out)
         assert out["status"] == result.UNVERIFIED
         assert "failed to read" in out["unverified_because"]
+
+
+class TestTheEraseBeyondTheImageIsSaid:
+    """16 KB written at 0x70000000 on an STM32N6 erased 64 KB, and the result
+    said only that the 16 KB read back identical (2026-10-03). The flash here
+    erases 64 KB sectors, as the N6's external flash did."""
+
+    BASE, SECTOR = 0x70000000, 0x10000
+
+    def _flash(self, monkeypatch, content: bytes) -> bytearray:
+        model = bytearray(content) + bytearray(b"\xff" * (0x40000 - len(content)))
+
+        def program(probe, image, address, loader):
+            data = Path(image).read_bytes()
+            offset = address - self.BASE
+            end = -(-(offset + len(data)) // self.SECTOR) * self.SECTOR
+            model[offset:end] = b"\xff" * (end - offset)
+            model[offset:offset + len(data)] = data
+            return "Erasing memory corresponding to segment 0:\nErasing external memory sector 0\nFile download complete\n"
+
+        def read_back(probe, address, size, loader):
+            offset = address - self.BASE
+            return bytes(model[offset:offset + size])
+
+        monkeypatch.setattr(_FakeProbe, "program_flash", program)
+        monkeypatch.setattr(_FakeProbe, "read_back", read_back)
+        return model
+
+    def test_data_after_the_image_in_its_sector_is_reported_erased(self, bench, monkeypatch) -> None:
+        self._flash(monkeypatch, b"\x11" * 0x20000)                # 128 KB of data, no 0xFF in it
+        bench.bin.write_bytes(b"\x5a" * 0x4000)
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED
+        erased = out["erased_beyond_image"]
+        assert (erased["from"], erased["to"], erased["bytes"]) == ("0x70004000", "0x70010000", 0xC000)
+        assert "whole sectors" in erased["note"]
+        assert out["programmer_erase"] == ["Erasing memory corresponding to segment 0:", "Erasing external memory sector 0"]
+
+    def test_blank_flash_after_the_image_cannot_show_the_erase(self, bench, monkeypatch) -> None:
+        self._flash(monkeypatch, b"")
+        bench.bin.write_bytes(b"\x5a" * 0x4000)
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert out["erased_beyond_image"]["bytes"] == 0 and "already blank" in out["erased_beyond_image"]["note"]
+
+    def test_an_image_that_fills_its_sector_takes_nothing_else(self, bench, monkeypatch) -> None:
+        self._flash(monkeypatch, b"\x11" * 0x20000)
+        bench.bin.write_bytes(b"\x5a" * self.SECTOR)
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        erased = out["erased_beyond_image"]
+        assert erased["bytes"] == 0 and "took nothing after the image" in erased["note"]
 
 
 class TestReadBackUsesTheProgrammersUpload:

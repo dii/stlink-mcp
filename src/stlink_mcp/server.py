@@ -1212,11 +1212,11 @@ def flash_firmware(
 ) -> dict[str, Any]:
     """Program a raw binary image (.bin) into boot memory for standalone boot.
 
-Prefer run_firmware while developing. Does not sign. Refuses anything but a
-.bin, because the programmer writes HEX, S-record and ELF files to the
-addresses inside them. Refuses a flash base that is not `measured` unless you
-pass `address`, an integer or a hex string such as "0x08000000". Verified only
-when the written range, read back afterwards, matches the image byte for byte.
+Prefer run_firmware while developing. Does not sign. Takes only a .bin, since
+the programmer writes HEX, S-record and ELF files where they say. Refuses an
+unmeasured flash base unless you pass `address`, an integer or a hex string.
+Verified only when the range read back matches the image byte for byte. Says
+what its erase took beyond the image, which is whole sectors.
     """
     # Checked before anything touches the probe, like run_firmware's image
     # check: a refusal after identify() would already have connected, and
@@ -1291,6 +1291,18 @@ when the written range, read back afterwards, matches the image byte for byte.
             ),
         )
 
+    # The erase takes whole sectors, so a small image takes the rest of its last
+    # one with it: 16 KB written at 0x70000000 on an STM32N6 erased 64 KB, and
+    # the result said nothing of it (2026-10-03). The bytes after the image are
+    # read before and after the write, and the difference is reported.
+    window = _erase_window(target_address, image_size)
+    before: bytes | None = None
+    if window is not None:
+        try:
+            before = probe.read_back(window[0], window[1], quirks.external_loader)
+        except Exception:  # noqa: BLE001
+            before = None
+
     try:
         output = probe.program_flash(str(image), target_address, quirks.external_loader)
     except Exception as exc:  # noqa: BLE001
@@ -1306,6 +1318,10 @@ when the written range, read back afterwards, matches the image byte for byte.
         "signing_required": quirks.requires_signing,
         "detail": output.strip().splitlines()[-3:],
         "next_step": (
+            "This does not start the image, and this part boots only a signed image, which "
+            "this tool does not make: sign it (ST's STM32_SigningTool_CLI), write the signed "
+            "file, set the board's boot configuration to boot from flash and reset it."
+            if quirks.requires_signing else
             "This does not start the image. Set the board's boot configuration to "
             "boot from flash and reset it."
         ),
@@ -1338,11 +1354,64 @@ when the written range, read back afterwards, matches the image byte for byte.
             differing_bytes=len(differing),
             **written,
         )
+    written.update(_erase_report(probe, quirks.external_loader, window, before, output))
     return verified(
         f"read back {image_size} bytes from {_hex(target_address)} after the write "
         "and compared them with the image: identical",
         **written,
     )
+
+
+#: How far past an image flash_firmware looks for what its erase took: to the
+#: next 128 KB boundary, the largest sector on the parts measured (the H7's).
+_ERASE_WINDOW = 0x20000
+
+
+def _erase_window(start: int, size: int) -> tuple[int, int] | None:
+    end = start + size
+    limit = -(-end // _ERASE_WINDOW) * _ERASE_WINDOW
+    return (end, limit - end) if limit > end else None
+
+
+def _erase_report(probe: Probe, loader: str | None, window: tuple[int, int] | None,
+                  before: bytes | None, output: str) -> dict[str, Any]:
+    """What the write's erase took after the image, from reads before and after."""
+    report: dict[str, Any] = {}
+    erased = [line.strip() for line in output.splitlines() if line.strip().lower().startswith("erasing")]
+    if erased:
+        report["programmer_erase"] = erased
+    if window is None:
+        return report
+    start, length = window
+    if before is None:
+        report["erased_beyond_image"] = (
+            f"not checked: the {length} bytes after the image could not be read before the write"
+        )
+        return report
+    try:
+        after = probe.read_back(start, length, loader)
+    except Exception as exc:  # noqa: BLE001
+        report["erased_beyond_image"] = f"not checked: reading them after the write failed: {exc}"
+        return report
+    changed = [i for i in range(length) if before[i] != after[i]]
+    if not changed:
+        blank = before.count(0xFF) == length
+        report["erased_beyond_image"] = {
+            "bytes": 0, "checked_to": _hex(start + length),
+            "note": ("These bytes were already blank, so whether the erase reached them does not show."
+                     if blank else
+                     "These bytes read the same before and after the write: the erase took nothing after the image."),
+        }
+        return report
+    odd = sum(1 for i in changed if after[i] != 0xFF)
+    report["erased_beyond_image"] = {
+        "from": _hex(start), "to": _hex(start + changed[-1] + 1), "bytes": len(changed),
+        "checked_to": _hex(start + length),
+        "note": ("The erase takes whole sectors: these bytes after the image held data before the "
+                 "write and read 0xFF now." + (f" {odd} of them changed to something other than 0xFF, "
+                                               "which an erase does not do." if odd else "")),
+    }
+    return report
 
 
 @mcp.tool()

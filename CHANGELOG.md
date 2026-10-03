@@ -8,10 +8,13 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 - Reads that change state. `read_memory` refuses, before anything is read, a register whose read is known to change it: the UART, SPI, I2C and ADC data registers and the RTC's time registers, from a list kept by peripheral block, which reaches 227 of the 233 SVD files in STM32CubeCLT 1.22.0, and ST's own readAction marks, including another part's mark for the same block. `read_effects_ok` reads it anyway and says what the read did. Any other read in the peripheral range names the registers it covered. Measured on an STM32H743 and an STM32F407: each listed register's flag was cleared by the read, and left set by everything else; the entries not measured say so.
 - Board files take `[[read_effects]]` entries for registers the list does not cover, as `user-stated`.
+- The STM32N6's external flash measured: `flash_firmware` writes it through ST's loader for the NUCLEO-N657X0-Q and verifies it by reading it back. `tools/hwcheck --flash` now also writes the start of the N6's flash, after saving the first 128 KB, checks the erase report, and writes the saved copy back.
 - `tools/hwcheck` checks on the H7 and the F407 that an ADC data register is refused by name and by address and its flag left set, and read with `read_effects_ok`, after which the flag is clear; and on the H7 that `run_until` refuses to watch it. Its new `h7_read_effects` and `f4_read_effects` images leave the ADC holding a conversion.
 
 ### Changed
 
+- `flash_firmware` says what its erase took beyond the image. The erase takes whole sectors: 16 KB written at the start of an STM32N6's external flash erased 64 KB, and the result said only that the 16 KB read back identical. The bytes after the image, up to the next 128 KB boundary, are now read before and after the write, and the result names the range that held data and is now erased, beside the programmer's own erase lines.
+- On a part that boots only signed images, `flash_firmware`'s next step says to sign the image first, which it does not do; it had said only to set the boot switches.
 - `run_until` refuses to watch a register whose read changes state, because GDB reads a watched address when it sets the watchpoint (three times, measured on the H7), and reads no peripheral register's value itself before or after the stop.
 
 ## [0.7.0] - 2026-10-03
