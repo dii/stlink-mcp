@@ -317,3 +317,9 @@ The suite on Windows with the toolchain present: 743 passed, and one skip, the c
 
 What this does not show: console text read from COM3, because the N6 images print nothing; SWO; JTAG; writing flash; and the H7 and F407 paths.
 
+## The N6 prints (2026-10-03)
+
+No N6 test image had printed, so no N6 run had been verified by its console, and on Windows no check had read text from a COM port. The owner asked for one. ST's Nucleo BSP, in an STM32CubeN6 project on the machine, gives the virtual COM port as USART1, TX on PE5 with AF7. The clocks were read off the bench's N6 by name, through `read_memory` on STM32N657.svd: the internal oscillator on, its divider at reset (64 MHz), every PLL off, USART1's kernel clock on its reset choice. `n6_print` selects the internal oscillator for USART1 itself, `RCC_CCIPR13.USART1SEL` = 6, so its baud divisor, 556 for 115200, does not depend on the bus dividers, and writes the RCC, GPIOE and USART1 registers through their Secure aliases, since the image runs Secure. It printed on the first run: `run_firmware` verified on "n6 tick 0" and `capture_console` on ticks 9 to 14, through the board's own port. `tools/hwcheck` checks both, and a silent image after it still comes back `unverified`, the probe's backlog set aside as on the H7: 68 of 68 on the Linux bench.
+
+Reading `USART1.ISR` by name on the way failed with "no register ISR". The N657 file names USART1's registers after the peripheral's type, `USART_ISR`, and gives that one in two forms for the FIFO on and off. Such a name is now found, and a register in several forms is refused with them listed.
+

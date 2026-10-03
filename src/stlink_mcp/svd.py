@@ -176,6 +176,20 @@ def find(path: Path, query: str) -> Register:
         )
     found = registers.get(register.upper()) or registers.get(f"{peripheral}_{register}".upper())
     if found is None:
+        # The STM32N657 file names USART1's registers after the peripheral's type,
+        # USART_ISR, and gives some in two forms, USART_ISR_FIFO_ENABLED and
+        # USART_ISR_FIFO_DISABLED (2026-10-03). One such name is used; several are
+        # listed for the caller to choose, since they describe different layouts.
+        wanted = register.upper()
+        forms = sorted(n for n in registers if n.endswith(f"_{wanted}") or f"_{wanted}_" in n)
+        if len(forms) == 1:
+            return registers[forms[0]]
+        if forms:
+            raise SvdError(
+                f"{path.name} describes {peripheral}'s {register} in {len(forms)} forms: "
+                f"{', '.join(registers[n].name for n in forms)}. Name the one that applies, "
+                f"such as {peripheral}.{registers[forms[0]].name}."
+            )
         near = difflib.get_close_matches(register.upper(), list(registers), n=5)
         unread = (
             f" {path.name} also describes some of {peripheral}'s registers as arrays or "

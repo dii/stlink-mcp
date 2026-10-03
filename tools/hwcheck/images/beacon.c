@@ -36,6 +36,25 @@ static void uart_init(void) {
     REG(0x4000500C) = (1u << 13) | (1u << 3);   /* CR1: UE, TE */
 }
 static void uart_putc(char c) { while (!(REG(0x40005000) & (1u << 7))) {} REG(0x40005004) = (uint8_t)c; }
+#elif defined(N6_UART)   /* NUCLEO-N657X0-Q: the ST-LINK VCP is USART1, PE5 TX, AF7 (ST's
+                            Nucleo BSP, COM1). Secure aliases, since the image runs Secure. */
+static void uart_init(void) {
+    REG(0x56028A5C) = 1u << 4;                  /* RCC_AHB4ENSR: GPIOE */
+    REG(0x56028A6C) = 1u << 4;                  /* RCC_APB2ENSR: USART1 */
+    (void)REG(0x56028A6C);
+    uint32_t sel = REG(0x56028174);             /* RCC_CCIPR13.USART1SEL = 6: hsi_div_ck, */
+    sel &= ~7u; sel |= 6u;                      /* 64 MHz with HSIDIV at its reset value */
+    REG(0x56028174) = sel;
+    uint32_t m = REG(0x56021000);               /* GPIOE_MODER: PE5 alternate */
+    m &= ~(3u << 10); m |= 2u << 10;
+    REG(0x56021000) = m;
+    uint32_t af = REG(0x56021020);              /* GPIOE_AFRL: AF7 on PE5 */
+    af &= ~(0xFu << 20); af |= 7u << 20;
+    REG(0x56021020) = af;
+    REG(0x5200100C) = 556;                      /* USART1_BRR: 64 MHz / 115200 */
+    REG(0x52001000) = (1u << 0) | (1u << 3);    /* CR1: UE, TE; FIFO off */
+}
+static void uart_putc(char c) { while (!(REG(0x5200101C) & (1u << 7))) {} REG(0x52001028) = (uint8_t)c; }
 #elif defined(HAS_UART)   /* NUCLEO-144 STM32H7: the ST-LINK VCP is USART3, PD8 TX / PD9 RX, AF7 */
 #ifndef BRR
 #define BRR 556   /* 64 MHz HSI / 115200 */

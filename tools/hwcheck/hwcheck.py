@@ -422,6 +422,14 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  "N6: board_state identifies the family on AP1", _why(board))
     if not _answered(board, "N6"):
         return False
+    printing = await server.call("run_firmware", elf_path=str(images.elf["n6_print"]), probe_serial=s,
+                                 console_seconds=1.5)
+    report.check(printing["status"] == "verified" and "n6 tick 0" in printing.get("console", ""),
+                 "N6: run_firmware is verified by the image's own console", _why(printing))
+    await server.call("release_probe", probe_serial=s)
+    capture = await server.call("capture_console", probe_serial=s, seconds=2)
+    report.check(capture["status"] == "verified" and "n6 tick" in capture.get("output", ""),
+                 "N6: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('port')}")
     run = await server.call("run_firmware", elf_path=str(images.elf["n6_ram"]), probe_serial=s, console_seconds=1)
     report.check(run["status"] == "unverified", "N6: a silent image is unverified, not verified", _why(run))
     await server.call("release_probe", probe_serial=s)

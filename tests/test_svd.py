@@ -71,6 +71,17 @@ class TestNames:
         register = svd.find(svd_dir / "STM32N657.svd", "RCC.CR")
         assert register.name == "RCC_CR"
 
+    def test_a_register_named_after_the_peripherals_type_is_found(self, svd_dir) -> None:
+        """STM32N657.svd names USART1's registers USART_BRR, USART_TDR."""
+        assert svd.find(svd_dir / "STM32N657.svd", "USART1.BRR").name == "USART_BRR"
+
+    def test_a_register_in_two_forms_lists_both(self, svd_dir) -> None:
+        """Asked for USART1.ISR on 2026-10-03, it said there was no such register."""
+        with pytest.raises(svd.SvdError, match="USART_ISR_FIFO_DISABLED, USART_ISR_FIFO_ENABLED"):
+            svd.find(svd_dir / "STM32N657.svd", "USART1.ISR")
+        chosen = svd.find(svd_dir / "STM32N657.svd", "USART1.USART_ISR_FIFO_DISABLED")
+        assert chosen.address == 0x4200101C
+
     def test_a_derived_peripheral_has_its_own_address(self, svd_dir) -> None:
         one = svd.find(svd_dir / "STM32F407.svd", "USART1.SR")
         two = svd.find(svd_dir / "STM32F407.svd", "USART2.SR")

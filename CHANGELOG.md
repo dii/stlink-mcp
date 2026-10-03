@@ -11,10 +11,11 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Added
 
-- Windows 11 measured with a NUCLEO-N657X0-Q: every check in `tools/hwcheck --n6` passed. `tools/hwcheck` builds its images on Windows, removes them at the end unless `--keep-images`, and its N6 sequence now also reads by name and takes the call stack at a stop.
+- Windows 11 measured with a NUCLEO-N657X0-Q: every check in `tools/hwcheck --n6` passed. `tools/hwcheck` builds its images on Windows, removes them at the end unless `--keep-images`, and its N6 sequence now also reads by name and takes the call stack at a stop. Its new `n6_print` image prints on the N6 board's virtual COM port, so a run on the N6 is verified by console.
 
 ### Fixed
 
+- A register named after its peripheral's type, as the STM32N657 file names USART1's (`USART_BRR`), is found by `USART1.BRR`, and one the file gives in two forms (`USART_ISR_FIFO_ENABLED`, `USART_ISR_FIFO_DISABLED`) is refused with both named, where it was "no register".
 - Tests that assumed POSIX path separators, symlinks or chmod now pass or skip on Windows, and `.gitattributes` keeps git from rewriting the line endings of captured fixtures on checkout.
 
 ## [0.6.0] - 2026-10-02
