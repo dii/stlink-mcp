@@ -55,6 +55,7 @@ packages = ["src/stlink_mcp"]
 # locally-ignored working file from going out the same silent way.
 [tool.hatch.build.targets.sdist]
 include = [
+    ".gitattributes",
     "src/stlink_mcp",
     "tests",
     "tools",
