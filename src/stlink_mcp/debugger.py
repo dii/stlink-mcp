@@ -151,7 +151,10 @@ def frames(session: Session, depth: int = MAX_FRAMES) -> tuple[list[dict[str, An
         level = frame.get("level", "0")
         entry: dict[str, Any] = {
             "function": frame.get("func"),
-            "file": frame.get("file"),
+            # fullname, the compilation directory joined to the file as addr2line
+            # gives it, which locate_fault and board_state use: "file" is the
+            # name alone, and an agent saw "main.c" here and "src/main.c" there.
+            "file": frame.get("fullname") or frame.get("file"),
             "line": _int(frame.get("line")),
             "address": f"0x{address:08X}",
         }
@@ -230,7 +233,7 @@ class Stop:
 
 
 def run_until(session: Session, server: Any, *, location: str | None, watch: str | None,
-              seconds: float, read_effects: Any = None) -> Stop:
+              seconds: float, read_effects: Any = None, also_at: tuple[int, ...] = ()) -> Stop:
     """Insert one breakpoint or watchpoint, continue, and wait at most `seconds`.
 
     Leaves the core halted, at the stop or where it was interrupted, with the
@@ -239,10 +242,13 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
     server would narrow to one byte or that is not aligned to its size, a watch
     on a register `read_effects(address, size)` says changes state when read,
     since GDB reads a watched address when it sets the watchpoint, or a
-    watchpoint GDB could only do in software, by single-stepping."""
+    watchpoint GDB could only do in software, by single-stepping. `also_at` are
+    further addresses for the same location, a function's inlined copies, each
+    given a breakpoint of its own; a stop at any of them is at the location."""
     units = comparators(session)
     detail: dict[str, Any] = {}
     target_address: int | None = None
+    targets: set[int] = set()
     try:
         if location is not None:
             spec = f"*{location}" if re.fullmatch(r"0x[0-9a-fA-F]+", location) else location
@@ -258,7 +264,7 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
             target_address = int(bkpt["addr"], 16)
             hardware = writable(session, target_address) is not True
             detail["location"] = {"address": f"0x{target_address:08X}", "function": bkpt.get("func"),
-                                  "file": bkpt.get("file"), "line": _int(bkpt.get("line"))}
+                                  "file": bkpt.get("fullname") or bkpt.get("file"), "line": _int(bkpt.get("line"))}
             detail["breakpoint"] = "hardware" if hardware else "software"
             if hardware and units is not None and units.breakpoints == 0:
                 raise DebugError(
@@ -272,6 +278,23 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                     "addresses below 0x20000000. On an STM32F407 GDB and the server accepted one "
                     "there without a word and it never fired."
                 )
+            targets = {target_address}
+            copies = [a for a in also_at if a != target_address]
+            needs_unit = int(hardware) + sum(writable(session, a) is not True for a in copies)
+            if copies and units is not None and needs_unit > units.breakpoints:
+                raise DebugError(
+                    f"{location} is at 0x{target_address:08X} and inlined at "
+                    f"{', '.join(f'0x{a:08X}' for a in copies)}: {needs_unit} hardware breakpoints, and "
+                    f"this part has {units.breakpoints}. Give one of those addresses."
+                )
+            for address in copies:
+                try:
+                    session.command(f"-break-insert {_quote(f'*0x{address:08X}')}")
+                except MiError as exc:
+                    raise DebugError(f"GDB could not place {location}'s inlined copy at 0x{address:08X}: {exc}") from exc
+                targets.add(address)
+            if copies:
+                detail["location"]["inlined_at"] = [f"0x{a:08X}" for a in sorted(copies)]
         else:
             expression = f"*(unsigned int *){watch}" if re.fullmatch(r"0x[0-9a-fA-F]+", watch or "") else watch
             size = _int(evaluate(session, f"sizeof({expression})"))
@@ -354,7 +377,7 @@ def run_until(session: Session, server: Any, *, location: str | None, watch: str
                 if callee and not (listed and listed[0].get("function") == callee):
                     detail["returned_from"] = callee
         if location is not None:
-            detail["at_location"] = pc == target_address
+            detail["at_location"] = pc in targets
         return result
     finally:
         try:

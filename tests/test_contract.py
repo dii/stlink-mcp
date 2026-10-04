@@ -452,6 +452,8 @@ def bench(monkeypatch, tmp_path):
             pass
 
     monkeypatch.setattr(server.gdbmi, "Session", _Session)
+    # objdump has a test of its own; here no instruction is known.
+    monkeypatch.setattr(server, "_instruction", lambda toolchain, elf, address: None)
     monkeypatch.setattr(
         server, "list_probes_with_unreadable", lambda tc: (_attached(tc), 0, [])
     )
@@ -907,10 +909,31 @@ class TestALockupUnderAHeldServerIsNamed:
         call("run_firmware", elf_path=str(bench.elf))
         out = call("read_fault_status")
         assert out["any_fault_active"] is False and "keep_probe=False" in out["vector_catch_note"]
+        assert out["status"] == result.UNVERIFIED, "a clean read there is not evidence of no fault"
+        assert "keep_probe=False" in out["unverified_because"]
 
     def test_with_nothing_held_neither_says_it(self, bench, caught) -> None:
         assert "state_note" not in call("board_state")["core"]
-        assert "vector_catch_note" not in call("read_fault_status")
+        out = call("read_fault_status")
+        assert "vector_catch_note" not in out and out["status"] == result.VERIFIED
+
+
+class TestFaultAddressRegistersOnlyWhenValid:
+    """MMFAR and BFAR hold a stale or reset value unless CFSR marks them valid;
+    three of four agents in an evaluation named one as easy to take for the
+    faulting address."""
+
+    def test_an_invalid_one_is_left_out(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "memory", {faults.CFSR: 0x00010000, faults.MMFAR: 0x3597024A,
+                                                   faults.BFAR: 0x3597024A})
+        raw = call("read_fault_status")["raw_registers"]
+        assert "MMFAR" not in raw and "BFAR" not in raw and raw["CFSR"] == "0x00010000"
+
+    def test_a_valid_one_is_given_twice(self, bench, monkeypatch) -> None:
+        monkeypatch.setattr(_FakeProbe, "memory", {faults.CFSR: (1 << 9) | (1 << 15), faults.BFAR: 0x40001234})
+        out = call("read_fault_status")
+        assert out["raw_registers"]["BFAR"] == "0x40001234" and out["bus_fault_address"] == "0x40001234"
+        assert "MMFAR" not in out["raw_registers"]
 
 
 class TestWhereTheCoreRunsSaysWhetherASilentImageStarted:
@@ -1333,6 +1356,21 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert out["halted_during_call"] is True and "watchdogs" in out["core_after"] and out["target_was_reset"] is False
         assert out["interface"] == "swd", "N8: the result says which interface the stop went through"
         assert self._Session.closes == [False], "disconnected, leaving the core halted"
+
+    @pytest.mark.parametrize("location, expected", [
+        ("delay", (0x240000D6,)), ("writer", ()), ("debug_target.c:48", ()), ("0x24000042", ()),
+    ])
+    def test_a_functions_inlined_copies_are_asked_for_too(self, bench, monkeypatch, location, expected) -> None:
+        """GDB breaks on a function's out-of-line copy only; this fixture's delay
+        is also inlined into its caller at 0x240000D6, as on the N6 where
+        run_until said "not reached" while the loop ran (2026-10-04)."""
+        from stlink_mcp import debugger
+        self._rig(monkeypatch)
+        asked: dict = {}
+        stop = self._stop(debugger)
+        monkeypatch.setattr(server.debugger_mod, "run_until", lambda session, srv, **kw: asked.update(kw) or stop)
+        call("run_until", elf_path=self.ELF, location=location)
+        assert asked["also_at"] == expected
 
     def test_a_watchpoint_says_the_write_came_before(self, bench, monkeypatch) -> None:
         from stlink_mcp import debugger
@@ -1866,7 +1904,22 @@ class TestCoreRegistersDoesNotClaimTheCoreStaysHalted:
         assert "halted" not in out
         assert out["halted_during_call"] is True
         assert "now halted" not in out["core_after"]
-        assert out["core_after"].startswith("not observed")
+
+    def test_what_the_core_does_afterwards_is_read_not_assumed(self, bench, monkeypatch) -> None:
+        """DHCSR read without halting after the call. Agents in an evaluation took
+        "not observed" as leaving them unsure whether the core ran."""
+        monkeypatch.setattr(_FakeProbe, "memory", {0xE000EDF0: 0x01010000})
+        assert call("core_registers")["core_after"].startswith("running: DHCSR 0x01010000")
+        monkeypatch.setattr(_FakeProbe, "memory", {0xE000EDF0: 0x00030003})
+        assert call("core_registers")["core_after"].startswith("halted: DHCSR 0x00030003")
+
+    def test_when_that_read_fails_it_says_what_was_measured_instead(self, bench, monkeypatch) -> None:
+        def unreadable(self, address, length_bytes):
+            if address == 0xE000EDF0:
+                raise probe_mod.ProbeError("no answer")
+            return {address: 0}
+        monkeypatch.setattr(_FakeProbe, "read_memory", unreadable)
+        assert call("core_registers")["core_after"].startswith("not observed")
 
 
 class TestReleaseCoreChecksItsOwnEffect:
@@ -2259,9 +2312,9 @@ class TestFaultStatusReportsWhatsActuallyThere:
     def test_raw_registers_are_reported(self, bench) -> None:
         out = call("read_fault_status")
         raw = out["raw_registers"]
-        assert "CFSR" in raw
-        assert "HFSR" in raw
-        assert "BFAR" in raw
+        assert {"CFSR", "HFSR", "DFSR", "AFSR"} <= set(raw)
+        # BFAR and MMFAR only when CFSR marks them valid, which this clean read does not.
+        assert "BFAR" not in raw and "MMFAR" not in raw
 
     @pytest.mark.parametrize("cpu", ["Cortex-M0", "Cortex-M0+", "Cortex-M23"])
     def test_a_core_without_the_registers_is_refused_before_any_read(
@@ -2910,3 +2963,24 @@ class TestOneProgrammerCallWhereNothingCanDiffer:
         out = call("read_memory", address="0x341B0000", length_bytes=4, probe_serial="AAAA0001")
         assert out["status"] == result.VERIFIED and out["words"] == {"0x341B0000": "0xC0FFEE03"}
         assert sum(1 for c in calls) == 1
+
+
+class TestTheInstructionAtAPlace:
+    """Agents decoded the faulting instruction by hand from read words in four of
+    seven tasks of an evaluation (2026-10-04). The fixtures are what the
+    toolchain's objdump printed for the evaluation's N6 crash image at its udf,
+    and for its F407 hang image at a 32-bit bl."""
+
+    @pytest.mark.parametrize("fixture, address, expected", [
+        ("objdump_n6_udf.txt", 0x34180528, "udf #0"),
+        ("objdump_f4_bl.txt", 0x20000082, "bl 20000058 <level3>"),
+    ])
+    def test_it_is_read_from_objdump(self, monkeypatch, fixture, address, expected) -> None:
+        printed = (Path(__file__).parent / "fixtures" / fixture).read_text()
+        monkeypatch.setattr(server, "run_command", lambda argv, timeout: SimpleNamespace(stdout=printed))
+        assert server._instruction(SimpleNamespace(objdump=Path("objdump")), Path("x.elf"), address) == expected
+
+    def test_an_address_objdump_did_not_print_gives_none(self, monkeypatch) -> None:
+        printed = (Path(__file__).parent / "fixtures" / "objdump_n6_udf.txt").read_text()
+        monkeypatch.setattr(server, "run_command", lambda argv, timeout: SimpleNamespace(stdout=printed))
+        assert server._instruction(SimpleNamespace(objdump=Path("objdump")), Path("x.elf"), 0x34180530) is None

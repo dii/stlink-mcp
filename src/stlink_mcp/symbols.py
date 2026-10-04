@@ -22,6 +22,7 @@ import struct
 from dataclasses import dataclass
 from typing import Any
 
+from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
 #: Type qualifiers and aliases that change nothing about how bytes decode.
@@ -202,6 +203,41 @@ def find_variable(elf_path: str, name: str) -> Variable:
 
 def first_code(elf_path: str, length: int = 64) -> tuple[int, bytes] | None:
     return _open(elf_path).first_code(length)
+
+
+@functools.lru_cache(maxsize=16)
+def inlined_at(elf_path: str, function: str) -> tuple[int, ...]:
+    """Where the compiler copied `function` into its callers: each inlined
+    copy's entry address, from DW_TAG_inlined_subroutine.
+
+    GDB's breakpoint on a function name goes on its out-of-line copy only: for
+    an STM32N6 image whose `delay` was inlined into its one caller, at an
+    address nothing called, and run_until reported "not reached" while the loop
+    ran (2026-10-04). Empty for an ELF without DWARF."""
+    sites: list[int] = []
+    try:
+        with open(elf_path, "rb") as f:
+            elf = ELFFile(f)
+            if not elf.has_dwarf_info():
+                return ()
+            for cu in elf.get_dwarf_info().iter_CUs():
+                for die in cu.iter_DIEs():
+                    if die.tag != "DW_TAG_inlined_subroutine" or "DW_AT_abstract_origin" not in die.attributes:
+                        continue
+                    origin = die.get_DIE_from_attribute("DW_AT_abstract_origin")
+                    while "DW_AT_name" not in origin.attributes and "DW_AT_abstract_origin" in origin.attributes:
+                        origin = origin.get_DIE_from_attribute("DW_AT_abstract_origin")
+                    if _name(origin) != function:
+                        continue
+                    entry = die.attributes.get("DW_AT_entry_pc")
+                    low = die.attributes.get("DW_AT_low_pc")
+                    if entry is not None and entry.form == "DW_FORM_addr":
+                        sites.append(entry.value)
+                    elif low is not None:
+                        sites.append(low.value)
+    except (OSError, ELFError, KeyError, ValueError):
+        return ()
+    return tuple(sorted(set(sites)))
 
 
 def _int(data: bytes, signed: bool) -> int:

@@ -91,3 +91,12 @@ class TestTextAndNumbers:
         assert (label.size, label.type_name) == (12, "char[12]")
         assert symbols.decode(label.type_die, b"debug\0\0\0\0\0\0\0") == "debug"
         assert symbols.decode(label.type_die, b"tab\there\0\0\0\0") == "tab\\there"
+
+
+def test_a_functions_inlined_copies_are_found(elf) -> None:
+    """delay is inlined into reset_handler at 0x240000D6 in every DWARF version;
+    writer, called normally, has none. GDB's breakpoint on a function name goes
+    on its out-of-line copy only (2026-10-04)."""
+    assert symbols.inlined_at(elf, "delay") == (0x240000D6,)
+    assert symbols.inlined_at(elf, "writer") == ()
+    assert symbols.inlined_at(elf, "no_such_function") == ()

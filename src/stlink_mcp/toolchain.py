@@ -64,6 +64,11 @@ class Toolchain:
         return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-addr2line{_EXE}"
 
     @property
+    def objdump(self) -> Path:
+        """Disassembles the ELF, for the instruction at a fault or a stop."""
+        return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-objdump{_EXE}"
+
+    @property
     def stlink_server(self) -> Path | None:
         """ST's probe-sharing daemon, which CubeCLT's installer puts on the PATH
         (/usr/bin on Linux) rather than in its own directory. With it, a GDB

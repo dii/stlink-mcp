@@ -108,6 +108,13 @@ class TestTheHelpersReadWhatGdbSaid:
         assert [f["function"] for f in frames] == ["writer", "reset_handler"] and not cut
         assert frames[0]["arguments"] == {"v": "22"} and frames[0]["locals"] == {"s_count": "10"}
 
+    def test_a_frames_file_is_named_as_addr2line_names_it(self) -> None:
+        """GDB's fullname, the compilation directory joined to the file, which is
+        what locate_fault and board_state give; "file" is the bare name, and an
+        agent saw "main.c" in a call stack and "src/main.c" elsewhere (2026-10-04)."""
+        frames, _ = debugger.frames(_Replay())
+        assert {f["file"] for f in frames} == {"images/debug_target.c"}
+
     def test_core_registers_by_name(self) -> None:
         regs = debugger.registers(_Replay())
         assert set(regs) == {"R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10",

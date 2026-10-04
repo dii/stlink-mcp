@@ -384,33 +384,27 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
             "attached probes with their firmware; STLinkUpgrade, in the STM32CubeCLT "
             "install, updates an old one."
         )
+    # Each line is a cause and what can be done about it; the history behind
+    # them is in docs/findings.md. The texts used to tell an agent to run shell
+    # commands and recount failed measurements (agent-use evaluation, 2026-10-04).
     hints = []
     if interface == JTAG:
         hints.append(
-            "The probe may not do JTAG, or not be wired for it. A probe that "
-            "cannot answers exactly as if no target were attached: the on-board "
-            "STLINK-V3E of a NUCLEO-H743ZI2 reports 'Unable to get core ID' over "
-            "JTAG while SWD works. Try interface 'swd', or a probe on the "
-            "target's JTAG connector."
+            "The probe may not do JTAG, or not be wired for it: a NUCLEO's on-board "
+            "STLINK-V3E answers 'Unable to get core ID' over JTAG while SWD works. "
+            "Try interface 'swd'."
         )
     hints += [
-        "The debug access port may be wrong. Some families do not use AP0 "
-        "(the STM32N6 uses AP1); see quirks.py.",
-        "The target's boot configuration may close the debug port. On parts "
-        "that boot from external memory, the debug port is typically only open "
-        "in the development boot mode selected by a BOOT pin or jumper.",
-        "The probe may be held by ANOTHER PROCESS: an IDE, or a GDB server left "
-        "by a different session or an earlier run. This server only knows about "
-        "sessions it started itself, so it cannot see those and will report the "
-        "target as unreachable instead. Check by PORT, not by process name: "
-        "`ss -ltnp | grep 6123` and widen the range as needed; each server's "
-        "command line carries `-i <probe serial>`. Do not use "
-        "`pgrep ST-LINK_gdbserver`, which matches nothing at all, because Linux "
-        "truncates process names to fifteen characters. That exact mistake has "
-        "now invalidated two attempts to measure this behaviour.",
-        "The target may be unpowered, held in reset, or the probe unplugged "
-        "since it was last enumerated. list_probes reports access_ports for each "
-        "probe, and 0 there means the probe answered but reached no target.",
+        "The running program may have closed the debug port: taken the SWD pins, "
+        "stopped a clock or slept without debug. A tool that may reset gets past it "
+        "with a connect under reset, which restarts the program.",
+        "The boot configuration may keep the debug port closed: parts that boot "
+        "from external memory open it only in the development boot mode set by a "
+        "BOOT pin or switch.",
+        "Another program may have the probe open: an IDE, OpenOCD, or a GDB server "
+        "this server did not start, which it cannot see.",
+        "The target may be unpowered or held in reset: list_probes gives access_ports "
+        "0 for a probe that answered and reached no target.",
     ]
     return "Could not reach the core. Most likely causes:\n  - " + "\n  - ".join(hints)
 

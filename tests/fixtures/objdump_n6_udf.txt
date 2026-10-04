@@ -1,0 +1,9 @@
+
+app.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+34180528 <reset_handler+0xc8>:
+34180528:	de00      	udf	#0
+3418052a:	e7c8      	b.n	341804be <reset_handler+0x5e>

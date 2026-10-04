@@ -54,6 +54,7 @@ from . import svd as svd_mod
 from . import symbols as symbols_mod
 from .result import failed, unverified, verified
 from .probe import (
+    CoreState,
     Probe,
     ProbeError,
     ProbeInfo,
@@ -1879,10 +1880,8 @@ def _read_symbol(symbol: str, elf_path: str | None, probe_serial: str | None, in
 
 #: Every register read says this unless the file marks the read, which is refused.
 _READ_SIDE_EFFECT_NOTE = (
-    "No effect of reading this is known, which does not mean it has none. ST's SVD "
-    "files mark few such registers, the H743's and the F407's none, and this tool's "
-    "own list covers the UART, SPI, I2C and ADC data registers and the RTC's time "
-    "registers, by peripheral block."
+    "No effect of reading this is known, which does not mean it has none: ST's SVD "
+    "files mark few such registers, and this tool's own list is not complete."
 )
 
 
@@ -2010,6 +2009,27 @@ _DETACH_RESUMED = (
 )
 
 
+def _core_after_observed(probe: Probe | None, toolchain: Toolchain, serial: str | None,
+                         interface: str, fallback: str) -> str:
+    """What the core does after a call that halted it, from DHCSR read without
+    halting it; `fallback`, the measured expectation, when that read fails.
+    Agents in an evaluation named "not observed" as leaving them unsure whether
+    the core ran (2026-10-04)."""
+    try:
+        if probe is None:
+            port = _settled_port(serial)
+            if port is None:
+                return fallback
+            probe = Probe(toolchain, access_port=port, serial=serial, interface=interface,
+                          shared=_shares(serial))
+        dhcsr = probe.read_memory(_DHCSR, 4).get(_DHCSR)
+    except Exception:  # noqa: BLE001
+        return fallback
+    if dhcsr is None:
+        return fallback
+    return f"{CoreState(dhcsr, None, ()).state}: DHCSR 0x{dhcsr:08X}, read without halting after the call"
+
+
 def _drop_debug_server(serial: str | None) -> None:
     """Stop a server a refused call started, so the probe is left as it was
     found; stopping it lets the program run on (measured)."""
@@ -2068,7 +2088,8 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
         "probe_serial": serial,
         "interface": server.interface,
         "halted_during_call": True,
-        "core_after": "still halted where run_until stopped it" if was_halted else _DETACH_RESUMED,
+        "core_after": ("still halted where run_until stopped it" if was_halted else
+                       _core_after_observed(None, toolchain, serial, interface, _DETACH_RESUMED)),
         "target_was_reset": False,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},
     }
@@ -2097,13 +2118,12 @@ def run_until(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Run the target until it reaches `location` (a function, "file.c:line" or an
-address) or writes `watch` (a variable or an address, of 1, 2 or 4 aligned
-bytes), for at most `seconds`,
-and leave the core halted there, with the call stack. Needs the ELF the target
-runs, and refuses another. Verified only when the chip's debug status register
-names the stop; a watchpoint stops just after the write. The rest of the chip
-keeps running. release_probe resumes the core.
+    """Run the target until it reaches `location` (a function, its inlined copies
+included, "file.c:line" or an address) or writes `watch` (a variable or an
+address, of 1, 2 or 4 aligned bytes), for at most `seconds`, and leave the core
+halted there, with the call stack. Needs the ELF the target runs. Verified only
+when the chip's debug status register names the stop; a watchpoint stops just
+after the write. The rest of the chip keeps running.
     """
     if (location is None) == (watch is None):
         return failed("Give one of location or watch.")
@@ -2147,8 +2167,11 @@ keeps running. release_probe resumes the core.
             return _registers_covered(toolchain, held_info, address, size, None)[1]
 
         try:
+            # A function's inlined copies too: GDB breaks on its out-of-line copy only.
+            also_at = (symbols_mod.inlined_at(elf_path, location)
+                       if location is not None and re.fullmatch(r"[A-Za-z_]\w*", location) else ())
             stop = debugger_mod.run_until(session, server, location=location, watch=watch, seconds=seconds,
-                                          read_effects=read_effects)
+                                          read_effects=read_effects, also_at=also_at)
         except debugger_mod.DebugError as exc:
             session.close(detach=not was_halted)
             session = None
@@ -2176,6 +2199,9 @@ keeps running. release_probe resumes the core.
     top = stop.frames[0] if stop.frames else {}
     where = {"address": f"0x{stop.pc:08X}" if stop.pc is not None else None,
              "function": top.get("function"), "file": top.get("file"), "line": top.get("line")}
+    instruction = _instruction(toolchain, Path(elf_path), stop.pc) if stop.pc is not None else None
+    if instruction:
+        where["instruction"] = instruction
     with _STATE:
         _stopped[serial] = {"address": where["address"], "function": where["function"]}
     exception = regs.get("XPSR", 0) & 0x1FF
@@ -2615,7 +2641,7 @@ core needed a reset. Perturbing, so never used inside routine checks.
         # programmer halt does not outlive the command that made it
         # (docs/findings.md, "A halt does not survive the invocation").
         "halted_during_call": True,
-        "core_after": _PROGRAMMER_HALT_AFTER,
+        "core_after": _core_after_observed(probe, toolchain, serial, interface, _PROGRAMMER_HALT_AFTER),
         "connect_mode": probe.connect_mode,
         **_connection_fields(probe, info),
         # Reported, not hidden. Reaching the family's access port on a part that
@@ -2739,8 +2765,13 @@ registers.
             {"category": f.category, "bit": f.name, "meaning": f.meaning}
             for f in status.faults
         ],
+        # MMFAR and BFAR only when CFSR marks them valid: otherwise they hold a
+        # stale or reset value, which three of four agents in an evaluation named
+        # as easy to take for the faulting address (2026-10-04). A valid one is also given
+        # as memmanage_fault_address or bus_fault_address.
         "raw_registers": {
             name: f"0x{val:08X}" for name, val in status.raw.items()
+            if (name != "MMFAR" or status.mmfar is not None) and (name != "BFAR" or status.bfar is not None)
         },
         "note": (
             "Sticky until software clears them or the target resets: a clean read means "
@@ -2760,7 +2791,8 @@ registers.
             {"bit": d.name, "meaning": d.meaning} for d in status.debug
         ]
 
-    if probe.shared and any(d.name == "VCATCH" for d in status.debug):
+    caught = probe.shared and any(d.name == "VCATCH" for d in status.debug)
+    if caught:
         detail["vector_catch_note"] = _VECTOR_CATCH_NOTE
 
     if faults_mod.may_bank_by_security(info.cpu):
@@ -2784,6 +2816,18 @@ registers.
 
     if probe.degraded_reason:
         return unverified(probe.degraded_reason, **detail)
+
+    # A clean read beside a held server that caught a vector is not evidence of
+    # no fault: that is how a lockup looked once the server had reset the core.
+    # It came back verified, "no fault is active", and an agent read the headline
+    # as healthy (2026-10-04).
+    if caught and not status.any_fault:
+        return unverified(
+            "The fault registers read clean, but DFSR records a vector catch while a GDB server "
+            "held the probe, which is what a lockup left once the server reset the core. Run "
+            "again with run_firmware(keep_probe=False) to see such a fault.",
+            **detail,
+        )
 
     # Set bits are evidence on any core. A clean read is evidence only on a
     # core known to have the registers, since elsewhere the region is not fault
@@ -2856,7 +2900,7 @@ frame.
         **_connection_fields(probe, info),
         "target_was_reset": probe.target_was_reset,
         "halted_during_call": True,
-        "core_after": _PROGRAMMER_HALT_AFTER,
+        "core_after": _core_after_observed(probe, toolchain, serial, interface, _PROGRAMMER_HALT_AFTER),
         "registers": {
             name: f"0x{regs[name]:08X}"
             for name in ("PC", "LR", "XPSR", "MSP", "PSP") if name in regs
@@ -2950,6 +2994,9 @@ frame.
         if not any(seg.vaddr <= frame["PC"] < seg.vaddr + seg.memsz for seg in segments):
             problems.append(f"the stacked PC is outside every segment of {elf.name}")
         base["faulting_function"] = _symbol(toolchain, elf, frame["PC"])
+        instruction = _instruction(toolchain, elf, frame["PC"] & ~1)
+        if instruction:
+            base["faulting_function"]["instruction"] = instruction
         base["stacked_lr_function"] = _symbol(toolchain, elf, frame["LR"] & ~1)
     if notes:
         base["notes"] = notes
@@ -2993,6 +3040,26 @@ def _symbol(toolchain: Toolchain, elf: Path, address: int) -> dict[str, Any]:
         "line": int(line) if known else None,
         "address": _hex(address),
     }
+
+
+_OBJDUMP_LINE = re.compile(r"^\s*([0-9a-f]+):\s+(?:[0-9a-f]{4}\s?)+\s*\t(.+)$", re.M)
+
+
+def _instruction(toolchain: Toolchain, elf: Path, address: int) -> str | None:
+    """The instruction at `address` as the ELF's code disassembles, or None.
+
+    Agents decoded the faulting instruction by hand from read words in four of
+    seven tasks of an evaluation, and one tried to run a disassembler it did not
+    have (2026-10-04); the toolchain has objdump."""
+    try:
+        result = run_command([str(toolchain.objdump), "-d", f"--start-address=0x{address:08X}",
+                              f"--stop-address=0x{address + 4:08X}", str(elf)], timeout=30)
+    except ToolchainError:
+        return None
+    for match in _OBJDUMP_LINE.finditer(result.stdout):
+        if int(match.group(1), 16) == address:
+            return " ".join(match.group(2).split())
+    return None
 
 
 @mcp.tool()

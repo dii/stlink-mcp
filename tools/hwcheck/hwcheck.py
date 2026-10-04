@@ -396,9 +396,13 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
     s, elf = serial, str(images.elf[own])
     await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=1)
     stop = await server.call("run_until", probe_serial=s, elf_path=elf, location="writer", seconds=5)
+    at = stop.get("stopped_at", {})
+    files = {f.get("file") for f in stop.get("call_stack", [])}
     report.check(stop["status"] == "verified" and any("BKPT" in r for r in stop.get("stop_reason_from_chip", []))
-                 and stop.get("stopped_at", {}).get("function") == "writer" and stop.get("halted_during_call") is True,
-                 f"{label}: run_until stops at a function, verified by the chip's DFSR", _why(stop))
+                 and at.get("function") == "writer" and stop.get("halted_during_call") is True
+                 and at.get("instruction") and files == {"images/debug_target.c"},
+                 f"{label}: run_until stops at a function, verified by the chip's DFSR, with the instruction there "
+                 "and the file named as addr2line names it", f"{_why(stop)}; {at}; {files}")
     held = await server.call("read_memory", address="0x24070000" if label == "H7" else "0x2001F000",
                              length_bytes=4, probe_serial=s)
     beside = await server.call("board_state", probe_serial=s)
@@ -416,6 +420,10 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
     never = await server.call("run_until", probe_serial=s, elf_path=elf, location="default_handler", seconds=2)
     report.check(never["status"] == "unverified" and "was not reached" in never.get("unverified_because", ""),
                  f"{label}: a location not reached in time is unverified, and says where the core is", _why(never))
+    inlined = await server.call("run_until", probe_serial=s, elf_path=elf, location="delay", seconds=3)
+    report.check(inlined["status"] == "verified" and inlined.get("at_location"),
+                 f"{label}: run_until stops at a function the compiler inlined into its caller",
+                 f"{_why(inlined)}; {inlined.get('location')}; at {inlined.get('stopped_at', {}).get('address')}")
     watch = await server.call("run_until", probe_serial=s, elf_path=elf, watch="g_watched", seconds=5)
     report.check(watch["status"] == "verified" and any("DWTTRAP" in r for r in watch.get("stop_reason_from_chip", []))
                  and watch.get("returned_from") == "writer" and "before this stop" in watch.get("write_note", ""),
@@ -447,8 +455,9 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
         where = await server.call("core_registers", probe_serial=s, elf_path=str(images.elf[hang]))
         report.check(where["status"] == "verified"
                      and [f.get("function") for f in where.get("call_stack", [])] == ["level3", "level2", "level1", "reset_handler"]
-                     and where.get("core_after", "").startswith("resumed"),
-                     f"{label}: core_registers finds a hang three calls deep, and lets it run on", _why(where))
+                     and where.get("core_after", "").startswith("running: DHCSR"),
+                     f"{label}: core_registers finds a hang three calls deep, lets it run on, and reads that it does",
+                     f"{_why(where)}; {where.get('core_after')}")
 
 
 async def check_flash(server: Server, label: str, serial: str, flash_size: int,
@@ -518,8 +527,10 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     report.check(any(f["bit"] == "UNDEFINSTR" for f in status.get("faults", [])),
                  "F4: read_fault_status decodes the undefined instruction", _why(status))
     where = await server.call("locate_fault", probe_serial=s, elf_path=str(elf))
-    report.check(where["status"] == "verified" and where.get("faulting_pc") == f"0x{_udf_address(elf):08X}",
-                 "F4: locate_fault finds the udf", f"{_why(where)}; pc {where.get('faulting_pc')}")
+    report.check(where["status"] == "verified" and where.get("faulting_pc") == f"0x{_udf_address(elf):08X}"
+                 and where.get("faulting_function", {}).get("instruction") == "udf #0",
+                 "F4: locate_fault finds the udf, and gives the instruction",
+                 f"{_why(where)}; pc {where.get('faulting_pc')}; {where.get('faulting_function')}")
     await server.call("run_firmware", elf_path=str(images.elf["f4_itm"]), probe_serial=s, console_seconds=1)
     swo = await server.call("capture_swo", probe_serial=s, core_clock_hz=16_000_000, seconds=3)
     report.check(swo["status"] == "verified" and "f407 itm tick" in swo.get("swo", ""),
@@ -670,9 +681,24 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  and watch.get("returned_from") == "writer",
                  "N6: after a release, run_until stops at a function and after a write, both verified",
                  f"{_why(stop)}; {_why(watch)}")
+    inlined = await server.call("run_until", probe_serial=s, elf_path=vars_elf, location="delay", seconds=3)
+    report.check(inlined["status"] == "verified" and inlined.get("at_location"),
+                 "N6: run_until stops at a function the compiler inlined into its caller",
+                 f"{_why(inlined)}; {inlined.get('location')}; at {inlined.get('stopped_at', {}).get('address')}")
     released = await server.call("release_probe", probe_serial=s)
     report.check("running again" in json.dumps(released.get("core_after", {})),
                  "N6: release_probe resumes the core run_until held", json.dumps(released.get("core_after"))[:160])
+    # n6_ram's delay is inlined into reset_handler and also has an out-of-line
+    # copy nothing calls, where GDB puts a breakpoint on "delay" (2026-10-04).
+    ram_elf = str(images.elf["n6_ram"])
+    await server.call("run_firmware", elf_path=ram_elf, probe_serial=s, console_seconds=0.5)
+    await server.call("release_probe", probe_serial=s)
+    copies = await server.call("run_until", probe_serial=s, elf_path=ram_elf, location="delay", seconds=3)
+    report.check(copies["status"] == "verified" and copies.get("at_location")
+                 and copies.get("location", {}).get("inlined_at"),
+                 "N6: run_until stops at a function's inlined copy, where GDB breaks on its unused out-of-line copy",
+                 f"{_why(copies)}; {copies.get('location')}; at {copies.get('stopped_at', {}).get('address')}")
+    await server.call("release_probe", probe_serial=s)
     await check_names(server, "N6", s, images, report, "n6_vars", "h7_vars", "0x46028000", "board name")
     await server.call("release_probe", probe_serial=s)
     return True

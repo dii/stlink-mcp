@@ -169,7 +169,7 @@ _HFSR_BITS: list[tuple[int, str, str]] = [
 ]
 
 _DFSR_BITS: list[tuple[int, str, str]] = [
-    (0, "HALTED", "halt requested by debugger"),
+    (0, "HALTED", "halted by a debugger, these tools' own halts included"),
     (1, "BKPT", "breakpoint instruction or flash patch match"),
     (2, "DWTTRAP", "data watchpoint match"),
     (3, "VCATCH", "vector catch triggered"),
