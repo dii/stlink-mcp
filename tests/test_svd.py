@@ -142,9 +142,19 @@ class TestReadsThatChangeState:
         """The N657 file prefixes names with the peripheral's type, USART_RDR."""
         for file_name, query in (("STM32N657.svd", "USART1.RDR"), ("STM32F407.svd", "UART5.DR"),
                                  ("STM32F407.svd", "SPI1.DR"), ("STM32F407.svd", "ADC1.DR"),
-                                 ("STM32H743.svd", "ADC3.DR"), ("STM32H743.svd", "RTC.SSR")):
+                                 ("STM32H743.svd", "ADC3.DR"), ("STM32H743.svd", "RTC.SSR"),
+                                 ("STM32H743.svd", "ADC3_Common.CDR"), ("STM32H743.svd", "ADC12_Common.CDR"),
+                                 ("STM32F407.svd", "C_ADC.CDR")):
             register = svd.find(svd_dir / file_name, query)
             assert [e.provenance for e in svd.effects(register, file_name, {})] == ["measured"], query
+
+    def test_the_adc_common_data_register_is_refused_too(self, svd_dir) -> None:
+        """Two agents in an evaluation read ADC3's common data register once ADC3.DR
+        was refused; on the H743 that read cleared EOC (2026-10-04)."""
+        [register] = svd.covering(svd_dir / "STM32H743.svd", 0x5802630C, 4).registers
+        assert (register.peripheral, register.name) == ("ADC3_Common", "CDR")
+        [effect] = svd.effects(register, "STM32H743.svd", {})
+        assert effect.provenance == "measured" and "EOC" in effect.effect
 
     def test_a_register_with_nothing_known_has_no_effect(self, svd_dir) -> None:
         assert svd.effects(svd.find(svd_dir / "STM32H743.svd", "RCC.CR"), "STM32H743.svd", {}) == []

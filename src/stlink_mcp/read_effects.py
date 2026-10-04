@@ -11,8 +11,8 @@ read-write.
 
 So the list here is keyed by peripheral block, not by device. ST reuses a few
 dozen blocks across the STM32 range and a block's registers keep their names,
-so one entry for a block reaches every part with it: the eight entries below
-match registers in 227 of the 233 files (2026-10-03). A block
+so one entry for a block reaches every part with it: the eight entries that
+were here on 2026-10-03 matched registers in 227 of the 233 files. A block
 is named by the SVD file's groupName, and a register by its name without the
 peripheral's prefix ("RTC_TR" is TR).
 
@@ -84,6 +84,18 @@ KNOWN: tuple[ReadEffect, ...] = (
         r"ADC", ("DR",),
         "clears EOC, which the firmware may be waiting for to take the conversion",
         MEASURED, "STM32H743 ADC3 and STM32F407 ADC1, 2026-10-03",
+    ),
+    ReadEffect(
+        r"ADC", ("CDR",),
+        "clears EOC of the ADC whose result it holds, as reading that ADC's DR does",
+        MEASURED, "STM32H743 ADC3_Common, 2026-10-04: EOC cleared, the read returning ADC3's result; "
+        "an STM32F407's, with one ADC converting, read 0 and left ADC1's EOC set",
+    ),
+    ReadEffect(
+        r"ADC", ("CDR2",),
+        "may clear EOC of the ADCs whose results it holds",
+        ASSUMED, "not measured: it holds results only with two ADCs converting as a pair; "
+        "assumed from CDR (2026-10-04)",
     ),
     ReadEffect(
         r"RTC", ("SSR",),

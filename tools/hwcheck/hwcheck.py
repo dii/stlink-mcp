@@ -244,7 +244,8 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
 
     await check_names(server, "H7", s, images, report, "h7_vars", "f4_vars", "0x58024400", "board name")
     await check_stops(server, "H7", s, images, report, "h7_vars", "f4_vars", "h7_vars_hang")
-    await check_read_effects(server, "H7", s, images, report, "h7_read_effects", "ADC3", 0x58026000, 2, 0x58026040)
+    await check_read_effects(server, "H7", s, images, report, "h7_read_effects", "ADC3", 0x58026000, 2, 0x58026040,
+                             0x5802630C)
     await check_closed_port(server, s, images, report)
     await check_core_state(server, s, images, report)
 
@@ -326,7 +327,8 @@ async def check_closed_port(server: Server, serial: str, images: Built, report: 
 
 
 async def check_read_effects(server: Server, label: str, serial: str, images: Built, report: Report,
-                             image: str, adc: str, flag_at: int, flag_bit: int, data_at: int) -> None:
+                             image: str, adc: str, flag_at: int, flag_bit: int, data_at: int,
+                             common_at: int) -> None:
     """A read that changes state is refused by name and by address, leaves the
     flag as it was, and with read_effects_ok happens and says so. The image
     leaves the ADC holding a conversion it never reads."""
@@ -348,6 +350,13 @@ async def check_read_effects(server: Server, label: str, serial: str, images: Bu
                  and before == 1,
                  f"{label}: {adc}.DR, which clears EOC when read, is refused by name and by address, and EOC is still set",
                  f"{_why(by_name)}; {_why(by_address)}; EOC {before}")
+    # The common data register holds the same result, and on the H743 reading it
+    # cleared EOC too; two agents read it once DR was refused (2026-10-04).
+    common = await server.call("read_memory", address=f"0x{common_at:08X}", length_bytes=4, probe_serial=s)
+    still = await flag()
+    report.check(common["status"] == "failed" and "CDR" in common.get("error", "") and still == 1,
+                 f"{label}: the ADC common data register is refused too, and EOC is still set",
+                 f"{_why(common)}; EOC {still}")
     taken = await server.call("read_memory", address=f"0x{data_at:08X}", length_bytes=4, probe_serial=s,
                               read_effects_ok=True)
     after = await flag()
@@ -540,7 +549,8 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
                  "F4: capture_swo at twice the core clock hears nothing and says the clock may be wrong", _why(double))
     await check_names(server, "F4", s, images, report, "f4_vars", "h7_vars", "0x40023800", "all 4 files")
     await check_stops(server, "F4", s, images, report, "f4_vars", "h7_vars", "f4_vars_hang")
-    await check_read_effects(server, "F4", s, images, report, "f4_read_effects", "ADC1", 0x40012000, 1, 0x4001204C)
+    await check_read_effects(server, "F4", s, images, report, "f4_read_effects", "ADC1", 0x40012000, 1, 0x4001204C,
+                             0x40012308)
     await server.call("run_firmware", elf_path=str(images.elf["f4_ram"]), probe_serial=s, console_seconds=0.5)
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified" and reset.get("released_probe_first") is True,
