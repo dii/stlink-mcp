@@ -20,7 +20,7 @@ from stlink_mcp import __version__
 TOOLS = {
     "board_state", "capture_console", "capture_swo", "core_registers", "disassemble", "flash_firmware",
     "list_probes", "locate_fault", "read_fault_status", "read_memory", "read_option_bytes",
-    "release_probe", "reset_target", "run_firmware", "run_until",
+    "release_probe", "reset_target", "run_firmware", "run_until", "sample_values",
 }
 
 
@@ -45,8 +45,13 @@ async def _session() -> dict:
                 read_hex = await session.call_tool(
                     "read_memory", {"address": "0x20000000", "probe_serial": "NONE"}
                 )
+                misspelt = await session.call_tool("read_memory", {"adress": "0x20000000", "lenght": 8})
+                wrong_interface = await session.call_tool("board_state", {"interfase": "jtag"})
     return {
         "server": init.server_info,
+        "instructions": init.instructions,
+        "misspelt": json.loads(misspelt.content[0].text),
+        "wrong_interface": json.loads(wrong_interface.content[0].text),
         "tools": {tool.name: tool for tool in listed.tools},
         "list_probes": json.loads(probes.content[0].text),
         "read_memory": json.loads(read_hex.content[0].text),
@@ -68,7 +73,7 @@ def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
     # a client sees the options without reading a docstring.
     connecting = {"board_state", "run_firmware", "flash_firmware", "read_memory",
                   "reset_target", "core_registers", "read_fault_status", "locate_fault",
-                  "run_until", "read_option_bytes", "disassemble"}
+                  "run_until", "read_option_bytes", "disassemble", "sample_values"}
     for name, tool in seen["tools"].items():
         prop = tool.input_schema.get("properties", {}).get("interface")
         if name in connecting:
@@ -83,3 +88,36 @@ def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
         assert 40 <= words <= 80, f"{name}'s description is {words} words"
     # N9: every call is traced to who asked, on the server's stderr.
     assert "connection 1, request" in seen["stderr"] and "list_probes(" in seen["stderr"]
+
+
+def test_a_client_is_told_how_to_use_the_server_even_without_the_tool_descriptions() -> None:
+    """X9. Claude Code shows server instructions for tools it has deferred; agy
+    gives its model the tools through one generic call. Every tool named in
+    them must exist, and they say how to read a result."""
+    import re
+    seen = anyio.run(_session)
+    text = seen["instructions"] or ""
+    named = set(re.findall(r"`([a-z_]+)`", text))
+    assert named and named - {"probe_serial"} <= TOOLS, named - TOOLS
+    assert {"run_firmware", "sample_values", "release_probe"} <= named
+    assert "unverified" in text and "not success" in text
+
+
+def test_an_argument_no_parameter_has_is_refused_not_dropped() -> None:
+    """X10. The SDK dropped a misspelt argument without a word, so `lenght` read
+    the default length and a misspelt `interface` would have used SWD."""
+    seen = anyio.run(_session)
+    misspelt, interface = seen["misspelt"], seen["wrong_interface"]
+    assert misspelt["status"] == "failed" and misspelt["unknown_arguments"] == ["adress", "lenght"]
+    assert "address for adress" in misspelt["error"] and "length_bytes" in misspelt["error"]
+    assert interface["status"] == "failed" and "interface for interfase" in interface["error"]
+
+
+def test_the_readme_gives_users_the_same_guide_the_server_sends() -> None:
+    """X9. For a client that does not show server instructions to its agent,
+    the README's copy is what goes into the project's AGENTS.md; it must not
+    drift from what the server says."""
+    from pathlib import Path
+    from stlink_mcp.server import INSTRUCTIONS
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    assert INSTRUCTIONS.strip() in readme

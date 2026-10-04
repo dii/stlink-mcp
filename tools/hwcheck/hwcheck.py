@@ -395,6 +395,19 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
     report.check(dis["status"] == "verified" and dis.get("target_matches") is True and len(dis.get("instructions", [])) >= 4,
                  f"{label}: disassemble gives writer from the ELF, and the running target holds the same code",
                  f"{_why(dis)}; {dis.get('bytes_compared')} bytes")
+    elf = str(images.elf[own])
+    sampled = await server.call("sample_values", what=["g_ticks", "g_state.mode"], elf_path=elf, probe_serial=s, seconds=2)
+    ticks = sampled.get("values", {}).get("g_ticks", {})
+    report.check(sampled["status"] == "verified" and ticks.get("changes", 0) > 0
+                 and sampled.get("values", {}).get("g_state.mode", {}).get("changes") == 0
+                 and sampled.get("core") == {"running": sampled.get("samples")},
+                 f"{label}: sample_values sees g_ticks advance and g_state.mode stay, the core running at every sample",
+                 f"{_why(sampled)}; g_ticks {ticks}; core {sampled.get('core')}; {sampled.get('samples')} samples")
+    until = await server.call("sample_values", what=["g_ticks"], elf_path=elf, probe_serial=s, seconds=10,
+                              until="g_ticks changes")
+    report.check(until["status"] == "verified" and (until.get("until") or {}).get("held_at_s") is not None
+                 and until.get("samples", 99) <= 3,
+                 f"{label}: sample_values stops at the first sample where until holds", _why(until))
     foreign = await server.call("disassemble", elf_path=str(images.elf[other]), location="writer", probe_serial=s)
     report.check(foreign["status"] != "verified",
                  f"{label}: disassemble with an ELF the target does not run is not verified", _why(foreign))
@@ -558,6 +571,10 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     a, b = _counter(first, F4_COUNTER), _counter(second, F4_COUNTER)
     report.check(a is not None and b is not None and b > a,
                  "F4: the image runs (its counter advances)", f"{a and hex(a)} then {b and hex(b)}")
+    beside = await server.call("sample_values", what=[F4_COUNTER], probe_serial=s, seconds=2)
+    report.check(beside["status"] == "verified" and beside.get("values", {}).get(F4_COUNTER, {}).get("changes", 0) > 0,
+                 "F4: sample_values samples the counter beside run_firmware's held server",
+                 f"{_why(beside)}; {beside.get('values')}; {beside.get('samples')} samples in {beside.get('seconds')} s")
     elf = images.elf["f4_fault"]
     await server.call("run_firmware", elf_path=str(elf), probe_serial=s, console_seconds=2)
     await anyio.sleep(3.0)

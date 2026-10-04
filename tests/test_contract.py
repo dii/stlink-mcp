@@ -48,6 +48,7 @@ TOOL_CALLS: dict[str, dict] = {
     "locate_fault": {},
     "run_until": {"elf_path": "/nonexistent.elf", "location": "main"},
     "disassemble": {"elf_path": "/nonexistent.elf", "location": "main"},
+    "sample_values": {"what": ["0x24070000"], "seconds": 0.1},
 }
 
 
@@ -3285,6 +3286,146 @@ class TestDisassembly:
         out = call("disassemble", elf_path=str(self.ELF), location="0x0800003E", probe_serial="AAAA0001")
         assert_contract(out, "disassemble")
         assert out["status"] == result.FAILED and out.get("target_was_reset") is not True
+
+
+class TestSampleValues:
+    """SV1-SV8. The target is a model of a running program: every programmer call
+    sees the counter at 0x24070000 one higher than the last (0xC0FFEE00 plus the
+    calls made), g_state as a NUCLEO-H743ZI2 held it, and DHCSR as a running core
+    reads (S_RETIRE_ST set), unless a test changes them."""
+
+    ELF = str(Path(__file__).parent / "fixtures" / "elf" / "h7_vars_dwarf5.elf")
+    DUMP = bytes.fromhex("2efbffff0000c03f03008d00efbe3d013f014001410100004433221120010024fd070000")
+    COUNTER, DHCSR = 0x24070000, 0xE000EDF0
+
+    @pytest.fixture
+    def target(self, bench, monkeypatch):
+        memory: dict[int, int] = {}
+
+        def lay(address: int, data: bytes) -> None:
+            padded = bytes(address & 3) + data
+            padded += bytes(-len(padded) % 4)
+            for n in range(0, len(padded), 4):
+                memory[(address & ~3) + n] = int.from_bytes(padded[n:n + 4], "little")
+
+        lay(0x24000130, self.DUMP)
+        code = symbols_mod.first_code(self.ELF, 64)
+        lay(code[0], code[1])
+        state = SimpleNamespace(calls=0, dhcsr=0x01010001, fail_after=None, lay=lay, memory=memory)
+
+        def read_ranges(probe, ranges):
+            if state.fail_after is not None and state.calls >= state.fail_after:
+                raise probe_mod.ProbeError("Error: failed to read memory at 0x24070000")
+            state.calls += 1
+            words = {}
+            for address, length in ranges:
+                for w in range(address, address + length, 4):
+                    words[w] = (0xC0FFEE00 + state.calls if w == self.COUNTER else
+                                state.dhcsr if w == self.DHCSR else memory.get(w, 0))
+            return words
+
+        monkeypatch.setattr(_FakeProbe, "read_ranges", read_ranges)
+        return state
+
+    def test_each_sample_is_one_read_and_a_counter_comes_back_summarised(self, target) -> None:
+        """SV2."""
+        out = call("sample_values", what=["0x24070000"], seconds=0.2)
+        assert_contract(out, "sample_values")
+        assert out["status"] == result.VERIFIED and target.calls == out["samples"] > 1
+        counter = out["values"]["0x24070000"]
+        assert (counter["first"], counter["last"]) == ("0xC0FFEE01", f"0x{0xC0FFEE00 + target.calls:08X}")
+        assert counter["changes"] == out["samples"] - 1
+        assert out["core"] == {"running": out["samples"]} and "core_note" not in out
+
+    def test_a_variable_is_decoded_and_a_value_that_never_changed_is_given_as_itself(self, target) -> None:
+        """SV2, SV3."""
+        out = call("sample_values", what=["g_state.mode", "g_state.pos"], elf_path=self.ELF, seconds=0.1)
+        assert out["status"] == result.VERIFIED
+        assert out["values"]["g_state.mode"] == {"value": "MODE_RUN (3)", "changes": 0}
+        assert out["values"]["g_state.pos.x"] == {"value": -3, "changes": 0}
+        assert set(out["values"]) == {"g_state.mode", "g_state.pos.x", "g_state.pos.y"}
+
+    def test_a_member_that_is_not_there_is_refused_with_the_ones_that_are(self, target) -> None:
+        """SV3."""
+        out = call("sample_values", what=["g_state.speed"], elf_path=self.ELF, seconds=0.1)
+        assert out["status"] == result.FAILED and "g_state.mode" in out["error"]
+
+    def test_an_elf_the_target_does_not_run_gives_no_values(self, target) -> None:
+        """SV3."""
+        code = symbols_mod.first_code(self.ELF, 64)
+        target.lay(code[0], bytes([code[1][0] ^ 0xFF]) + code[1][1:])
+        out = call("sample_values", what=["g_state.mode"], elf_path=self.ELF, seconds=0.1)
+        assert out["status"] == result.UNVERIFIED and "values" not in out and "not running this ELF" in out["unverified_because"]
+
+    def test_until_stops_at_the_first_sample_where_it_holds(self, target) -> None:
+        """SV5."""
+        out = call("sample_values", what=["0x24070000"], seconds=30, until="0x24070000 >= 0xC0FFEE05")
+        assert out["status"] == result.VERIFIED and out["samples"] == 5 == target.calls
+        assert out["until"]["value"] == "0xC0FFEE05" and out["until"]["held_at_s"] == out["seconds"]
+
+    def test_until_on_an_enum_by_its_name(self, target) -> None:
+        """SV5."""
+        out = call("sample_values", what=["g_state.mode"], elf_path=self.ELF, seconds=30,
+                   until="g_state.mode == MODE_RUN")
+        assert out["status"] == result.VERIFIED and out["samples"] == 1
+
+    def test_until_not_seen_is_unverified_and_says_what_sampling_misses(self, target) -> None:
+        """SV5."""
+        out = call("sample_values", what=["0x24070000"], seconds=0.2, until="0x24070000 == 0")
+        assert out["status"] == result.UNVERIFIED and out["until"]["held"] is False
+        assert "not seen" in out["unverified_because"] and "would not show" in out["unverified_because"]
+
+    def test_a_core_that_was_not_running_is_said(self, target) -> None:
+        """SV6. DHCSR with S_HALT set, as a halted F407 and N6 read."""
+        target.dhcsr = 0x00030003
+        out = call("sample_values", what=["0x24070000"], seconds=0.1)
+        assert out["core"] == {"halted": out["samples"]} and "not running in every sample" in out["core_note"]
+
+    def test_a_read_that_fails_partway_keeps_what_was_read(self, target) -> None:
+        """SV7."""
+        target.fail_after = 3
+        out = call("sample_values", what=["0x24070000"], seconds=30)
+        assert out["status"] == result.UNVERIFIED and out["samples"] == 3
+        assert "stopped after 3 samples" in out["unverified_because"] and out["values"]["0x24070000"]["last"] == "0xC0FFEE03"
+
+    def test_it_never_resets_to_reach_a_closed_port(self, target, monkeypatch) -> None:
+        """SV1."""
+        monkeypatch.setattr(server, "Probe", TestTheReadingToolsNeverReset._Unreachable)
+        out = call("sample_values", what=["0x24070000"], seconds=0.1)
+        assert out["status"] == result.FAILED and out.get("target_was_reset") is not True and target.calls == 0
+
+    def test_beside_a_held_server_it_samples_shared_and_refuses_one_that_does_not_share(self, target, bench) -> None:
+        """SV1, RM7."""
+        bench.console_text = "tick 0\n"
+        call("run_firmware", elf_path=str(bench.elf))
+        shared = call("sample_values", what=["0x24070000"], seconds=0.1)
+        assert shared["status"] == result.VERIFIED
+        call("release_probe")
+        bench.shares = False
+        call("run_firmware", elf_path=str(bench.elf))
+        refused = call("sample_values", what=["0x24070000"], seconds=0.1)
+        assert refused["status"] == result.FAILED
+
+    @pytest.mark.parametrize("args", [
+        {"what": [f"0x{0x24000000 + 4 * i:08X}" for i in range(9)]},
+        {"what": ["0x24070000"], "seconds": 0},
+        {"what": ["0x24070000"], "seconds": 61},
+        {"what": []},
+        {"what": ["0x24070002"]},
+        {"what": ["0x24070000"], "until": "0x24070000 ~ 1"},
+    ])
+    def test_what_it_cannot_do_is_refused_before_anything_is_read(self, target, args) -> None:
+        """SV8."""
+        out = call("sample_values", **{"seconds": 0.1, **args})
+        assert out["status"] == result.FAILED and target.calls == 0
+
+    def test_a_register_whose_read_changes_it_is_refused_unless_allowed(self, target, monkeypatch) -> None:
+        """SV4. Uses the installed SVD files; skips without them."""
+        TestReadsThatChangeStateAreRefused()._h7(monkeypatch, vendor={})
+        refused = call("sample_values", what=["USART3.RDR"], seconds=0.1)
+        assert refused["status"] == result.FAILED and "read_effects_ok" in refused["error"] and target.calls == 0
+        allowed = call("sample_values", what=["USART3.RDR"], seconds=0.1, read_effects_ok=True)
+        assert allowed["status"] == result.VERIFIED and "every sample" in allowed["read_effects_note"]
 
 
 class TestSeveralProbesAndNoneNamed:

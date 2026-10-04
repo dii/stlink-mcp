@@ -14,6 +14,8 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X6.** While ST's stlink-server runs, every programmer connect and listing goes through it, so a probe it keeps open is still reached; while it does not run, connects are direct.
 - **X7.** A read whose CPUID check fails is not a read: wrong data is never returned as data, and a connect that read it counts as not made.
 - **X8.** A call on a part whose access port was measured connects once: an agent waits for every programmer call, about 0.1 s plain and 0.4 s shared, and the STM32N6 cost one more per call before (2026-10-01).
+- **X9.** Every client is told on connecting what the server is for, how to read a result and the usual order of calls, even one that shows its agent no tool descriptions; every tool it names exists.
+- **X10.** An argument no parameter has is refused, naming it and the nearest parameter, and nothing is done; it is never dropped.
 - **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
 
 ## list_probes (LP)
@@ -125,6 +127,17 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **DA2.** A name two functions share is refused with both, never resolved to one: objdump's own lookup by name takes the first without a word (2026-10-04).
 - **DA3.** Without a probe it says the target's code was not compared; with one it reads that code without halting or resetting the target, and is verified only when it is the ELF's.
 - **DA4.** At most 256 instructions; `cut` says when the function has more, and every part of it can be reached by address.
+
+## sample_values (SV)
+
+- **SV1.** It never halts or resets the target, refuses rather than reset at a closed port, and samples beside a held server.
+- **SV2.** One sample's values all come from one programmer call; each value comes back as itself if it never changed, else as first, last, range, how many samples changed it and when it first did.
+- **SV3.** Variables are decoded with the ELF's types, a member can be named, and an ELF the target does not run gives no values.
+- **SV4.** A register known to change state when read is refused unless `read_effects_ok`, and then the result says the effect happened at every sample.
+- **SV5.** `until` stops at the first sample where it holds and says when and with what value; not seen in time is unverified, and says that a change between two samples would not show.
+- **SV6.** The core's state at each sample is counted from DHCSR, and a core not running in some is said, so an unchanging value is not taken for a stuck program.
+- **SV7.** A read that fails partway stops the sampling, keeps what was read and says when it failed.
+- **SV8.** At most 8 values, 2048 bytes a sample and 60 seconds, refused before anything is read.
 
 ## capture_console (CC)
 

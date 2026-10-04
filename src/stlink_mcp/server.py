@@ -34,6 +34,7 @@ import os
 import re
 import sys
 import threading
+import time
 import weakref
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -51,6 +52,7 @@ from . import faults as faults_mod
 from . import image as image_mod
 from . import quirks as quirks_mod
 from . import read_effects as read_effects_mod
+from . import sampling as sampling_mod
 from . import settings
 from . import svd as svd_mod
 from . import symbols as symbols_mod
@@ -84,7 +86,56 @@ from .vendordb import VendorDbError, seed_from_directory
 
 # The version goes into the initialize handshake, so a client log or a bug
 # report shows which build answered.
-mcp = MCPServer("stlink-mcp", version=__version__)
+#: What every client is told on connecting, whether or not it loads the tools'
+#: descriptions: Claude Code shows server instructions for tools it has
+#: deferred, and agy gives its model the tools only through one generic call.
+INSTRUCTIONS = """\
+stlink-mcp drives STM32 boards through an ST-LINK probe with ST's STM32CubeCLT tools.
+
+Every result has a status. verified: verified_by says what was observed. unverified: it may have \
+worked, but nothing checked it, and unverified_because says why; this is not success. failed: error \
+says why. Read the status before the values.
+
+A usual session: `list_probes` and `board_state` to find and identify the board; `run_firmware` to \
+load an ELF into RAM and start it, or `flash_firmware` to write flash; while the program runs, \
+`capture_console`, `sample_values` and `read_memory`, none of which halts it; to stop and inspect, \
+`run_until`, `core_registers`, `read_fault_status`, `locate_fault` and `disassemble`; \
+`release_probe` when done.
+
+`run_firmware` keeps holding the probe, and the reading tools work beside it; `reset_target` and \
+`flash_firmware` stop that first and say so. A call that halts or resets the target says so. Name \
+`probe_serial` when more than one probe is attached. An argument no tool parameter has is refused, \
+not ignored.
+"""
+
+
+class _Server(MCPServer):
+    """An MCPServer that refuses an argument no parameter of the tool has.
+
+    The SDK drops one without a word (MCP SDK 2.0.0, measured over stdio on
+    2026-10-05): `lenght` left read_memory reading its default 32 bytes, and a
+    misspelt `interface` would connect over SWD with nothing to say so, which
+    N8 forbids. Agents guess parameter names when a client does not show them
+    the schemas, as a model run through agy did in the evaluation."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
+        tool = self._tool_manager.get_tool(name)
+        known = set((tool.parameters or {}).get("properties", {})) if tool is not None else set()
+        unknown = sorted(set(arguments) - known) if tool is not None else []
+        if unknown:
+            nearest = {u: near[0] for u in unknown if (near := difflib.get_close_matches(u, sorted(known), n=1))}
+            result = failed(
+                f"{name} has no parameter {', '.join(unknown)}"
+                + (f" (did you mean {', '.join(f'{v} for {k}' for k, v in nearest.items())}?)" if nearest else "")
+                + ". Nothing was done. Its parameters: " + ", ".join(sorted(known)) + ".",
+                unknown_arguments=unknown,
+            )
+            _trace(_caller_from(context), name, {}, result)
+            return tool.fn_metadata.convert_result(result)
+        return await super().call_tool(name, arguments, context)
+
+
+mcp = _Server("stlink-mcp", version=__version__, instructions=INSTRUCTIONS)
 
 #: The debug interface a tool connects over (N8). A parameter, not an
 #: assumption: SWD by default, since every probe that does JTAG also does SWD.
@@ -2028,6 +2079,245 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
     if probe.degraded_reason:
         return unverified(probe.degraded_reason, **detail)
     return verified(f"the register read from the target and decoded with {file_name}", **detail)
+
+
+#: sample_values' bounds: items per call, bytes read per sample, samples per call.
+_SAMPLE_ITEMS, _SAMPLE_BYTES, _SAMPLE_MAX = 8, 2048, 1000
+_DHCSR_ADDRESS = 0xE000EDF0
+
+
+@dataclasses.dataclass
+class _Sampled:
+    """One thing sample_values reads: where, how much, and how to decode it."""
+    name: str
+    address: int
+    size: int
+    decode: Callable[[bytes], Any]
+    hex: bool = False
+    variable: str | None = None
+
+
+@mcp.tool()
+@_serialised
+def sample_values(
+    what: list[str],
+    elf_path: str | None = None,
+    seconds: float = 5.0,
+    until: str | None = None,
+    svd: str | None = None,
+    read_effects_ok: bool = False,
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Sample values while the program runs, without halting or resetting it:
+`what` lists variables (decoded with `elf_path`'s types; "g_state.mode" picks a
+member), 32-bit word addresses, or registers such as "ADC3.ISR". All are read
+together, every 0.1 to 0.5 s, for `seconds` (at most 60), and each comes back as
+first, last, range and changes, with the core's state across the samples.
+`until`, such as "g_state.mode == MODE_RUN" or "g_ticks changes", stops early.
+    """
+    if not what:
+        return failed("what is empty: name at least one variable, address or register.")
+    if len(what) > _SAMPLE_ITEMS:
+        return failed(f"what names {len(what)} values; at most {_SAMPLE_ITEMS} per call.")
+    if not 0 < seconds <= 60:
+        return failed(f"seconds is {seconds}; give more than 0 and at most 60.")
+    try:
+        condition = sampling_mod.parse_condition(until) if until else None
+    except ValueError as exc:
+        return failed(str(exc))
+
+    items: list[_Sampled] = []
+    registers: list[str] = []
+    for entry in what:
+        resolved = _sampled_without_probe(entry.strip(), elf_path)
+        if isinstance(resolved, str):
+            return failed(resolved)
+        if resolved is None:
+            registers.append(entry.strip())
+        else:
+            items.append(resolved)
+    code = None
+    if elf_path and any(i.variable for i in items):
+        try:
+            code = symbols_mod.first_code(elf_path, _IMAGE_CHECK_BYTES)
+        except symbols_mod.SymbolError as exc:
+            return failed(str(exc))
+
+    probe: Probe | None = None
+    try:
+        ready, refusal = _probe_for_read(probe_serial, interface)
+        if refusal:
+            return refusal
+        toolchain, serial, probe, info = ready
+        connection = {"probe_serial": serial, **_connection_fields(probe, info)}
+        effects: list[dict[str, Any]] = []
+        for register in registers:
+            try:
+                found, file_name, _ = svd_mod.resolve(
+                    svd_mod.svd_dir(toolchain.root), register, svd=svd,
+                    device_name=info.device_name, board=info.board, cpu=info.cpu)
+                vendor = svd_mod.vendor_marks(svd_mod.svd_dir(toolchain.root))
+            except svd_mod.SvdError as exc:
+                neither = f"{register} is no variable in {Path(elf_path).name}, and as a register: " if elf_path else f"{register}: "
+                return failed(neither + str(exc), **connection)
+            effects += [{"register": f"{found.peripheral}.{found.name}", **read_effects_mod.describe(e)}
+                        for e in svd_mod.effects(found, file_name, vendor)]
+            mask = (1 << found.size_bits) - 1
+            items.append(_Sampled(register, found.address, max(1, found.size_bits // 8),
+                                  lambda data, mask=mask: int.from_bytes(data, "little") & mask, hex=True))
+        for item in items:
+            if read_effects_mod.in_device_region(item.address, item.size) and item.name not in registers:
+                effects += _registers_covered(toolchain, info, item.address & ~3, 4, svd)[1]
+        if effects and not read_effects_ok:
+            return failed(_effects_refusal(effects), read_effects=effects, **connection)
+        ranges = sorted({(i.address & ~3, ((i.address + i.size + 3) & ~3) - (i.address & ~3)) for i in items})
+        if sum(length for _, length in ranges) > _SAMPLE_BYTES:
+            return failed(f"These values take {sum(n for _, n in ranges)} bytes a sample; at most "
+                          f"{_SAMPLE_BYTES}. Watch fewer, or members rather than whole variables.", **connection)
+        return _sample(probe, info, connection, items, ranges, code, condition, seconds, elf_path, effects)
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), **_after_failure(probe))
+
+
+def _sampled_without_probe(entry: str, elf_path: str | None) -> _Sampled | str | None:
+    """An address or a variable, resolved without the probe; None for what can
+    only be a register, which needs the part's SVD file; a string to refuse with."""
+    if re.fullmatch(r"0x[0-9A-Fa-f]+|\d+", entry):
+        address = int(entry, 0)
+        if address % 4:
+            return f"{entry} is not 4-byte aligned; an address is sampled as one 32-bit word."
+        return _Sampled(f"0x{address:08X}", address, 4, lambda data: int.from_bytes(data, "little"), hex=True)
+    base = re.match(r"[A-Za-z_]\w*", entry)
+    if base is None:
+        return f"{entry!r} is not a variable name, an address or a register such as ADC3.ISR."
+    looks_like_register = re.fullmatch(r"[A-Za-z_]\w*\.[A-Za-z_]\w*", entry) is not None
+    if not elf_path:
+        return None if looks_like_register else f"{entry} needs elf_path: the ELF gives a variable's address and type."
+    try:
+        variable = symbols_mod.find_variable(elf_path, base.group(0))
+    except symbols_mod.SymbolError as exc:
+        return None if looks_like_register else str(exc)
+    if variable.size > _SAMPLE_BYTES:
+        return f"{base.group(0)} is {variable.size} bytes; sample its members, such as {base.group(0)}.<member>."
+    return _Sampled(entry, variable.address, variable.size,
+                    lambda data, die=variable.type_die: symbols_mod.decode(die, data), variable=base.group(0))
+
+
+def _sample(probe: Probe, info: TargetInfo, connection: dict[str, Any], items: list[_Sampled],
+            ranges: list[tuple[int, int]], code: tuple[int, bytes] | None,
+            condition: sampling_mod.Condition | None, seconds: float, elf_path: str | None,
+            effects: list[dict[str, Any]]) -> dict[str, Any]:
+    """The sampling loop: one programmer call a sample, until `seconds` or `until`."""
+    samples: list[tuple[float, dict[str, Any]]] = []
+    states: list[str] = []
+    stopped: str | None = None
+    met: tuple[float, Any] | None = None
+    start = time.monotonic()
+    while True:
+        extra = [(_DHCSR_ADDRESS, 4)] + ([(code[0] & ~3, (len(code[1]) + 3) & ~3)] if code and not samples else [])
+        try:
+            words = probe.read_ranges(ranges + extra)
+        except Exception as exc:  # noqa: BLE001
+            stopped = f"the read at {round(time.monotonic() - start, 2)} s failed: {exc}"
+            break
+        at = round(time.monotonic() - start, 2)
+        if code and not samples and _span(words, code[0], len(code[1])) != code[1]:
+            return unverified(
+                f"The target is not running this ELF: its first {len(code[1])} bytes of code at "
+                f"0x{code[0]:08X} differ from the ELF's, so the variables' addresses and types may "
+                "not be theirs. Nothing was sampled. Load this ELF, or give the one the target runs.",
+                elf_path=elf_path, target_was_reset=probe.target_was_reset, **connection)
+        values: dict[str, Any] = {}
+        for item in items:
+            data = _span(words, item.address, item.size)
+            if data is None:
+                stopped = f"the read at {at} s did not return {item.name}"
+                break
+            decoded = item.decode(data)
+            picked = {k: v for k, v in sampling_mod.leaves(item.variable or item.name, decoded).items()
+                      if k == item.name or k.startswith((item.name + ".", item.name + "["))}
+            if not picked:
+                return failed(f"{item.name} names nothing in {item.variable}: its parts are "
+                              f"{', '.join(list(sampling_mod.leaves(item.variable, decoded))[:12])}.",
+                              **connection)
+            values.update(picked)
+        if stopped:
+            break
+        if condition and condition.leaf not in values:
+            return failed(f"until names {condition.leaf}, which is not among the values sampled: "
+                          f"{', '.join(list(values)[:12])}.", **connection)
+        samples.append((at, values))
+        dhcsr = words.get(_DHCSR_ADDRESS)
+        states.append(CoreState(dhcsr, None, ()).state if dhcsr is not None else "not read")
+        if condition:
+            try:
+                if condition.holds(values[condition.leaf], samples[0][1][condition.leaf]):
+                    met = (at, values[condition.leaf])
+                    break
+            except ValueError as exc:
+                return failed(str(exc), **connection)
+        if time.monotonic() - start >= seconds or len(samples) >= _SAMPLE_MAX:
+            break
+
+    if not samples:
+        return failed(f"Nothing was sampled: {stopped}.", **connection, **_after_failure(probe))
+    hex_leaves = {i.name for i in items if i.hex}
+    summary, hidden = sampling_mod.summarise(samples)
+    for name in hex_leaves & summary.keys():
+        summary[name] = {k: (f"0x{v:08X}" if k in ("value", "first", "last", "min", "max") and isinstance(v, int)
+                             else [f"0x{x:08X}" for x in v] if k == "seen" else v)
+                         for k, v in summary[name].items()}
+    elapsed = samples[-1][0]
+    interval = round(elapsed / (len(samples) - 1), 3) if len(samples) > 1 else None
+    counted = {state: states.count(state) for state in dict.fromkeys(states)}
+    detail: dict[str, Any] = {
+        **connection,
+        "target_was_reset": probe.target_was_reset,
+        **({"elf_path": elf_path} if elf_path else {}),
+        "samples": len(samples),
+        "seconds": elapsed,
+        **({"interval_s": interval} if interval is not None else {}),
+        "values": summary,
+        **({"values_not_shown": f"{hidden} more that never changed"} if hidden else {}),
+        "core": counted,
+        **({"core_note": "The core was not running in every sample, so a value that did not change "
+                         "may not have had code running to change it."}
+           if set(counted) - {"running"} else {}),
+        **({"until": {"condition": str(condition), "held_at_s": met[0],
+                      "value": f"0x{met[1]:08X}" if condition.leaf in hex_leaves and isinstance(met[1], int)
+                      else met[1]}} if met else {}),
+    }
+    if effects:
+        detail.update(read_effects=effects, read_effects_note="Read because read_effects_ok was set: each "
+                      "effect listed happened at every sample.")
+    unseen = (f" A value that changed and changed back between two samples, about {interval} s "
+              "apart, would not show." if interval is not None else "")
+    if stopped:
+        return unverified(f"Sampling stopped after {len(samples)} samples: {stopped}. The values "
+                          "cover the samples read until then.", **detail)
+    if condition and not met:
+        detail["until"] = {"condition": str(condition), "held": False}
+        return unverified(f"until {condition} was not seen in {len(samples)} samples over {elapsed} s."
+                          + unseen, **detail)
+    if probe.degraded_reason:
+        return unverified(probe.degraded_reason, **detail)
+    return verified(
+        f"{len(samples)} samples over {elapsed} s, each read in one programmer call without halting the core"
+        + (", the code checked against the ELF's at the first" if code else "")
+        + (f"; until {condition} held at {met[0]} s" if met else "") + "." + unseen, **detail)
+
+
+def _span(words: dict[int, int], address: int, length: int) -> bytes | None:
+    """`length` bytes at `address` from words read, or None if any is missing."""
+    out = bytearray()
+    for word_address in range(address & ~3, address + length, 4):
+        if word_address not in words:
+            return None
+        out += words[word_address].to_bytes(4, "little")
+    skip = address - (address & ~3)
+    return bytes(out[skip:skip + length])
 
 
 #: Where run_until left a core halted, per probe. release_probe and run_firmware
