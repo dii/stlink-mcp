@@ -1158,9 +1158,10 @@ def _core_report(toolchain: Toolchain, probe: Probe, elf_path: str | None) -> di
     except ProbeError as exc:
         return {"state": "not read", "why": str(exc).splitlines()[0]}
     report: dict[str, Any] = {"state": core.state, "dhcsr": f"0x{core.dhcsr:08X}"}
-    if core.dfsr is not None:
-        report["dfsr"] = f"0x{core.dfsr:08X}"
+    # DFSR only as the evidence for that note: shown on every call it read as an
+    # unexplained register beside read_fault_status's account of the same bits.
     if core.state == "halted" and core.vector_catch and probe.shared:
+        report["dfsr"] = f"0x{core.dfsr:08X}"
         report["state_note"] = _VECTOR_CATCH_NOTE
     if core.state == "not seen running":
         report["state_note"] = ("No instruction retired between two reads of DHCSR, and neither the halt "

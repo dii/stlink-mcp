@@ -913,7 +913,8 @@ class TestALockupUnderAHeldServerIsNamed:
         assert "keep_probe=False" in out["unverified_because"]
 
     def test_with_nothing_held_neither_says_it(self, bench, caught) -> None:
-        assert "state_note" not in call("board_state")["core"]
+        core = call("board_state")["core"]
+        assert "state_note" not in core and "dfsr" not in core, "DFSR only as the note's evidence"
         out = call("read_fault_status")
         assert "vector_catch_note" not in out and out["status"] == result.VERIFIED
 
