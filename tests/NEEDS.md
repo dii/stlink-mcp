@@ -2,7 +2,7 @@
 
 Every test should check one of these needs and name it, by ID, in its name or docstring. A need is something the agent or the user relies on, stated in what they observe, not in how the code does it. A test that only checks how the code does it (an argument list, a message's exact wording that no need requires, a value computed the same way the code computes it) is not testing a need, and changing the code without changing what anyone observes should not break it.
 
-The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The rest are per tool, then per part-specific table. Written 2026-10-04, before the test review that maps the tests onto them.
+The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The rest are per tool, then per part-specific table. Written 2026-10-04, before the test review that maps the tests onto them; X8 and T1 added by that review, for tests that checked them with no need written.
 
 ## Every tool
 
@@ -13,6 +13,8 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X5.** Every tool's description is 40 to 80 words.
 - **X6.** While ST's stlink-server runs, every programmer connect and listing goes through it, so a probe it keeps open is still reached; while it does not run, connects are direct.
 - **X7.** A read whose CPUID check fails is not a read: wrong data is never returned as data, and a connect that read it counts as not made.
+- **X8.** A call on a part whose access port was measured connects once: an agent waits for every programmer call, about 0.1 s plain and 0.4 s shared, and the STM32N6 cost one more per call before (2026-10-01).
+- **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
 
 ## list_probes (LP)
 

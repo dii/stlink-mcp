@@ -396,6 +396,6 @@ class TestTheDetectorFollowsTheInstall:
         upgrade would have skipped this whole class - and a skipped test is
         green."""
         from stlink_mcp.server import vendor_database_dir
+        from stlink_mcp.toolchain import find_toolchain
 
-        assert DB_DIR == vendor_database_dir()
-        assert "1.22.0" not in str(DB_DIR) or DB_DIR == vendor_database_dir()
+        assert vendor_database_dir().is_relative_to(find_toolchain().root)

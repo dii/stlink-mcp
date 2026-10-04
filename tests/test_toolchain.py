@@ -19,7 +19,7 @@ def _order(names: list[str]) -> list[str]:
 
 
 class TestNewestInstallWins:
-    """find_toolchain's docstring promises "newest first when several are
+    """T1. find_toolchain's docstring promises "newest first when several are
     installed". It delivered the oldest for eighteen months of ST releases,
     because the sort was a string sort."""
 
@@ -31,22 +31,6 @@ class TestNewestInstallWins:
             "stm32cubeclt_1.10.0",
             "stm32cubeclt_1.22.0",
         ])[0] == "stm32cubeclt_1.22.0"
-
-    def test_the_old_string_sort_would_fail_this(self) -> None:
-        """Pins the bug rather than the fix.
-
-        A test that only asserts the right answer passes against any
-        implementation that happens to be right for the sample. This one states
-        what the previous implementation did, so if someone reverts to a plain
-        sorted(reverse=True) the failure names the reason.
-        """
-        names = ["stm32cubeclt_1.9.0", "stm32cubeclt_1.10.0", "stm32cubeclt_1.22.0"]
-        string_sorted = sorted(names, reverse=True)
-        assert string_sorted[0] == "stm32cubeclt_1.9.0", (
-            "the premise of this test has changed: a plain string sort no "
-            "longer picks the oldest install"
-        )
-        assert _order(names)[0] != string_sorted[0]
 
     def test_patch_and_missing_components_order_sensibly(self) -> None:
         assert _order([

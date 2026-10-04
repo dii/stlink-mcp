@@ -117,31 +117,46 @@ class TestTheCoreStateIsReadWithoutHaltingIt:
 
 
 class TestARegisterReadLeavesTheCoreAsItWasFound:
-    """In ST's shared mode a -coreReg halt outlived the command, on the N6 and
-    the F407 (2026-10-04), so DHCSR is read first, in the same call, and a core
-    that was running is let go. The fixtures are what the programmer printed on
-    the F407 beside a held server, running and then halted by hand."""
+    """CR2, LF6. In ST's shared mode a -coreReg halt outlived the command, on the
+    N6 and the F407 (2026-10-04). A model of that core: a register read halts it,
+    the programmer's -run lets it go, and the programmer prints what the fixtures
+    hold, captured on the F407 beside a held server, running and then halted."""
 
-    def _probe(self, monkeypatch, fixture: str):
-        text = (FIXTURES / fixture).read_text()
-        sent: list[list[str]] = []
+    def _board(self, monkeypatch, halted: bool):
+        board = {"halted": halted}
+        printed = {False: (FIXTURES / "coreReg_f4_running_before.txt").read_text(),
+                   True: (FIXTURES / "coreReg_f4_halted_before.txt").read_text()}
 
         def run(argv, timeout=90):
-            sent.append(argv)
-            return CommandResult(argv, 0, "Core run\n" if "-run" in argv else text)
+            if "-run" in argv:
+                board["halted"] = False
+                return CommandResult(argv, 0, "Core run\n")
+            out = printed[board["halted"]]
+            if "-coreReg" in argv:
+                board["halted"] = True
+            return CommandResult(argv, 0, out)
 
         monkeypatch.setattr(pm, "run_command", run)
         probe = pm.Probe(SimpleNamespace(programmer=Path("STM32_Programmer_CLI")),
                          serial="50FF73064977535531090387", shared=True)
         probe._access_port = 0
-        return probe, sent
+        return probe, board
 
-    def test_a_running_core_is_let_go(self, monkeypatch) -> None:
-        probe, sent = self._probe(monkeypatch, "coreReg_f4_running_before.txt")
-        assert "PC" in probe.core_registers()
-        assert probe.halted_before is False and any("-run" in argv for argv in sent)
+    def test_a_running_core_runs_again(self, monkeypatch) -> None:
+        probe, board = self._board(monkeypatch, halted=False)
+        assert "PC" in probe.core_registers() and board["halted"] is False
 
     def test_a_halted_core_stays_halted(self, monkeypatch) -> None:
-        probe, sent = self._probe(monkeypatch, "coreReg_f4_halted_before.txt")
-        assert "PC" in probe.core_registers()
-        assert probe.halted_before is True and not any("-run" in argv for argv in sent)
+        probe, board = self._board(monkeypatch, halted=True)
+        assert "PC" in probe.core_registers() and board["halted"] is True
+
+
+def test_beside_a_held_server_a_connect_never_resets(monkeypatch) -> None:
+    """BS2. A connect in shared mode, beside a server holding the probe, tries no
+    resetting mode even when asked it may: a reset made beside the server broke
+    its GDB session (2026-10-03). The core here answers only under reset, as the
+    sleeping H7 did. Found untested when the guard was taken out (2026-10-04)."""
+    probe, modes = _probe(monkeypatch, lambda mode: UNDER_RESET if mode == "UR" else ASLEEP)
+    probe.shared = True
+    info = probe.identify(allow_reset=True)
+    assert not info.connected and not probe.target_was_reset and set(modes) == {"HOTPLUG"}

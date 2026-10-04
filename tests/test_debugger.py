@@ -121,6 +121,15 @@ class TestTheHelpersReadWhatGdbSaid:
                              "R11", "R12", "SP", "LR", "PC", "XPSR"}
         assert regs["PC"] == 0x24000042
 
+    def test_both_ways_give_the_same_registers(self) -> None:
+        """CR1. core_registers reads through GDB when a server holds the probe and
+        through the programmer otherwise; the names must be the same set. The
+        programmer's are what it printed on the F407 (2026-10-04)."""
+        from stlink_mcp import probe
+        programmer = set(probe.parse_core_registers((FIXTURES / "coreReg_f4_running_before.txt").read_text()))
+        through_gdb = set(debugger.registers(_Replay())) | {name.upper() for name in debugger._SYSTEM}
+        assert programmer == through_gdb
+
     def test_the_system_registers_are_asked_for_by_their_numbers_in_gdbs_list(self) -> None:
         """So core_registers gives through GDB what the programmer gives. The
         values come from the H7 in tools/hwcheck; this checks the numbers asked

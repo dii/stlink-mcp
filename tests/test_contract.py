@@ -832,50 +832,78 @@ class TestRunFirmwareKeepsTheProbe:
         bench.console_text = "up\n"
         assert "warning" not in call("run_firmware", elf_path=str(bench.elf))
 
-    def test_release_resumes_a_stopped_core_through_gdb_before_stopping_the_server(self, bench, monkeypatch) -> None:
-        """Stopping a server in shared mode left the F407's core halted two times
-        in five (2026-10-04); a GDB detach resumes it."""
-        order: list = []
+    def test_release_lets_a_stopped_core_run_again(self, bench, monkeypatch) -> None:
+        """RP2. A model of the F407 in shared mode: GDB's detach lets a halted core
+        run, and stopping the server alone left it halted two times in five
+        (2026-10-04). The result is read from DHCSR after the release."""
+        board = {"halted": True}
 
         class _Session:
             def __init__(self, gdb, elf, port) -> None:
-                order.append(("attach", port))
+                pass
 
             def close(self, detach: bool = True) -> None:
-                order.append(("detach", detach))
+                if detach:
+                    board["halted"] = False
 
         monkeypatch.setattr(server.gdbmi, "Session", _Session)
-        monkeypatch.setattr(server, "_core_state_after_release", lambda serial, stop: "running again")
-        original = server.release_server
-        monkeypatch.setattr(server, "release_server", lambda serial=None: order.append("stop") or original(serial))
+        monkeypatch.setattr(_FakeProbe, "read_memory", lambda self, address, length_bytes:
+                            {address: 0x00030003 if board["halted"] else 0x01010001})
         bench.console_text = "up\n"
         call("run_firmware", elf_path=str(bench.elf))
         server._stopped["AAA1"] = {"address": "0x34180500", "function": "writer"}
         out = call("release_probe", probe_serial="AAA1")
-        assert order == [("attach", 61234), ("detach", True), "stop"]
-        assert out["core_after"] == {"AAA1": "running again"}
+        assert "running again" in out["core_after"]["AAA1"] and not board["halted"]
 
-    def test_a_second_run_stops_the_previous_image_before_the_console_opens(self, bench, monkeypatch) -> None:
-        """Through a held server the previous image ran on until the load's reset,
-        and a line it printed after the port opened verified an image that
-        prints nothing (H7, 2026-10-04). A new server halts it as it starts."""
-        order: list = []
+    def test_a_second_run_is_not_credited_with_the_first_images_output(self, bench, monkeypatch) -> None:
+        """RF1. A model of the H7: the image a held server last started prints on
+        until something halts it, and its line lands in the next run's console
+        window unless it was halted before the port opened. A GDB connect halts
+        it; disconnecting leaves it halted. A silent image was once verified on
+        such a line, "ram tick 25" (2026-10-04)."""
+        board = {"old_image_running": False}
 
         class _Session:
             def __init__(self, gdb, elf, port) -> None:
-                order.append("attach")
+                board["old_image_running"] = False
 
             def close(self, detach: bool = True) -> None:
-                order.append(f"close, detach {detach}")
+                pass
+
+        load = server.load_and_run
+
+        def load_and_start(*args, **kwargs):
+            markers = load(*args, **kwargs)
+            board["old_image_running"] = True
+            return markers
+
+        inner = server.console_mod.ConsoleCapture
+
+        class _Capture:
+            def __init__(self, *args, **kwargs) -> None:
+                self._inner, self._late = inner(*args, **kwargs), board["old_image_running"]
+
+            def __enter__(self):
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *exc) -> None:
+                self._inner.__exit__(*exc)
+
+            def collect(self, seconds: float) -> str:
+                return ("stlink-mcp hw check ram tick 25\r\n" if self._late else "") + self._inner.collect(seconds)
+
+            text = property(lambda self: self._inner.text)
+            buffered = property(lambda self: self._inner.buffered)
 
         monkeypatch.setattr(server.gdbmi, "Session", _Session)
-        capture = server.console_mod.ConsoleCapture
-        monkeypatch.setattr(server.console_mod, "ConsoleCapture",
-                            lambda *a, **k: order.append("console opens") or capture(*a, **k))
-        bench.console_text = "up\n"
+        monkeypatch.setattr(server, "load_and_run", load_and_start)
+        monkeypatch.setattr(server.console_mod, "ConsoleCapture", _Capture)
+        bench.console_text = ""  # the image prints nothing
         call("run_firmware", elf_path=str(bench.elf))
-        call("run_firmware", elf_path=str(bench.elf))
-        assert order == ["console opens", "attach", "close, detach False", "console opens"]
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert_contract(out)
+        assert "tick 25" not in out["console"] and "console" not in (out.get("verified_by") or "")
 
     def test_nothing_is_said_when_nothing_was_held(self, bench) -> None:
         assert "released_probe_first" not in call("reset_target")
@@ -1391,15 +1419,22 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert_contract(out)
         assert out["status"] == result.UNVERIFIED and says in out["unverified_because"]
 
-    def test_the_server_holding_the_probe_is_used_whatever_its_kind(self, bench, monkeypatch) -> None:
-        """Every server keeps its log, so run_until never swaps run_firmware's for
-        one of its own: a swap let go of the probe for a moment, which a program
-        that closes the debug port would not give back, and on the N6 the kept
-        server's stops were unverified for want of the log (2026-10-04)."""
-        held = SimpleNamespace(interface="swd", attach=False)
-        monkeypatch.setattr(server, "held_server", lambda serial: held)
+    @pytest.mark.parametrize("mismatch", [None, "the target is not running this ELF"])
+    def test_a_stop_never_lets_go_of_a_held_probe(self, bench, monkeypatch, mismatch) -> None:
+        """RU6. run_until uses whichever server holds the probe, on a stop and on a
+        refusal alike: swapping run_firmware's for its own let go of the probe
+        for a moment, which a program that closes the debug port would not give
+        back, and a refusal stopped the server it took for its own (2026-10-04)."""
+        from stlink_mcp import debugger
+        monkeypatch.setattr(server, "_elf_on_target", lambda session, elf: mismatch)
+        monkeypatch.setattr(server.debugger_mod, "run_until", lambda session, srv, **kw: self._stop(debugger))
+        monkeypatch.setattr(server.debugger_mod, "registers", lambda session: {"PC": 0x24000042, "XPSR": 0x01000000})
+        monkeypatch.setattr(server.debugger_mod, "system_registers", lambda session: {})
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
         monkeypatch.setattr(server, "release_server", lambda serial=None: pytest.fail("let go of the probe"))
-        assert server._debug_server(object(), "AAA1", "swd") == (held, None, False)
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert out["status"] == (result.FAILED if mismatch else result.VERIFIED) and list(bench.held) == ["AAA1"]
 
     def test_gdb_that_cannot_reach_the_core_says_what_does_that(self, bench, monkeypatch) -> None:
         """On an H7 whose program had taken the SWD pins, run_until came back with
@@ -2729,7 +2764,7 @@ class TestLocateFaultFollowsTheFrame:
 
 
 class TestTheLastSettledPortIsTriedFirst:
-    """On an STM32N6 AP0 answers identity and AP1 is the port that works, so a
+    """X8. On an STM32N6 AP0 answers identity and AP1 is the port that works, so a
     scan from AP0 costs an extra connect, 1.1 s there, on every call."""
 
     def _probe(self, monkeypatch, try_first):
@@ -2951,7 +2986,7 @@ class TestEveryCallIsTracedToWhoAsked:
 
 
 class TestOneProgrammerCallWhereNothingCanDiffer:
-    """read_memory and read_fault_status connect and read in one programmer call
+    """X8. read_memory and read_fault_status connect and read in one programmer call
     when the probe's remembered port is the family's measured port, which halves
     an N6 call (a connect costs 1.1 s there, measured 2026-10-01)."""
 
@@ -3016,3 +3051,62 @@ class TestTheInstructionAtAPlace:
         printed = (Path(__file__).parent / "fixtures" / "objdump_n6_udf.txt").read_text()
         monkeypatch.setattr(server, "run_command", lambda argv, timeout: SimpleNamespace(stdout=printed))
         assert server._instruction(SimpleNamespace(objdump=Path("objdump")), Path("x.elf"), 0x34180530) is None
+
+
+class TestSeveralProbesAndNoneNamed:
+    """X2. With more than one probe attached, a call that names none is refused
+    with the serials to choose from; nothing is done to the first one. Found
+    untested when the refusal was taken out and nothing failed (2026-10-04)."""
+
+    TWO = [probe_mod.ProbeInfo(serial="AAA1"), probe_mod.ProbeInfo(serial="BBB2")]
+
+    @pytest.mark.parametrize("name", ["board_state", "read_memory", "reset_target", "core_registers",
+                                      "read_fault_status", "locate_fault", "capture_console", "capture_swo"])
+    def test_it_is_refused_and_names_both(self, bench, monkeypatch, name) -> None:
+        monkeypatch.setattr(server, "_list_probes", lambda tc: list(self.TWO))
+        monkeypatch.setattr(server, "Probe", lambda *a, **k: pytest.fail("a probe was used"))
+        out = call(name, **TOOL_CALLS[name])
+        assert_contract(out, name)
+        assert out["status"] == result.FAILED and "AAA1" in out["error"] and "BBB2" in out["error"]
+
+
+class TestTheReadingToolsNeverReset:
+    """RM1, FS1. A core a hotplug connect cannot reach is refused, never reset
+    into reach: a reset restarts the program whose state the read was for. The
+    fake board here does what a resetting connect does, gets in by resetting,
+    so a tool that allowed one would come back with data and a reset. Found
+    untested for read_memory when its no-reset connect was made a resetting one
+    and nothing failed (2026-10-04)."""
+
+    class _Unreachable(_FakeProbe):
+        def identify(self, allow_reset: bool = True) -> probe_mod.TargetInfo:
+            if allow_reset:
+                self.target_was_reset = True
+                return super().identify(allow_reset)
+            return probe_mod.TargetInfo(connected=False, errors=["Unable to get core ID"])
+
+    @pytest.mark.parametrize("name, args", [
+        ("read_memory", {"address": "0x24000000", "length_bytes": 4}),
+        ("read_memory", {"address": "0x40011000", "length_bytes": 4}),
+        ("read_fault_status", {}),
+    ])
+    def test_it_fails_rather_than_reset(self, bench, monkeypatch, name, args) -> None:
+        monkeypatch.setattr(server, "Probe", self._Unreachable)
+        out = call(name, **args)
+        assert_contract(out, name)
+        assert out["status"] == result.FAILED and out.get("target_was_reset") is not True
+        assert "words" not in out and "faults" not in out
+
+
+class TestListProbesMarksTheHeld:
+    """LP3. Listing works while a probe is held, and marks it."""
+
+    def test_a_held_probe_is_listed_and_marked(self, bench) -> None:
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
+        out = call("list_probes")
+        assert_contract(out)
+        [entry] = out["probes"]
+        assert out["status"] == result.VERIFIED and entry["serial"] == "AAA1" and entry["gdb_server_held"] is True
+        call("release_probe", probe_serial="AAA1")
+        assert call("list_probes")["probes"][0]["gdb_server_held"] is False

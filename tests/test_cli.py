@@ -90,8 +90,14 @@ class TestCheck:
 
 
 def test_the_version_is_not_a_second_copy_of_the_tag() -> None:
-    """It was a literal "0.1.0" beside a pyproject that says the tag is the only
-    copy. It now comes from the installed metadata, which the tag produced."""
-    from importlib.metadata import version
+    """The git tag is the only copy of the version. It was a literal "0.1.0" in
+    the package beside a pyproject saying so; no version number may be written
+    in the package's source but the fallback for a tree never installed."""
+    import re
+    import stlink_mcp
 
-    assert __version__ == version("stlink-mcp")
+    package = Path(stlink_mcp.__file__).parent
+    assigned = {m for f in package.glob("*.py")
+                for m in re.findall(r"__version__\s*=\s*[\"']([^\"']+)[\"']", f.read_text())}
+    assert assigned <= {"0.0.0+unknown"}, assigned
+    assert re.fullmatch(r"\d+\.\d+\.\d+.*", __version__)
