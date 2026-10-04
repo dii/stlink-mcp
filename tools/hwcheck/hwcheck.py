@@ -389,6 +389,13 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
                  and value.get("mode") == "MODE_RUN (3)" and value.get("flags") == {"a": 5, "b": 17, "c": 0xBEEF}
                  and value.get("pos") == {"x": -3, "y": 7},
                  f"{label}: read_memory reads a struct by name, decoded with the ELF's types", _why(var))
+    dis = await server.call("disassemble", elf_path=str(images.elf[own]), location="writer", probe_serial=s)
+    report.check(dis["status"] == "verified" and dis.get("target_matches") is True and len(dis.get("instructions", [])) >= 4,
+                 f"{label}: disassemble gives writer from the ELF, and the running target holds the same code",
+                 f"{_why(dis)}; {dis.get('bytes_compared')} bytes")
+    foreign = await server.call("disassemble", elf_path=str(images.elf[other]), location="writer", probe_serial=s)
+    report.check(foreign["status"] != "verified",
+                 f"{label}: disassemble with an ELF the target does not run is not verified", _why(foreign))
     wrong = await server.call("read_memory", probe_serial=s, symbol="g_state", elf_path=str(images.elf[other]))
     # Unverified where the other part's addresses hold memory here (the F407's on
     # the H7), failed where they do not (the H7's on the F407).

@@ -973,8 +973,8 @@ class Probe:
                 message = (
                     "The programmer could not erase the flash it was to write. "
                     "Write protection on that sector, set in the option bytes, "
-                    "fails this way; `STM32_Programmer_CLI -c port=SWD -ob displ` "
-                    "shows it, and this tool does not change option bytes.\n"
+                    "fails this way; read_option_bytes shows it under \"Write "
+                    "Protection\", and nothing here changes option bytes.\n"
                     + message
                 )
             raise ProbeError(message)

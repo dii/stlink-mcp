@@ -117,6 +117,13 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **OB4.** A part ST's programmer has no option bytes for fails with ST's reason.
 - **OB5.** It never halts or resets the target, and reads beside a held server.
 
+## disassemble (DA)
+
+- **DA1.** The instructions of a function, by name or by an address inside it, each with its source file and line and the function an inlined copy came from; an address outside every function gives the code around it, and says so.
+- **DA2.** A name two functions share is refused with both, never resolved to one: objdump's own lookup by name takes the first without a word (2026-10-04).
+- **DA3.** Without a probe it says the target's code was not compared; with one it reads that code without halting or resetting the target, and is verified only when it is the ELF's.
+- **DA4.** At most 256 instructions; `cut` says when the function has more, and every part of it can be reached by address.
+
 ## capture_console (CC)
 
 - **CC1.** The port is the one matched to the probe's serial or the one the setting names, never the first port; with none it refuses.

@@ -1,0 +1,90 @@
+
+h7_vars_dwarf5.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+24000092 <reset_handler>:
+reset_handler():
+images/debug_target.c:50
+24000092:	b570      	push	{r4, r5, r6, lr}
+24000094:	b082      	sub	sp, #8
+images/debug_target.c:51 (discriminator 1)
+24000096:	4a1e      	ldr	r2, [pc, #120]	@ (24000110 <reset_handler+0x7e>)
+24000098:	4b1e      	ldr	r3, [pc, #120]	@ (24000114 <reset_handler+0x82>)
+2400009a:	429a      	cmp	r2, r3
+2400009c:	d20b      	bcs.n	240000b6 <reset_handler+0x24>
+2400009e:	4613      	mov	r3, r2
+240000a0:	4a1d      	ldr	r2, [pc, #116]	@ (24000118 <reset_handler+0x86>)
+240000a2:	1ad2      	subs	r2, r2, r3
+240000a4:	f022 0203 	bic.w	r2, r2, #3
+240000a8:	3204      	adds	r2, #4
+240000aa:	441a      	add	r2, r3
+images/debug_target.c:51 (discriminator 3)
+240000ac:	2100      	movs	r1, #0
+240000ae:	f843 1b04 	str.w	r1, [r3], #4
+images/debug_target.c:51 (discriminator 1)
+240000b2:	4293      	cmp	r3, r2
+240000b4:	d1fb      	bne.n	240000ae <reset_handler+0x1c>
+images/debug_target.c:53
+240000b6:	4c19      	ldr	r4, [pc, #100]	@ (2400011c <reset_handler+0x8a>)
+images/debug_target.c:57
+240000b8:	4e19      	ldr	r6, [pc, #100]	@ (24000120 <reset_handler+0x8e>)
+images/debug_target.c:58
+240000ba:	2500      	movs	r5, #0
+240000bc:	e017      	b.n	240000ee <reset_handler+0x5c>
+images/debug_target.c:57
+240000be:	68e3      	ldr	r3, [r4, #12]
+240000c0:	f003 0303 	and.w	r3, r3, #3
+240000c4:	3304      	adds	r3, #4
+240000c6:	eb06 0343 	add.w	r3, r6, r3, lsl #1
+240000ca:	88da      	ldrh	r2, [r3, #6]
+240000cc:	3201      	adds	r2, #1
+240000ce:	80da      	strh	r2, [r3, #6]
+images/debug_target.c:58
+240000d0:	4628      	mov	r0, r5
+240000d2:	f7ff ffd9 	bl	24000088 <level1>
+delay():
+images/debug_target.c:48
+240000d6:	9501      	str	r5, [sp, #4]
+images/debug_target.c:48 (discriminator 1)
+240000d8:	9a01      	ldr	r2, [sp, #4]
+240000da:	4b12      	ldr	r3, [pc, #72]	@ (24000124 <reset_handler+0x92>)
+240000dc:	429a      	cmp	r2, r3
+240000de:	d806      	bhi.n	240000ee <reset_handler+0x5c>
+240000e0:	461a      	mov	r2, r3
+images/debug_target.c:48 (discriminator 3)
+240000e2:	9b01      	ldr	r3, [sp, #4]
+240000e4:	3301      	adds	r3, #1
+240000e6:	9301      	str	r3, [sp, #4]
+images/debug_target.c:48 (discriminator 1)
+240000e8:	9b01      	ldr	r3, [sp, #4]
+240000ea:	4293      	cmp	r3, r2
+240000ec:	d9f9      	bls.n	240000e2 <reset_handler+0x50>
+reset_handler():
+images/debug_target.c:53
+240000ee:	68e3      	ldr	r3, [r4, #12]
+240000f0:	3301      	adds	r3, #1
+240000f2:	60e3      	str	r3, [r4, #12]
+images/debug_target.c:54
+240000f4:	6923      	ldr	r3, [r4, #16]
+240000f6:	3303      	adds	r3, #3
+240000f8:	6123      	str	r3, [r4, #16]
+images/debug_target.c:55
+240000fa:	68e0      	ldr	r0, [r4, #12]
+240000fc:	0040      	lsls	r0, r0, #1
+240000fe:	f7ff ffa0 	bl	24000042 <writer>
+images/debug_target.c:56
+24000102:	68e3      	ldr	r3, [r4, #12]
+24000104:	2b05      	cmp	r3, #5
+24000106:	d1da      	bne.n	240000be <reset_handler+0x2c>
+images/debug_target.c:56 (discriminator 1)
+24000108:	f7ff ffa4 	bl	24000054 <reached_tick_five>
+2400010c:	e7d7      	b.n	240000be <reset_handler+0x2c>
+2400010e:	bf00      	nop
+24000110:	24000160 	.word	0x24000160
+24000114:	24000174 	.word	0x24000174
+24000118:	24000173 	.word	0x24000173
+2400011c:	24000160 	.word	0x24000160
+24000120:	24000130 	.word	0x24000130
+24000124:	001e847f 	.word	0x001e847f

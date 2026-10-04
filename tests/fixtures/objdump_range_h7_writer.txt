@@ -1,0 +1,19 @@
+
+h7_vars_dwarf5.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+24000042 <writer>:
+writer():
+images/debug_target.c:39
+24000042:	4b03      	ldr	r3, [pc, #12]	@ (24000050 <writer+0xe>)
+24000044:	681a      	ldr	r2, [r3, #0]
+24000046:	3201      	adds	r2, #1
+24000048:	601a      	str	r2, [r3, #0]
+images/debug_target.c:40
+2400004a:	6058      	str	r0, [r3, #4]
+images/debug_target.c:41
+2400004c:	4770      	bx	lr
+2400004e:	bf00      	nop
+24000050:	24000160 	.word	0x24000160

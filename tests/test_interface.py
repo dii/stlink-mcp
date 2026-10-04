@@ -169,7 +169,7 @@ class TestAFlashWriteThatCannotEraseSaysWhy:
             probe.program_flash("wrp-test.bin", 0x080F0000)
         message = str(raised.value)
         assert message.index("Write protection") < message.index("Programming failed")
-        assert "-ob displ" in message and "Error: failed to erase memory" in message
+        assert "read_option_bytes" in message and "Error: failed to erase memory" in message
 
     def test_other_programming_failures_carry_no_such_claim(self, monkeypatch) -> None:
         output = _banner("connect_v2_f407.txt")

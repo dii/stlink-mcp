@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import dataclasses
+import difflib
 import functools
 import inspect
 import os
@@ -44,6 +45,7 @@ from mcp.server.mcpserver import Context
 from . import __version__
 from . import console as console_mod
 from . import debugger as debugger_mod
+from . import disasm as disasm_mod
 from . import gdbmi
 from . import faults as faults_mod
 from . import image as image_mod
@@ -3135,6 +3137,143 @@ def _instruction(toolchain: Toolchain, elf: Path, address: int) -> str | None:
         if int(match.group(1), 16) == address:
             return " ".join(match.group(2).split())
     return None
+
+
+@mcp.tool()
+@_serialised
+def disassemble(
+    elf_path: str,
+    location: str,
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Disassemble a function, or the code around an address, from the ELF, with
+each instruction's source file and line and the function an inlined copy comes
+from. `location` is a function name or an address. Reads only the ELF; with
+`probe_serial` it also compares the target's code with the ELF's, without
+halting it, and is verified only when they match. At most 256 instructions;
+`cut` says when there were more.
+    """
+    elf = Path(elf_path).expanduser()
+    if not elf.is_file():
+        return failed(f"No such ELF: {elf}")
+    try:
+        toolchain = _toolchain()
+    except ToolchainError as exc:
+        return failed(str(exc))
+    try:
+        table = symbols_mod.functions(str(elf))
+    except symbols_mod.SymbolError as exc:
+        return failed(str(exc), elf_path=str(elf))
+    at: int | None = None
+    if re.fullmatch(r"0x[0-9A-Fa-f]+|\d+", location.strip()):
+        at = int(location.strip(), 0) & ~1
+        holding = {(f.start, f.size): f for f in table if f.start <= at < f.start + f.size}
+        if holding:
+            chosen = min(holding.values(), key=lambda f: f.size)
+            start, end = chosen.start, chosen.start + chosen.size
+        else:
+            chosen, start, end = None, max(at - 32, 0), at + 32
+    else:
+        name = location.strip()
+        matches = {(f.start, f.size): f for f in table if f.name == name}
+        if not matches:
+            near = difflib.get_close_matches(name, sorted({f.name for f in table}), n=5)
+            return failed(f"No function named {name} in {elf.name}'s symbol table."
+                          + (f" Close names: {', '.join(near)}." if near else ""), elf_path=str(elf))
+        if len(matches) > 1:
+            listing = "; ".join(f"0x{f.start:08X}" + (f" in {f.file}" if f.file else "")
+                                for f in sorted(matches.values(), key=lambda f: f.start))
+            return failed(f"{name} names {len(matches)} functions: {listing}. Ask for the one you mean "
+                          "by address.", elf_path=str(elf))
+        chosen = next(iter(matches.values()))
+        start, end = chosen.start, chosen.start + chosen.size
+    stop = min(end, start + _DISASSEMBLY_SPAN)
+    instructions = disasm_mod.run(toolchain, elf, start, stop)
+    if not instructions:
+        return failed(f"objdump found no code at {location} in {elf.name}: an address outside the ELF's "
+                      "code.", elf_path=str(elf))
+    function = chosen.name if chosen else None
+    whole = len(instructions)
+    first = 0
+    if whole > disasm_mod.LIMIT and at is not None:
+        # The asked address with some of what led to it, as far as the function allows.
+        here = next((n for n, i in enumerate(instructions) if at < i.address + len(i.code)), whole - 1)
+        first = max(0, min(here - 32, whole - disasm_mod.LIMIT))
+    instructions = instructions[first:first + disasm_mod.LIMIT]
+    cut = whole > disasm_mod.LIMIT or stop < end
+    detail: dict[str, Any] = {
+        "elf_path": str(elf),
+        "function": function,
+        **({"at": f"0x{at:08X}"} if at is not None else {}),
+        **({"outside_functions": "No function in the symbol table holds this address, so these are the "
+            "64 bytes around it, and the first may be decoded from the middle of an instruction."}
+           if chosen is None else {}),
+        "instructions": [
+            {"address": f"0x{i.address:08X}", "instruction": i.text,
+             **({"function": i.function} if i.function and i.function != function else {}),
+             "file": i.file, "line": i.line,
+             **({"here": True} if at is not None and i.address <= at < i.address + len(i.code) else {})}
+            for i in instructions
+        ],
+        **({"cut": (f"{len(instructions)} of the function's {whole}{' or more' if stop < end else ''} "
+                    f"instructions, 0x{instructions[0].address:08X} to 0x{instructions[-1].address:08X}; "
+                    "ask by an address outside those for another part")} if cut else {}),
+    }
+    if probe_serial is None:
+        return verified("disassembled from the ELF by objdump; not compared with the target's code", **detail)
+
+    compared = _compare_with_target(toolchain, probe_serial, interface, instructions)
+    if "error" in compared:
+        return failed(compared.pop("error"), **compared, **detail)
+    detail.update(compared)
+    if compared["target_matches"]:
+        return verified(f"disassembled from the ELF, and the target's {compared['bytes_compared']} bytes of this "
+                        "code, read without halting it, are the ELF's", **detail)
+    return unverified(f"The target's code differs from the ELF's at {compared['first_difference']}: it is not "
+                      "running this ELF there, so these instructions are not what it executes.", **detail)
+
+
+#: The most of one function objdump is asked for; a function longer than this
+#: (64 KB) is a table, not code anybody reads by instruction.
+_DISASSEMBLY_SPAN = 0x10000
+
+
+def _compare_with_target(toolchain: Toolchain, probe_serial: str, interface: str,
+                         instructions: list[Any]) -> dict[str, Any]:
+    """The target's bytes over the instructions' range against the ELF's, read
+    without halting it and beside a held server; at most 1024 bytes."""
+    serial, _, error = _resolve_probe(toolchain, probe_serial)
+    if error:
+        return {"error": error}
+    refusal = _held_refusal(serial)
+    if refusal:
+        return {"error": refusal["error"], "probe_serial": serial}
+    expected = {i.address + n: b for i in instructions for n, b in enumerate(i.code)}
+    start = min(expected) & ~3
+    end = min((max(expected) + 4) & ~3, start + 1024)
+    probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
+                  shared=_shares(serial))
+    try:
+        info = probe.identify(allow_reset=False)
+        _remember_port(serial, probe, info)
+        if not info.connected:
+            return {"error": "Could not reach the core without resetting it, and this tool does not reset.",
+                    "probe_serial": serial, "hint": explain_connect_failure(info, interface)}
+        words = probe.read_memory(start, end - start)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "probe_serial": serial}
+    target = {a + n: (w >> (8 * n)) & 0xFF for a, w in words.items() for n in range(4)}
+    compared = [a for a in sorted(expected) if start <= a < end]
+    differ = next((a for a in compared if target.get(a) != expected[a]), None)
+    out: dict[str, Any] = {"probe_serial": serial, "bytes_compared": len(compared),
+                           "target_matches": differ is None, "target_was_reset": probe.target_was_reset}
+    if differ is not None:
+        out["first_difference"] = f"0x{differ:08X}"
+    if end - start < (max(expected) + 1) - start:
+        out["compared_note"] = "Only the first 1024 bytes were compared."
+    return out
 
 
 @mcp.tool()

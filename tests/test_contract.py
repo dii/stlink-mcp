@@ -28,6 +28,7 @@ import pytest
 
 from stlink_mcp import probe as probe_mod
 from stlink_mcp import faults, result, server
+from stlink_mcp import symbols as symbols_mod
 from stlink_mcp.toolchain import ToolchainError
 
 # Every tool, with the smallest argument set that reaches its body.
@@ -46,6 +47,7 @@ TOOL_CALLS: dict[str, dict] = {
     "read_option_bytes": {},
     "locate_fault": {},
     "run_until": {"elf_path": "/nonexistent.elf", "location": "main"},
+    "disassemble": {"elf_path": "/nonexistent.elf", "location": "main"},
 }
 
 
@@ -3059,6 +3061,114 @@ class TestTheInstructionAtAPlace:
         printed = (Path(__file__).parent / "fixtures" / "objdump_n6_udf.txt").read_text()
         monkeypatch.setattr(server, "run_command", lambda argv, timeout: SimpleNamespace(stdout=printed))
         assert server._instruction(SimpleNamespace(objdump=Path("objdump")), Path("x.elf"), 0x34180530) is None
+
+
+class TestDisassembly:
+    """DA1-DA4 at the tool. objdump is played by what it printed for each range
+    (tests/test_disasm.py checks those against the ELF and the source); a range
+    nobody captured fails the test."""
+
+    FIX = Path(__file__).parent / "fixtures"
+    ELF = FIX / "elf" / "disasm.elf"
+    H7 = FIX / "elf" / "h7_vars_dwarf5.elf"
+    PRINTED = {
+        (0x08000034, 0x0800004C): "objdump_range_disasm_scale_b.txt",
+        (0x08000066, 0x08000316): "objdump_range_disasm_long_function.txt",
+        (0x24000042, 0x24000054): "objdump_range_h7_writer.txt",
+        (0x24000092, 0x24000128): "objdump_range_h7_reset_handler.txt",
+    }
+
+    @pytest.fixture
+    def objdump(self, bench, monkeypatch) -> list:
+        asked: list = []
+
+        def run(argv, timeout):
+            span = tuple(int(a.split("=")[1], 16) for a in argv if a.startswith(("--start-address", "--stop-address")))
+            asked.append(span)
+            if span not in self.PRINTED:
+                pytest.fail(f"objdump was asked for {[hex(a) for a in span]}, which nobody captured")
+            return SimpleNamespace(stdout=(self.FIX / self.PRINTED[span]).read_text())
+
+        monkeypatch.setattr(server.disasm_mod, "run_command", run)
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(objdump=Path("objdump"), gdb=Path("gdb")))
+        return asked
+
+    def _target_holds_the_elf(self, monkeypatch, start: int, stop: int, changed: int | None = None) -> None:
+        from elftools.elf.elffile import ELFFile
+        with open(self.ELF, "rb") as f:
+            segment = next(s for s in ELFFile(f).iter_segments() if s.header.p_type == "PT_LOAD")
+            data = bytearray(segment.data())
+            base = segment.header.p_vaddr
+        if changed is not None:
+            data[changed - base] ^= 0xFF
+        memory = {a: int.from_bytes(data[a - base:a - base + 4], "little") for a in range(start, stop, 4)}
+        monkeypatch.setattr(_FakeProbe, "memory", memory)
+
+    def test_a_name_two_functions_share_is_refused_with_both(self, objdump) -> None:
+        """DA2. objdump's own --disassemble=scale gave the first of the two,
+        without a word (2026-10-04)."""
+        out = call("disassemble", elf_path=str(self.ELF), location="scale")
+        assert_contract(out, "disassemble")
+        assert out["status"] == result.FAILED
+        for place in ("0x08000000", "disasm_a.c", "0x08000034", "disasm_b.c"):
+            assert place in out["error"]
+        assert objdump == []
+
+    @pytest.mark.parametrize("location", ["0x0800003E", "0x08000040", "134217790"])
+    def test_an_address_gives_the_function_holding_it_and_marks_its_instruction(self, objdump, location) -> None:
+        """DA1. The second scale, by an address inside it: its first and last
+        instructions, and the 32-bit eor.w the address falls in, marked."""
+        out = call("disassemble", elf_path=str(self.ELF), location=location)
+        assert out["status"] == result.VERIFIED and out["function"] == "scale"
+        listed = out["instructions"]
+        assert (listed[0]["address"], listed[-1]["address"]) == ("0x08000034", "0x0800004A")
+        assert [i["address"] for i in listed if i.get("here")] == ["0x0800003E"]
+        assert listed[0]["file"] == "./disasm_b.c" and "cut" not in out
+
+    def test_an_inlined_copy_is_named_for_its_function(self, objdump) -> None:
+        """DA1, RU5."""
+        out = call("disassemble", elf_path=str(self.H7), location="reset_handler")
+        sites = {f"0x{a:08X}" for a in symbols_mod.inlined_at(str(self.H7), "delay")}
+        named = {i["address"] for i in out["instructions"] if i.get("function") == "delay"}
+        assert sites and sites <= named
+
+    def test_more_than_256_are_cut_and_the_rest_can_be_reached(self, objdump) -> None:
+        """DA4. long_function has 328 instructions."""
+        first = call("disassemble", elf_path=str(self.ELF), location="long_function")
+        assert len(first["instructions"]) == 256 and "328" in first["cut"]
+        assert first["instructions"][0]["address"] == "0x08000066"
+        last = first["instructions"][-1]["address"]
+        assert last in first["cut"]
+        rest = call("disassemble", elf_path=str(self.ELF), location="0x08000312")
+        seen = {i["address"] for i in first["instructions"]} | {i["address"] for i in rest["instructions"]}
+        whole = {f"0x{i.address:08X}" for i in server.disasm_mod.parse(
+            (self.FIX / "objdump_range_disasm_long_function.txt").read_text())}
+        assert seen == whole
+        assert [i["address"] for i in rest["instructions"] if i.get("here")] == ["0x08000312"]
+
+    def test_without_a_probe_it_says_the_target_was_not_compared(self, objdump, monkeypatch) -> None:
+        """DA3."""
+        monkeypatch.setattr(server, "Probe", lambda *a, **k: pytest.fail("a probe was used"))
+        out = call("disassemble", elf_path=str(self.H7), location="writer")
+        assert out["status"] == result.VERIFIED and "not compared" in out["verified_by"]
+        assert len(out["instructions"]) == 8
+
+    def test_with_a_probe_it_is_verified_only_when_the_target_holds_the_same_code(self, objdump, monkeypatch) -> None:
+        """DA3."""
+        self._target_holds_the_elf(monkeypatch, 0x08000034, 0x0800004C)
+        same = call("disassemble", elf_path=str(self.ELF), location="0x0800003E", probe_serial="AAAA0001")
+        assert same["status"] == result.VERIFIED and same["target_matches"] is True, same.get("error")
+        self._target_holds_the_elf(monkeypatch, 0x08000034, 0x0800004C, changed=0x08000041)
+        other = call("disassemble", elf_path=str(self.ELF), location="0x0800003E", probe_serial="AAAA0001")
+        assert other["status"] == result.UNVERIFIED and other["first_difference"] == "0x08000041"
+        assert len(other["instructions"]) == 11
+
+    def test_with_a_probe_it_never_resets_to_compare(self, objdump, monkeypatch) -> None:
+        """DA3, RM1. A core a hotplug connect cannot reach is not reset into reach."""
+        monkeypatch.setattr(server, "Probe", TestTheReadingToolsNeverReset._Unreachable)
+        out = call("disassemble", elf_path=str(self.ELF), location="0x0800003E", probe_serial="AAAA0001")
+        assert_contract(out, "disassemble")
+        assert out["status"] == result.FAILED and out.get("target_was_reset") is not True
 
 
 class TestSeveralProbesAndNoneNamed:

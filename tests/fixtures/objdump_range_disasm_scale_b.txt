@@ -1,0 +1,20 @@
+
+disasm.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08000034 <scale>:
+scale():
+./disasm_b.c:2
+ 8000034:	b480      	push	{r7}
+ 8000036:	b083      	sub	sp, #12
+ 8000038:	af00      	add	r7, sp, #0
+ 800003a:	6078      	str	r0, [r7, #4]
+ 800003c:	687b      	ldr	r3, [r7, #4]
+ 800003e:	f083 0355 	eor.w	r3, r3, #85	@ 0x55
+ 8000042:	4618      	mov	r0, r3
+ 8000044:	370c      	adds	r7, #12
+ 8000046:	46bd      	mov	sp, r7
+ 8000048:	bc80      	pop	{r7}
+ 800004a:	4770      	bx	lr

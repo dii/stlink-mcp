@@ -1,0 +1,418 @@
+
+disasm.elf:     file format elf32-littlearm
+
+
+Disassembly of section .text:
+
+08000066 <long_function>:
+long_function():
+./disasm_b.c:6
+ 8000066:	b480      	push	{r7}
+ 8000068:	b083      	sub	sp, #12
+ 800006a:	af00      	add	r7, sp, #0
+ 800006c:	6078      	str	r0, [r7, #4]
+./disasm_b.c:7
+ 800006e:	687b      	ldr	r3, [r7, #4]
+ 8000070:	2200      	movs	r2, #0
+ 8000072:	601a      	str	r2, [r3, #0]
+./disasm_b.c:8
+ 8000074:	687b      	ldr	r3, [r7, #4]
+ 8000076:	3304      	adds	r3, #4
+ 8000078:	2201      	movs	r2, #1
+ 800007a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:9
+ 800007c:	687b      	ldr	r3, [r7, #4]
+ 800007e:	3308      	adds	r3, #8
+ 8000080:	2202      	movs	r2, #2
+ 8000082:	601a      	str	r2, [r3, #0]
+./disasm_b.c:10
+ 8000084:	687b      	ldr	r3, [r7, #4]
+ 8000086:	330c      	adds	r3, #12
+ 8000088:	2203      	movs	r2, #3
+ 800008a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:11
+ 800008c:	687b      	ldr	r3, [r7, #4]
+ 800008e:	3310      	adds	r3, #16
+ 8000090:	2204      	movs	r2, #4
+ 8000092:	601a      	str	r2, [r3, #0]
+./disasm_b.c:12
+ 8000094:	687b      	ldr	r3, [r7, #4]
+ 8000096:	3314      	adds	r3, #20
+ 8000098:	2205      	movs	r2, #5
+ 800009a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:13
+ 800009c:	687b      	ldr	r3, [r7, #4]
+ 800009e:	3318      	adds	r3, #24
+ 80000a0:	2206      	movs	r2, #6
+ 80000a2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:14
+ 80000a4:	687b      	ldr	r3, [r7, #4]
+ 80000a6:	331c      	adds	r3, #28
+ 80000a8:	2207      	movs	r2, #7
+ 80000aa:	601a      	str	r2, [r3, #0]
+./disasm_b.c:15
+ 80000ac:	687b      	ldr	r3, [r7, #4]
+ 80000ae:	3320      	adds	r3, #32
+ 80000b0:	2208      	movs	r2, #8
+ 80000b2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:16
+ 80000b4:	687b      	ldr	r3, [r7, #4]
+ 80000b6:	3324      	adds	r3, #36	@ 0x24
+ 80000b8:	2209      	movs	r2, #9
+ 80000ba:	601a      	str	r2, [r3, #0]
+./disasm_b.c:17
+ 80000bc:	687b      	ldr	r3, [r7, #4]
+ 80000be:	3328      	adds	r3, #40	@ 0x28
+ 80000c0:	220a      	movs	r2, #10
+ 80000c2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:18
+ 80000c4:	687b      	ldr	r3, [r7, #4]
+ 80000c6:	332c      	adds	r3, #44	@ 0x2c
+ 80000c8:	220b      	movs	r2, #11
+ 80000ca:	601a      	str	r2, [r3, #0]
+./disasm_b.c:19
+ 80000cc:	687b      	ldr	r3, [r7, #4]
+ 80000ce:	3330      	adds	r3, #48	@ 0x30
+ 80000d0:	220c      	movs	r2, #12
+ 80000d2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:20
+ 80000d4:	687b      	ldr	r3, [r7, #4]
+ 80000d6:	3334      	adds	r3, #52	@ 0x34
+ 80000d8:	220d      	movs	r2, #13
+ 80000da:	601a      	str	r2, [r3, #0]
+./disasm_b.c:21
+ 80000dc:	687b      	ldr	r3, [r7, #4]
+ 80000de:	3338      	adds	r3, #56	@ 0x38
+ 80000e0:	220e      	movs	r2, #14
+ 80000e2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:22
+ 80000e4:	687b      	ldr	r3, [r7, #4]
+ 80000e6:	333c      	adds	r3, #60	@ 0x3c
+ 80000e8:	220f      	movs	r2, #15
+ 80000ea:	601a      	str	r2, [r3, #0]
+./disasm_b.c:23
+ 80000ec:	687b      	ldr	r3, [r7, #4]
+ 80000ee:	3340      	adds	r3, #64	@ 0x40
+ 80000f0:	2210      	movs	r2, #16
+ 80000f2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:24
+ 80000f4:	687b      	ldr	r3, [r7, #4]
+ 80000f6:	3344      	adds	r3, #68	@ 0x44
+ 80000f8:	2211      	movs	r2, #17
+ 80000fa:	601a      	str	r2, [r3, #0]
+./disasm_b.c:25
+ 80000fc:	687b      	ldr	r3, [r7, #4]
+ 80000fe:	3348      	adds	r3, #72	@ 0x48
+ 8000100:	2212      	movs	r2, #18
+ 8000102:	601a      	str	r2, [r3, #0]
+./disasm_b.c:26
+ 8000104:	687b      	ldr	r3, [r7, #4]
+ 8000106:	334c      	adds	r3, #76	@ 0x4c
+ 8000108:	2213      	movs	r2, #19
+ 800010a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:27
+ 800010c:	687b      	ldr	r3, [r7, #4]
+ 800010e:	3350      	adds	r3, #80	@ 0x50
+ 8000110:	2214      	movs	r2, #20
+ 8000112:	601a      	str	r2, [r3, #0]
+./disasm_b.c:28
+ 8000114:	687b      	ldr	r3, [r7, #4]
+ 8000116:	3354      	adds	r3, #84	@ 0x54
+ 8000118:	2215      	movs	r2, #21
+ 800011a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:29
+ 800011c:	687b      	ldr	r3, [r7, #4]
+ 800011e:	3358      	adds	r3, #88	@ 0x58
+ 8000120:	2216      	movs	r2, #22
+ 8000122:	601a      	str	r2, [r3, #0]
+./disasm_b.c:30
+ 8000124:	687b      	ldr	r3, [r7, #4]
+ 8000126:	335c      	adds	r3, #92	@ 0x5c
+ 8000128:	2217      	movs	r2, #23
+ 800012a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:31
+ 800012c:	687b      	ldr	r3, [r7, #4]
+ 800012e:	3360      	adds	r3, #96	@ 0x60
+ 8000130:	2218      	movs	r2, #24
+ 8000132:	601a      	str	r2, [r3, #0]
+./disasm_b.c:32
+ 8000134:	687b      	ldr	r3, [r7, #4]
+ 8000136:	3364      	adds	r3, #100	@ 0x64
+ 8000138:	2219      	movs	r2, #25
+ 800013a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:33
+ 800013c:	687b      	ldr	r3, [r7, #4]
+ 800013e:	3368      	adds	r3, #104	@ 0x68
+ 8000140:	221a      	movs	r2, #26
+ 8000142:	601a      	str	r2, [r3, #0]
+./disasm_b.c:34
+ 8000144:	687b      	ldr	r3, [r7, #4]
+ 8000146:	336c      	adds	r3, #108	@ 0x6c
+ 8000148:	221b      	movs	r2, #27
+ 800014a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:35
+ 800014c:	687b      	ldr	r3, [r7, #4]
+ 800014e:	3370      	adds	r3, #112	@ 0x70
+ 8000150:	221c      	movs	r2, #28
+ 8000152:	601a      	str	r2, [r3, #0]
+./disasm_b.c:36
+ 8000154:	687b      	ldr	r3, [r7, #4]
+ 8000156:	3374      	adds	r3, #116	@ 0x74
+ 8000158:	221d      	movs	r2, #29
+ 800015a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:37
+ 800015c:	687b      	ldr	r3, [r7, #4]
+ 800015e:	3378      	adds	r3, #120	@ 0x78
+ 8000160:	221e      	movs	r2, #30
+ 8000162:	601a      	str	r2, [r3, #0]
+./disasm_b.c:38
+ 8000164:	687b      	ldr	r3, [r7, #4]
+ 8000166:	337c      	adds	r3, #124	@ 0x7c
+ 8000168:	221f      	movs	r2, #31
+ 800016a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:39
+ 800016c:	687b      	ldr	r3, [r7, #4]
+ 800016e:	3380      	adds	r3, #128	@ 0x80
+ 8000170:	2220      	movs	r2, #32
+ 8000172:	601a      	str	r2, [r3, #0]
+./disasm_b.c:40
+ 8000174:	687b      	ldr	r3, [r7, #4]
+ 8000176:	3384      	adds	r3, #132	@ 0x84
+ 8000178:	2221      	movs	r2, #33	@ 0x21
+ 800017a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:41
+ 800017c:	687b      	ldr	r3, [r7, #4]
+ 800017e:	3388      	adds	r3, #136	@ 0x88
+ 8000180:	2222      	movs	r2, #34	@ 0x22
+ 8000182:	601a      	str	r2, [r3, #0]
+./disasm_b.c:42
+ 8000184:	687b      	ldr	r3, [r7, #4]
+ 8000186:	338c      	adds	r3, #140	@ 0x8c
+ 8000188:	2223      	movs	r2, #35	@ 0x23
+ 800018a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:43
+ 800018c:	687b      	ldr	r3, [r7, #4]
+ 800018e:	3390      	adds	r3, #144	@ 0x90
+ 8000190:	2224      	movs	r2, #36	@ 0x24
+ 8000192:	601a      	str	r2, [r3, #0]
+./disasm_b.c:44
+ 8000194:	687b      	ldr	r3, [r7, #4]
+ 8000196:	3394      	adds	r3, #148	@ 0x94
+ 8000198:	2225      	movs	r2, #37	@ 0x25
+ 800019a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:45
+ 800019c:	687b      	ldr	r3, [r7, #4]
+ 800019e:	3398      	adds	r3, #152	@ 0x98
+ 80001a0:	2226      	movs	r2, #38	@ 0x26
+ 80001a2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:46
+ 80001a4:	687b      	ldr	r3, [r7, #4]
+ 80001a6:	339c      	adds	r3, #156	@ 0x9c
+ 80001a8:	2227      	movs	r2, #39	@ 0x27
+ 80001aa:	601a      	str	r2, [r3, #0]
+./disasm_b.c:47
+ 80001ac:	687b      	ldr	r3, [r7, #4]
+ 80001ae:	33a0      	adds	r3, #160	@ 0xa0
+ 80001b0:	2228      	movs	r2, #40	@ 0x28
+ 80001b2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:48
+ 80001b4:	687b      	ldr	r3, [r7, #4]
+ 80001b6:	33a4      	adds	r3, #164	@ 0xa4
+ 80001b8:	2229      	movs	r2, #41	@ 0x29
+ 80001ba:	601a      	str	r2, [r3, #0]
+./disasm_b.c:49
+ 80001bc:	687b      	ldr	r3, [r7, #4]
+ 80001be:	33a8      	adds	r3, #168	@ 0xa8
+ 80001c0:	222a      	movs	r2, #42	@ 0x2a
+ 80001c2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:50
+ 80001c4:	687b      	ldr	r3, [r7, #4]
+ 80001c6:	33ac      	adds	r3, #172	@ 0xac
+ 80001c8:	222b      	movs	r2, #43	@ 0x2b
+ 80001ca:	601a      	str	r2, [r3, #0]
+./disasm_b.c:51
+ 80001cc:	687b      	ldr	r3, [r7, #4]
+ 80001ce:	33b0      	adds	r3, #176	@ 0xb0
+ 80001d0:	222c      	movs	r2, #44	@ 0x2c
+ 80001d2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:52
+ 80001d4:	687b      	ldr	r3, [r7, #4]
+ 80001d6:	33b4      	adds	r3, #180	@ 0xb4
+ 80001d8:	222d      	movs	r2, #45	@ 0x2d
+ 80001da:	601a      	str	r2, [r3, #0]
+./disasm_b.c:53
+ 80001dc:	687b      	ldr	r3, [r7, #4]
+ 80001de:	33b8      	adds	r3, #184	@ 0xb8
+ 80001e0:	222e      	movs	r2, #46	@ 0x2e
+ 80001e2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:54
+ 80001e4:	687b      	ldr	r3, [r7, #4]
+ 80001e6:	33bc      	adds	r3, #188	@ 0xbc
+ 80001e8:	222f      	movs	r2, #47	@ 0x2f
+ 80001ea:	601a      	str	r2, [r3, #0]
+./disasm_b.c:55
+ 80001ec:	687b      	ldr	r3, [r7, #4]
+ 80001ee:	33c0      	adds	r3, #192	@ 0xc0
+ 80001f0:	2230      	movs	r2, #48	@ 0x30
+ 80001f2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:56
+ 80001f4:	687b      	ldr	r3, [r7, #4]
+ 80001f6:	33c4      	adds	r3, #196	@ 0xc4
+ 80001f8:	2231      	movs	r2, #49	@ 0x31
+ 80001fa:	601a      	str	r2, [r3, #0]
+./disasm_b.c:57
+ 80001fc:	687b      	ldr	r3, [r7, #4]
+ 80001fe:	33c8      	adds	r3, #200	@ 0xc8
+ 8000200:	2232      	movs	r2, #50	@ 0x32
+ 8000202:	601a      	str	r2, [r3, #0]
+./disasm_b.c:58
+ 8000204:	687b      	ldr	r3, [r7, #4]
+ 8000206:	33cc      	adds	r3, #204	@ 0xcc
+ 8000208:	2233      	movs	r2, #51	@ 0x33
+ 800020a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:59
+ 800020c:	687b      	ldr	r3, [r7, #4]
+ 800020e:	33d0      	adds	r3, #208	@ 0xd0
+ 8000210:	2234      	movs	r2, #52	@ 0x34
+ 8000212:	601a      	str	r2, [r3, #0]
+./disasm_b.c:60
+ 8000214:	687b      	ldr	r3, [r7, #4]
+ 8000216:	33d4      	adds	r3, #212	@ 0xd4
+ 8000218:	2235      	movs	r2, #53	@ 0x35
+ 800021a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:61
+ 800021c:	687b      	ldr	r3, [r7, #4]
+ 800021e:	33d8      	adds	r3, #216	@ 0xd8
+ 8000220:	2236      	movs	r2, #54	@ 0x36
+ 8000222:	601a      	str	r2, [r3, #0]
+./disasm_b.c:62
+ 8000224:	687b      	ldr	r3, [r7, #4]
+ 8000226:	33dc      	adds	r3, #220	@ 0xdc
+ 8000228:	2237      	movs	r2, #55	@ 0x37
+ 800022a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:63
+ 800022c:	687b      	ldr	r3, [r7, #4]
+ 800022e:	33e0      	adds	r3, #224	@ 0xe0
+ 8000230:	2238      	movs	r2, #56	@ 0x38
+ 8000232:	601a      	str	r2, [r3, #0]
+./disasm_b.c:64
+ 8000234:	687b      	ldr	r3, [r7, #4]
+ 8000236:	33e4      	adds	r3, #228	@ 0xe4
+ 8000238:	2239      	movs	r2, #57	@ 0x39
+ 800023a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:65
+ 800023c:	687b      	ldr	r3, [r7, #4]
+ 800023e:	33e8      	adds	r3, #232	@ 0xe8
+ 8000240:	223a      	movs	r2, #58	@ 0x3a
+ 8000242:	601a      	str	r2, [r3, #0]
+./disasm_b.c:66
+ 8000244:	687b      	ldr	r3, [r7, #4]
+ 8000246:	33ec      	adds	r3, #236	@ 0xec
+ 8000248:	223b      	movs	r2, #59	@ 0x3b
+ 800024a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:67
+ 800024c:	687b      	ldr	r3, [r7, #4]
+ 800024e:	33f0      	adds	r3, #240	@ 0xf0
+ 8000250:	223c      	movs	r2, #60	@ 0x3c
+ 8000252:	601a      	str	r2, [r3, #0]
+./disasm_b.c:68
+ 8000254:	687b      	ldr	r3, [r7, #4]
+ 8000256:	33f4      	adds	r3, #244	@ 0xf4
+ 8000258:	223d      	movs	r2, #61	@ 0x3d
+ 800025a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:69
+ 800025c:	687b      	ldr	r3, [r7, #4]
+ 800025e:	33f8      	adds	r3, #248	@ 0xf8
+ 8000260:	223e      	movs	r2, #62	@ 0x3e
+ 8000262:	601a      	str	r2, [r3, #0]
+./disasm_b.c:70
+ 8000264:	687b      	ldr	r3, [r7, #4]
+ 8000266:	33fc      	adds	r3, #252	@ 0xfc
+ 8000268:	223f      	movs	r2, #63	@ 0x3f
+ 800026a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:71
+ 800026c:	687b      	ldr	r3, [r7, #4]
+ 800026e:	f503 7380 	add.w	r3, r3, #256	@ 0x100
+ 8000272:	2240      	movs	r2, #64	@ 0x40
+ 8000274:	601a      	str	r2, [r3, #0]
+./disasm_b.c:72
+ 8000276:	687b      	ldr	r3, [r7, #4]
+ 8000278:	f503 7382 	add.w	r3, r3, #260	@ 0x104
+ 800027c:	2241      	movs	r2, #65	@ 0x41
+ 800027e:	601a      	str	r2, [r3, #0]
+./disasm_b.c:73
+ 8000280:	687b      	ldr	r3, [r7, #4]
+ 8000282:	f503 7384 	add.w	r3, r3, #264	@ 0x108
+ 8000286:	2242      	movs	r2, #66	@ 0x42
+ 8000288:	601a      	str	r2, [r3, #0]
+./disasm_b.c:74
+ 800028a:	687b      	ldr	r3, [r7, #4]
+ 800028c:	f503 7386 	add.w	r3, r3, #268	@ 0x10c
+ 8000290:	2243      	movs	r2, #67	@ 0x43
+ 8000292:	601a      	str	r2, [r3, #0]
+./disasm_b.c:75
+ 8000294:	687b      	ldr	r3, [r7, #4]
+ 8000296:	f503 7388 	add.w	r3, r3, #272	@ 0x110
+ 800029a:	2244      	movs	r2, #68	@ 0x44
+ 800029c:	601a      	str	r2, [r3, #0]
+./disasm_b.c:76
+ 800029e:	687b      	ldr	r3, [r7, #4]
+ 80002a0:	f503 738a 	add.w	r3, r3, #276	@ 0x114
+ 80002a4:	2245      	movs	r2, #69	@ 0x45
+ 80002a6:	601a      	str	r2, [r3, #0]
+./disasm_b.c:77
+ 80002a8:	687b      	ldr	r3, [r7, #4]
+ 80002aa:	f503 738c 	add.w	r3, r3, #280	@ 0x118
+ 80002ae:	2246      	movs	r2, #70	@ 0x46
+ 80002b0:	601a      	str	r2, [r3, #0]
+./disasm_b.c:78
+ 80002b2:	687b      	ldr	r3, [r7, #4]
+ 80002b4:	f503 738e 	add.w	r3, r3, #284	@ 0x11c
+ 80002b8:	2247      	movs	r2, #71	@ 0x47
+ 80002ba:	601a      	str	r2, [r3, #0]
+./disasm_b.c:79
+ 80002bc:	687b      	ldr	r3, [r7, #4]
+ 80002be:	f503 7390 	add.w	r3, r3, #288	@ 0x120
+ 80002c2:	2248      	movs	r2, #72	@ 0x48
+ 80002c4:	601a      	str	r2, [r3, #0]
+./disasm_b.c:80
+ 80002c6:	687b      	ldr	r3, [r7, #4]
+ 80002c8:	f503 7392 	add.w	r3, r3, #292	@ 0x124
+ 80002cc:	2249      	movs	r2, #73	@ 0x49
+ 80002ce:	601a      	str	r2, [r3, #0]
+./disasm_b.c:81
+ 80002d0:	687b      	ldr	r3, [r7, #4]
+ 80002d2:	f503 7394 	add.w	r3, r3, #296	@ 0x128
+ 80002d6:	224a      	movs	r2, #74	@ 0x4a
+ 80002d8:	601a      	str	r2, [r3, #0]
+./disasm_b.c:82
+ 80002da:	687b      	ldr	r3, [r7, #4]
+ 80002dc:	f503 7396 	add.w	r3, r3, #300	@ 0x12c
+ 80002e0:	224b      	movs	r2, #75	@ 0x4b
+ 80002e2:	601a      	str	r2, [r3, #0]
+./disasm_b.c:83
+ 80002e4:	687b      	ldr	r3, [r7, #4]
+ 80002e6:	f503 7398 	add.w	r3, r3, #304	@ 0x130
+ 80002ea:	224c      	movs	r2, #76	@ 0x4c
+ 80002ec:	601a      	str	r2, [r3, #0]
+./disasm_b.c:84
+ 80002ee:	687b      	ldr	r3, [r7, #4]
+ 80002f0:	f503 739a 	add.w	r3, r3, #308	@ 0x134
+ 80002f4:	224d      	movs	r2, #77	@ 0x4d
+ 80002f6:	601a      	str	r2, [r3, #0]
+./disasm_b.c:85
+ 80002f8:	687b      	ldr	r3, [r7, #4]
+ 80002fa:	f503 739c 	add.w	r3, r3, #312	@ 0x138
+ 80002fe:	224e      	movs	r2, #78	@ 0x4e
+ 8000300:	601a      	str	r2, [r3, #0]
+./disasm_b.c:86
+ 8000302:	687b      	ldr	r3, [r7, #4]
+ 8000304:	f503 739e 	add.w	r3, r3, #316	@ 0x13c
+ 8000308:	224f      	movs	r2, #79	@ 0x4f
+ 800030a:	601a      	str	r2, [r3, #0]
+./disasm_b.c:87
+ 800030c:	bf00      	nop
+ 800030e:	370c      	adds	r7, #12
+ 8000310:	46bd      	mov	sp, r7
+ 8000312:	bc80      	pop	{r7}
+ 8000314:	4770      	bx	lr

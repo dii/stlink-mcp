@@ -205,6 +205,49 @@ def first_code(elf_path: str, length: int = 64) -> tuple[int, bytes] | None:
     return _open(elf_path).first_code(length)
 
 
+@dataclass(frozen=True)
+class Function:
+    name: str
+    start: int
+    size: int
+    file: str | None
+    """The source file the symbol table names for a static function; None for a
+    global one, which the table does not tie to a file."""
+
+
+def functions(elf_path: str) -> tuple[Function, ...]:
+    """Every function in the ELF's symbol table, with its address range. Needs
+    no debug information."""
+    try:
+        stat = os.stat(elf_path)
+    except OSError as exc:
+        raise SymbolError(f"Cannot read {elf_path}: {exc.strerror}.") from exc
+    return _functions(os.path.abspath(elf_path), stat.st_mtime_ns, stat.st_size)
+
+
+@functools.lru_cache(maxsize=4)
+def _functions(path: str, mtime_ns: int, size: int) -> tuple[Function, ...]:
+    found: list[Function] = []
+    try:
+        with open(path, "rb") as f:
+            table = ELFFile(f).get_section_by_name(".symtab")
+            if table is None:
+                raise SymbolError(f"{path} has no symbol table; it was stripped.")
+            file = None
+            for sym in table.iter_symbols():
+                kind, bind = sym["st_info"]["type"], sym["st_info"]["bind"]
+                if kind == "STT_FILE":
+                    file = sym.name
+                elif kind == "STT_FUNC" and sym.name and sym["st_size"]:
+                    found.append(Function(sym.name, sym["st_value"] & ~1, sym["st_size"],
+                                          file if bind == "STB_LOCAL" else None))
+    except SymbolError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - pyelftools raises several kinds
+        raise SymbolError(f"{path} could not be read as an ELF: {exc}") from exc
+    return tuple(found)
+
+
 @functools.lru_cache(maxsize=16)
 def inlined_at(elf_path: str, function: str) -> tuple[int, ...]:
     """Where the compiler copied `function` into its callers: each inlined
