@@ -114,3 +114,34 @@ class TestTheCoreStateIsReadWithoutHaltingIt:
         probe._access_port = 0
         with pytest.raises(pm.ProbeError):
             probe.core_state()
+
+
+class TestARegisterReadLeavesTheCoreAsItWasFound:
+    """In ST's shared mode a -coreReg halt outlived the command, on the N6 and
+    the F407 (2026-10-04), so DHCSR is read first, in the same call, and a core
+    that was running is let go. The fixtures are what the programmer printed on
+    the F407 beside a held server, running and then halted by hand."""
+
+    def _probe(self, monkeypatch, fixture: str):
+        text = (FIXTURES / fixture).read_text()
+        sent: list[list[str]] = []
+
+        def run(argv, timeout=90):
+            sent.append(argv)
+            return CommandResult(argv, 0, "Core run\n" if "-run" in argv else text)
+
+        monkeypatch.setattr(pm, "run_command", run)
+        probe = pm.Probe(SimpleNamespace(programmer=Path("STM32_Programmer_CLI")),
+                         serial="50FF73064977535531090387", shared=True)
+        probe._access_port = 0
+        return probe, sent
+
+    def test_a_running_core_is_let_go(self, monkeypatch) -> None:
+        probe, sent = self._probe(monkeypatch, "coreReg_f4_running_before.txt")
+        assert "PC" in probe.core_registers()
+        assert probe.halted_before is False and any("-run" in argv for argv in sent)
+
+    def test_a_halted_core_stays_halted(self, monkeypatch) -> None:
+        probe, sent = self._probe(monkeypatch, "coreReg_f4_halted_before.txt")
+        assert "PC" in probe.core_registers()
+        assert probe.halted_before is True and not any("-run" in argv for argv in sent)

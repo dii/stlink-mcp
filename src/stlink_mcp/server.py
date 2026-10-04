@@ -1996,17 +1996,33 @@ def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
     return server, None, None, True
 
 
-#: core_after for a halt made through the programmer: it ends with the command
-#: (two H7 boards, 2026-08-17), and nothing here observes the core afterwards.
+#: core_after for a halt made through the programmer, when DHCSR cannot be read
+#: afterwards. Without ST's shared mode such a halt ended with the command (two
+#: H7 boards, 2026-08-17); in it, it did not (N6 and F407, 2026-10-04), so a core
+#: that was running is let go after the read.
 _PROGRAMMER_HALT_AFTER = (
-    "not observed: the programmer halted the core for the read, and on the boards "
-    "measured such a halt did not outlive the command. run_until holds a core stopped."
+    "not observed: the core was halted for the read and let go afterwards if it had "
+    "been running. run_until holds a core stopped."
 )
 
 _DETACH_RESUMED = (
     "resumed: GDB's detach resumed the core on the H7, the F407 and the N6; "
     "not observed for this call"
 )
+
+
+def _halted_now(toolchain: Toolchain, serial: str | None, interface: str) -> bool | None:
+    """Whether the core is halted, from DHCSR read without halting it; None when
+    that read fails."""
+    port = _settled_port(serial)
+    if port is None:
+        return None
+    try:
+        probe = Probe(toolchain, access_port=port, serial=serial, interface=interface, shared=_shares(serial))
+        dhcsr = probe.read_memory(_DHCSR, 4).get(_DHCSR)
+    except Exception:  # noqa: BLE001
+        return None
+    return None if dhcsr is None else bool(dhcsr & _S_HALT)
 
 
 def _core_after_observed(probe: Probe | None, toolchain: Toolchain, serial: str | None,
@@ -2065,6 +2081,11 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
     session: gdbmi.Session | None = None
     with _STATE:
         was_halted = serial in _stopped
+    # Left as it was found: GDB's detach resumes the core, and one the held
+    # server had halted at its reset vector after a lockup was set running into
+    # its flash program by a register read (2026-10-04).
+    found_halted = not was_halted and _halted_now(toolchain, serial, interface) is True
+    was_halted = was_halted or found_halted
     try:
         if temporary:
             server, _, refusal, _started = _debug_server(toolchain, serial, interface)
@@ -2088,7 +2109,8 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
         "probe_serial": serial,
         "interface": server.interface,
         "halted_during_call": True,
-        "core_after": ("still halted where run_until stopped it" if was_halted else
+        "core_after": ("still halted, as it was found" if found_halted else
+                       "still halted where run_until stopped it" if was_halted else
                        _core_after_observed(None, toolchain, serial, interface, _DETACH_RESUMED)),
         "target_was_reset": False,
         "registers": {name: f"0x{value:08X}" for name, value in regs.items()},

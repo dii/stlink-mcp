@@ -1465,6 +1465,20 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert out["core_after"].startswith("still halted") and out["interface"] == "swd"
         assert self._Session.closes == [False, False]
 
+    @pytest.mark.parametrize("halted, closes, says", [
+        (True, [False], "still halted, as it was found"), (False, [True], "running"),
+    ])
+    def test_core_registers_leaves_the_core_as_it_found_it(self, bench, monkeypatch, halted, closes, says) -> None:
+        """GDB's detach resumes the core, and a register read set one the held
+        server had halted at its reset vector running into its flash program
+        (agent-use evaluation, 2026-10-04)."""
+        self._rig(monkeypatch)
+        monkeypatch.setattr(server, "held_server", lambda serial: self._Server())
+        monkeypatch.setattr(server, "_halted_now", lambda toolchain, serial, interface: halted)
+        monkeypatch.setattr(server, "_core_after_observed", lambda *a: "running: DHCSR 0x01010001")
+        out = call("core_registers")
+        assert out["core_after"].startswith(says) and self._Session.closes == closes
+
 
 class TestWithoutUdevTheConsoleIsFoundByUsbSerial:
     """On Windows, which has no /dev/serial/by-id, pyserial reported the

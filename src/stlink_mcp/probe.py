@@ -442,6 +442,8 @@ class Probe:
         stable across replugs."""
         self.connect_mode: str = "HOTPLUG"
         self.target_was_reset: bool = False
+        self.halted_before: bool | None = None
+        """Whether core_registers found the core halted; a running one it lets go."""
         """True once a resetting connect has been ISSUED, which restarts
         whatever was running. Reported rather than hidden, because for anything
         inspecting a live program that is a destructive act.
@@ -845,7 +847,12 @@ class Probe:
         program is really doing, and it is also perturbing, so it is never used
         as part of a routine 'did it run' check.
         """
-        argv = self._connect_args(self.access_port, self.connect_mode) + ["-coreReg"]
+        # DHCSR first, in the same call, so a core that was running is let go
+        # afterwards: in ST's shared mode the halt outlived the command on the
+        # N6 and the F407 (2026-10-04), where without it a halt ended with the
+        # command (two H7 boards, 2026-08-17).
+        argv = self._connect_args(self.access_port, self.connect_mode) + [
+            "-r32", f"0x{DHCSR:08X}", "4", "-coreReg"]
         result = self._run(argv, timeout=90)
         regs = parse_core_registers(result.stdout)
         if "PC" not in regs:
@@ -854,6 +861,10 @@ class Probe:
                 "cannot be halted on this access port.\n"
                 + result.stdout.strip()
             )
+        before = next((word for address, word in parse_reads_in_order(result.stdout) if address == DHCSR), None)
+        self.halted_before = None if before is None else bool(before & (1 << 17))
+        if self.halted_before is False:
+            self.release_core(self.access_port)
         return regs
 
     def reset_and_halt(self, access_port: int) -> tuple[int | None, str]:

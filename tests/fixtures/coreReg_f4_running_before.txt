@@ -1,0 +1,80 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-Link Server is running on port : 7184
+ST-LINK SN  : 50FF73064977535531090387
+ST-LINK FW  : V2J48S7
+Board       : --
+Voltage     : 3.26V
+SWD freq    : 4000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x413
+Revision ID : Rev 2.0
+Device name : STM32F405xx/F407xx/F415xx/F417xx
+NVM size    : 1 MBytes
+Device type : MCU
+Device CPU  : Cortex-M4
+BL Version  : 0x31
+
+
+Reading 32-bit memory content
+  Size          : 4 Bytes
+  Address:      : 0xE000EDF0
+0xE000EDF0 : 01010001
+
+
+R0       = 0x2000016A
+R1       = 0x00000000
+R2       = 0x000F423F
+R3       = 0x00041519
+R4       = 0x00000001
+R5       = 0x00000000
+R6       = 0x20000148
+R7       = 0x2001F000
+R8       = 0x00000000
+R9       = 0x00000000
+R10      = 0x00000000
+R11      = 0x00000000
+R12      = 0x2001FFE5
+SP       = 0x2001FFD8
+LR       = 0x20000109
+PC       = 0x20000116
+XPSR     = 0x81000000
+MSP      = 0x2001FFD8
+PSP      = 0x00000000
+PRIMASK  = 0x00
+FAULTMASK= 0x00
+BASEPRI  = 0x00
+CONTROL  = 0x00
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
+Info : default port : 7184
+Info : Remote address: 127.0.0.1
+Info : stlinkserver already running, exit
