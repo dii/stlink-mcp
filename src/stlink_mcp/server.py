@@ -2113,7 +2113,7 @@ def sample_values(
     """Sample values while the program runs, without halting or resetting it:
 `what` lists variables (decoded with `elf_path`'s types; "g_state.mode" picks a
 member), 32-bit word addresses, or registers such as "ADC3.ISR". All are read
-together, every 0.1 to 0.5 s, for `seconds` (at most 60), and each comes back as
+together, every 0.1 to 0.6 s, for `seconds` (at most 60), and each comes back as
 first, last, range and changes, with the core's state across the samples.
 `until`, such as "g_state.mode == MODE_RUN" or "g_ticks changes", stops early.
     """

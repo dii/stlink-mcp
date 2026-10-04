@@ -822,6 +822,8 @@ async def check_together(server: Server, h7: str, n6: str, report: Report) -> No
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--h7", help="serial of the NUCLEO-H743ZI2's own probe")
+    parser.add_argument("--skip", action="append", choices=["h7", "n6"], default=[],
+                        help="leave out a board found by name, such as one another run is using")
     parser.add_argument("--n6", help="serial of the NUCLEO-N657X0-Q's own probe")
     parser.add_argument("--jtag", help="serial of an ST-LINK on the H7's JTAG connector")
     parser.add_argument("--f4", help="serial of the ST-LINK on an STM32F407 board")
@@ -851,8 +853,8 @@ async def _run(args: argparse.Namespace, images: Built) -> int:
     async with Server(env) as server:
         listed = await server.call("list_probes")
         by_board = {p["board"]: p for p in listed.get("probes", []) if p.get("board")}
-        h7 = args.h7 or by_board.get(H7_BOARD, {}).get("serial")
-        n6 = args.n6 or by_board.get(N6_BOARD, {}).get("serial")
+        h7 = None if "h7" in args.skip else args.h7 or by_board.get(H7_BOARD, {}).get("serial")
+        n6 = None if "n6" in args.skip else args.n6 or by_board.get(N6_BOARD, {}).get("serial")
         print(f"H7 probe {h7 or 'not found'}, N6 probe {n6 or 'not found'}\n", flush=True)
         h7_up = n6_up = False
         if h7:
