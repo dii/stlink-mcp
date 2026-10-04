@@ -1949,39 +1949,20 @@ _WRITE_NOTE = (
 
 
 def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
-    """(server, why the stop cause is unreadable or None, failure or None, started).
-
-    The held server when it was started for debugging. A run_firmware server
-    has no log, because its log grows with every load, so it is replaced with
-    one in attach mode, which halts the core without a reset; stopping it lets
-    the program run on (measured). The exception is a family whose typical image
-    closes the port once it runs, where a new server may not reach the core: its
-    server is kept, and a stop through it cannot be verified."""
+    """(server, failure or None, started): the server holding the probe, of
+    either kind, since every server keeps the log that records the chip's reason
+    for a stop; or, when none holds it, a new one in attach mode, which halts the
+    core without a reset. Using the held one never lets go of the probe, which a
+    program that closes the debug port would not give back."""
     held = held_server(serial)
-    if held is not None and held.attach:
-        mismatch = interface_mismatch(held, interface)
-        return held, None, failed(mismatch, probe_serial=serial) if mismatch else None, False
     if held is not None:
-        with _STATE:
-            cached = _held.get(serial)
-        if cached is not None and cached[1].quirks.debug_closes_on_run:
-            mismatch = interface_mismatch(held, interface)
-            if mismatch:
-                return held, None, failed(mismatch, probe_serial=serial), False
-            return held, (
-                "the GDB server holding the probe is run_firmware's, which runs without "
-                "the log that records the chip's own reason for a stop, and on this "
-                "family a new server may not reach the core once firmware has run"
-            ), None, False
-        release_server(serial)
-        with _STATE:
-            _held.pop(serial, None)
-            _held_by.pop(serial, None)
+        mismatch = interface_mismatch(held, interface)
+        return held, failed(mismatch, probe_serial=serial) if mismatch else None, False
     probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial))
     info = probe.identify(allow_reset=False)
     _remember_port(serial, probe, info)
     if not info.connected:
-        return None, None, failed(
+        return None, failed(
             "Could not reach the core without resetting it, and this tool does not reset.",
             probe_serial=serial, **_connection_fields(probe, info),
             hint=explain_connect_failure(info, interface),
@@ -1993,7 +1974,7 @@ def _debug_server(toolchain: Toolchain, serial: str | None, interface: str):
     with _STATE:
         _held[serial] = (probe, info, None)
         _held_by.setdefault(serial, current_caller())
-    return server, None, None, True
+    return server, None, True
 
 
 #: core_after for a halt made through the programmer, when DHCSR cannot be read
@@ -2088,7 +2069,7 @@ def _registers_via_gdb(toolchain: Toolchain, serial: str | None, interface: str,
     was_halted = was_halted or found_halted
     try:
         if temporary:
-            server, _, refusal, _started = _debug_server(toolchain, serial, interface)
+            server, refusal, _started = _debug_server(toolchain, serial, interface)
             if refusal:
                 return refusal
         session = gdbmi.Session(toolchain.gdb, elf_path, server.port)
@@ -2164,7 +2145,7 @@ after the write. The rest of the chip keeps running.
         serial, _, error = _resolve_probe(toolchain, probe_serial)
         if error:
             return failed(error)
-        server, no_log, refusal, started = _debug_server(toolchain, serial, interface)
+        server, refusal, started = _debug_server(toolchain, serial, interface)
         if refusal:
             return refusal
         with _STATE:
@@ -2256,8 +2237,6 @@ after the write. The rest of the chip keeps running.
             reason += (f" It is in the {faults_mod.exception_name(exception)} handler: release_probe, "
                        "then read_fault_status and locate_fault, say why.")
         return unverified(reason, **detail)
-    if no_log:
-        return unverified(f"The core stopped in {place} by GDB's account, but {no_log}.", **detail)
     if not stop.dfsr:
         return unverified(
             f"The core stopped in {place}, but the GDB server's log has no stop reason for it, "

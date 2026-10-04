@@ -124,11 +124,16 @@ class GdbServer:
         # that reset or write stop the server first.
         self.shared = shared
         self.interface = interface
-        # A server for debugging: attaches to what runs without a reset, and logs
-        # at level 16, the lowest that records the Debug Fault Status Register it
-        # reads at each stop and then clears (measured 2026-10-02). Not for the
-        # run_firmware server, because that log grows by about four times the
-        # image at every load: 271 KB for a 64 KB image.
+        # attach: attaches to what runs without a reset, where run_firmware's
+        # server resets and halts. Every server logs at level 16, the lowest that
+        # records the Debug Fault Status Register it reads at each stop and then
+        # clears (measured 2026-10-02), so run_until can use whichever server
+        # holds the probe. The log grows at every load, about four times the
+        # image (271 KB for a 64 KB image; 20 KB for a 374-byte one, on the N6,
+        # 2026-10-04), and goes when the server stops. It was once kept off
+        # run_firmware's server for that, which made run_until swap servers,
+        # letting go of the probe for a moment, and left the N6's stops
+        # unverified.
         self.attach = attach
         self.log_path: Path | None = None
         self.access_port = access_port
@@ -185,9 +190,8 @@ class GdbServer:
             "-cp", str(self.toolchain.programmer_bin_dir),
             *(["-t"] if self.shared else []),
         ]
-        if self.attach:
-            self.log_path = Path(tempfile.mkdtemp(prefix="stlink-mcp-gdbserver-")) / "server.log"
-            argv += ["-l", "16", "-f", str(self.log_path)]
+        self.log_path = Path(tempfile.mkdtemp(prefix="stlink-mcp-gdbserver-")) / "server.log"
+        argv += ["-l", "16", "-f", str(self.log_path)]
         if self.serial:
             argv += ["-i", self.serial]
         self._proc = subprocess.Popen(

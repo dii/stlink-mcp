@@ -678,8 +678,9 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     vars_elf = str(images.elf["n6_vars"])
     await server.call("run_firmware", elf_path=vars_elf, probe_serial=s, console_seconds=1)
     kept = await server.call("run_until", probe_serial=s, elf_path=vars_elf, location="writer", seconds=5)
-    report.check(kept["status"] == "unverified" and "without the log" in kept.get("unverified_because", ""),
-                 "N6: a stop through run_firmware's server, kept because the port can close, is unverified", _why(kept))
+    report.check(kept["status"] == "verified" and any("BKPT" in r for r in kept.get("stop_reason_from_chip", [])),
+                 "N6: a stop through the server run_firmware keeps is verified by the chip's DFSR, from its log",
+                 _why(kept))
     await server.call("release_probe", probe_serial=s)
     stop = await server.call("run_until", probe_serial=s, elf_path=vars_elf, location="writer", seconds=5)
     held = await server.call("core_registers", probe_serial=s, elf_path=vars_elf)

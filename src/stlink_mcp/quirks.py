@@ -346,9 +346,10 @@ FAMILIES: dict[str, FamilyQuirks] = {
         debug_closes_on_run=True,
         agent_note=(
             "No internal flash: booting from the external flash at 0x70000000 needs a "
-            "signed image. Core debug is on access port 1. ST's start-up code (SystemInit) "
-            "turns the SYSCFG clock off, which closes the debug port until a power cycle; "
-            "without that one write the port stays open."
+            "signed image. Core debug is on access port 1. An image built on ST's start-up "
+            "code (SystemInit) turns the SYSCFG clock off, which closes the debug port once "
+            "the probe is let go, until a power cycle; while run_firmware holds the probe "
+            "it stays reachable, and an image without that one write keeps it open."
         ),
         notes=(
             "No internal flash. The boot ROM reads a signed FSBL out of external "

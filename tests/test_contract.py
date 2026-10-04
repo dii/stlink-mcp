@@ -1326,12 +1326,12 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         def close(self, detach: bool) -> None:
             type(self).closes.append(detach)
 
-    def _rig(self, monkeypatch, *, stop=None, no_log=None, mismatch=None, xpsr=0x01000000):
+    def _rig(self, monkeypatch, *, stop=None, mismatch=None, xpsr=0x01000000):
         from stlink_mcp import debugger
         type(self)._Session.closes = []
         monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(gdb=Path("arm-none-eabi-gdb"), root=Path("/")))
         type(self).dropped = []
-        monkeypatch.setattr(server, "_debug_server", lambda t, s, i: (self._Server(), no_log, None, True))
+        monkeypatch.setattr(server, "_debug_server", lambda t, s, i: (self._Server(), None, True))
         monkeypatch.setattr(server, "_drop_debug_server", lambda serial: type(self).dropped.append(serial))
         monkeypatch.setattr(server.gdbmi, "Session", self._Session)
         monkeypatch.setattr(server, "_elf_on_target", lambda session, elf: mismatch)
@@ -1390,11 +1390,15 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert_contract(out)
         assert out["status"] == result.UNVERIFIED and says in out["unverified_because"]
 
-    def test_a_server_without_its_log_cannot_verify(self, bench, monkeypatch) -> None:
-        from stlink_mcp import debugger
-        self._rig(monkeypatch, stop=self._stop(debugger), no_log="the server runs without its log")
-        out = call("run_until", elf_path=self.ELF, location="writer")
-        assert out["status"] == result.UNVERIFIED and "without its log" in out["unverified_because"]
+    def test_the_server_holding_the_probe_is_used_whatever_its_kind(self, bench, monkeypatch) -> None:
+        """Every server keeps its log, so run_until never swaps run_firmware's for
+        one of its own: a swap let go of the probe for a moment, which a program
+        that closes the debug port would not give back, and on the N6 the kept
+        server's stops were unverified for want of the log (2026-10-04)."""
+        held = SimpleNamespace(interface="swd", attach=False)
+        monkeypatch.setattr(server, "held_server", lambda serial: held)
+        monkeypatch.setattr(server, "release_server", lambda serial=None: pytest.fail("let go of the probe"))
+        assert server._debug_server(object(), "AAA1", "swd") == (held, None, False)
 
     def test_interrupted_in_a_fault_handler_points_at_the_fault_tools(self, bench, monkeypatch) -> None:
         from stlink_mcp import debugger
