@@ -1987,6 +1987,13 @@ _PROGRAMMER_HALT_AFTER = (
     "been running. run_until holds a core stopped."
 )
 
+_NO_ATTACH = (
+    "GDB could not reach the core through the GDB server. A program that takes the SWD "
+    "pins, stops a clock or sleeps without debug does this, and read_memory and board_state "
+    "fail the same way. release_probe, then board_state, gets back in with a connect under "
+    "reset, which restarts the program."
+)
+
 _DETACH_RESUMED = (
     "resumed: GDB's detach resumed the core on the H7, the F407 and the N6; "
     "not observed for this call"
@@ -2197,6 +2204,10 @@ after the write. The rest of the chip keeps running.
             if started:
                 _drop_debug_server(serial)
             after.update(halted_during_call=True, core_after=_DETACH_RESUMED)
+        elif "-target-select" in str(exc):
+            # GDB never attached. On an H7 whose program had taken the SWD pins
+            # this came back as a bare GDB timeout (2026-10-04).
+            after["next_step"] = _NO_ATTACH
         return failed(str(exc), probe_serial=serial, **after,
                       **({"gdb_server_held": True} if serial and server_is_held(serial) else {}))
 
@@ -3201,7 +3212,7 @@ def capture_swo(
 `core_clock_hz` is the clock the core runs at while it writes, which only the
 firmware knows; a wrong one gives nothing or garbled text. Does not halt or
 reset, but turns trace output on and leaves it on, taking the SWO pin from the
-application until a power cycle. SWD only. Refuses while a GDB server holds the
+application until a power cycle. SWD only. Works beside a GDB server holding the
 probe. Hearing nothing is unverified.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")

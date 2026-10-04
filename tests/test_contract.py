@@ -1401,6 +1401,19 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         monkeypatch.setattr(server, "release_server", lambda serial=None: pytest.fail("let go of the probe"))
         assert server._debug_server(object(), "AAA1", "swd") == (held, None, False)
 
+    def test_gdb_that_cannot_reach_the_core_says_what_does_that(self, bench, monkeypatch) -> None:
+        """On an H7 whose program had taken the SWD pins, run_until came back with
+        GDB's bare timeout, the message below (2026-10-04)."""
+        self._rig(monkeypatch)
+
+        def no_answer(*args, **kwargs):
+            raise server.gdbmi.MiError("-target-select extended-remote localhost:61238: no answer from GDB within 30 s")
+
+        monkeypatch.setattr(server.gdbmi, "Session", no_answer)
+        out = call("run_until", elf_path=self.ELF, location="writer")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "SWD pins" in out["next_step"] and "release_probe" in out["next_step"]
+
     def test_interrupted_in_a_fault_handler_points_at_the_fault_tools(self, bench, monkeypatch) -> None:
         from stlink_mcp import debugger
         self._rig(monkeypatch, stop=self._stop(debugger, reached=False), xpsr=0x01000003)

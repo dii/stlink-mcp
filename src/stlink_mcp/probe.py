@@ -362,6 +362,13 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     canary = next((e for e in info.errors if "CPUID register" in e), None)
     if canary:
         return canary
+    if any("DEV_TCP_CMD_ERR" in e for e in info.errors):
+        return (
+            "The probe itself stopped answering (DEV_TCP_CMD_ERR) while it still reads the "
+            "target's voltage. An STLINK-V3E did this twice after sessions in ST's shared mode: "
+            "no connect mode, clock or USB reset cleared it, unplugging its cable did, and a "
+            "second probe on the same debug lines reached the core meanwhile."
+        )
     if any("DEV_CONNECT_ERR" in e for e in info.errors):
         return (
             "The programmer could not open this probe: another program has it open. With "
