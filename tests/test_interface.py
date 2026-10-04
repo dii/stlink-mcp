@@ -247,3 +247,42 @@ class TestAConnectUnderResetIsTheLastResort:
         _, info, modes = self._run(monkeypatch, allow_reset=False)
         assert not info.connected and set(modes) == {"HOTPLUG"}
 
+
+
+class TestTheFlashSizeTheConnectGives:
+    """FF6 rests on it: the bounds an ELF or HEX file's runs are checked
+    against end where the banner's "NVM size" says the part's flash does."""
+
+    @pytest.mark.parametrize("name, size", [
+        ("connect_v2_f407.txt", 1024 * 1024),                        # STM32F407IG, 1 MB
+        ("connect_h7_swd_pins_taken_under_reset.txt", 2 * 1024 * 1024),  # STM32H743ZI, 2 MB
+        ("connect_n6_v3_jtag.txt", None),                            # STM32N6, no internal flash
+    ])
+    def test_it_is_read_from_the_banner(self, name, size) -> None:
+        assert pm.parse_target_info(_banner(name)).nvm_size == size
+
+
+class TestAFileIsWrittenWhereItSays:
+    """FF6. The programmer writes an ELF or HEX file to the addresses inside it
+    when given none (an ELF's stored addresses, measured on an STM32F407 on
+    2026-10-04); given one, it is a raw binary's."""
+
+    def _argv(self, monkeypatch, address):
+        seen = {}
+
+        def run(argv, timeout=90):
+            seen["argv"] = argv
+            return CommandResult(argv, 0, "File download complete\n")
+
+        monkeypatch.setattr(pm, "run_command", run)
+        probe = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="50FF73064977535531090387")
+        probe.program_flash("image.elf" if address is None else "image.bin", address)
+        return seen["argv"]
+
+    def test_a_file_with_its_own_addresses_is_given_none(self, monkeypatch) -> None:
+        argv = self._argv(monkeypatch, None)
+        assert argv[argv.index("-w") + 1:] == ["image.elf"]
+
+    def test_a_raw_binary_is_given_its_address(self, monkeypatch) -> None:
+        argv = self._argv(monkeypatch, 0x08000000)
+        assert argv[argv.index("-w") + 1:] == ["image.bin", "0x08000000"]

@@ -49,11 +49,13 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 
 ## flash_firmware (FF)
 
-- **FF1.** It takes only a raw binary, and refuses anything else before touching the probe.
-- **FF2.** It refuses a flash base nobody measured unless the caller gives the address.
-- **FF3.** It is verified only when the range read back matches the image byte for byte.
-- **FF4.** It says what its erase took beyond the image.
+- **FF1.** It takes a raw binary, an ELF or an Intel HEX file, and refuses anything else, and a file with no bytes to write, before touching the probe.
+- **FF2.** It refuses a flash base nobody measured unless the caller gives the address of a raw binary.
+- **FF3.** It is verified only when every byte written reads back the same, run by run.
+- **FF4.** It says what its erase took beside the image in the 128 KB blocks the image touches; a byte the image writes is never counted as taken, and none is counted twice.
 - **FF5.** It stops a server holding the probe first, and says so.
+- **FF6.** Every run of bytes an ELF or HEX file writes lies inside the part's flash, from its measured base for the connect's "NVM size"; anything else, or a part whose connect gives no size, is refused before anything is written, and so is `address` with such a file, since the file says where.
+- **FF7.** A write that fails partway says flash may already have changed.
 
 ## read_memory (RM)
 

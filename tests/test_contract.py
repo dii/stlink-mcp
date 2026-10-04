@@ -309,10 +309,12 @@ class _FakeProbe:
         self.degraded_reason: str | None = None
         self.access_port = 1
 
+    nvm_size: int | None = None  # as on the N6, whose banner gives none
+
     def identify(self, allow_reset: bool = True) -> probe_mod.TargetInfo:
         return probe_mod.TargetInfo(
             connected=True, device_id=self.device_id, cpu=self.cpu,
-            device_name=self.device_name, board=self.board,
+            device_name=self.device_name, board=self.board, nvm_size=self.nvm_size,
         )
 
     def gdb_access_port(self, info: object) -> int:
@@ -1713,11 +1715,11 @@ class TestTheWritePathWillNotActOnAnUnmeasuredAddress:
 
 
 class TestFlashFirmwareTakesOnlyWhatItCanPlace:
-    """The programmer's `-w <file> <address>` uses the address for a raw binary
-    only, by ST's manual; HEX, S-record and ELF files are written to the
-    addresses inside them. So for those formats the check that the flash base
-    was measured protected nothing, and the `address` in a verified result need
-    not be where the write went."""
+    """FF1. The programmer's `-w <file> <address>` uses the address for a raw
+    binary only; HEX, S-record and ELF files are written to the addresses inside
+    them (an ELF's stored addresses, measured on an STM32F407, 2026-10-04). An
+    ELF or HEX file is read here so those addresses can be checked; anything
+    else is refused before the probe is touched."""
 
     @pytest.fixture
     def no_connect(self, bench, monkeypatch):
@@ -1727,8 +1729,8 @@ class TestFlashFirmwareTakesOnlyWhatItCanPlace:
         monkeypatch.setattr(_FakeProbe, "identify", must_not_connect)
         return bench
 
-    @pytest.mark.parametrize("name", ["image.elf", "image.hex", "image.srec", "image"])
-    def test_anything_but_a_bin_is_refused_before_connecting(
+    @pytest.mark.parametrize("name", ["image.srec", "image.s19", "image"])
+    def test_anything_but_a_bin_elf_or_hex_is_refused_before_connecting(
         self, no_connect, tmp_path, name: str
     ) -> None:
         path = tmp_path / name
@@ -2541,6 +2543,120 @@ class TestFlashIsReadBackBeforeItIsVerified:
         assert "failed to read" in out["unverified_because"]
 
 
+class TestAnElfOrHexIsWrittenWhereItSays:
+    """FF2, FF3, FF4, FF6, FF7 for files that carry their addresses. The board is
+    an STM32F407 with 1 MB of flash, as its connect banner gives it, erasing the
+    16 KB sectors it begins with; held data before the write. Its programmer
+    writes a file's bytes where `readelf -lW flash_runs.elf` places them, 0x94
+    bytes at 0x08000000 and 8 at 0x08004000, the same as flash_runs.hex's
+    records; given an address, it writes the file's raw bytes there, as it does
+    a .bin."""
+
+    FIX = Path(__file__).parent / "fixtures" / "elf"
+    BASE, SECTOR = 0x08000000, 0x4000
+    WRITES = [(0x08000000, 0x94), (0x08004000, 8)]
+
+    @pytest.fixture
+    def f407(self, bench, monkeypatch):
+        monkeypatch.setattr(_FakeProbe, "device_id", 0x413)
+        monkeypatch.setattr(_FakeProbe, "nvm_size", 0x100000)
+        model = bytearray(b"\x11" * 0x20000) + bytearray(b"\xff" * 0x20000)
+        binary = (self.FIX / "flash_runs.bin").read_bytes()
+        state = SimpleNamespace(model=model, writes=0, fail_read_at=None, corrupt=None, refuse=None)
+
+        def program(probe, image, address, loader):
+            if state.refuse:
+                raise probe_mod.ProbeError(state.refuse)
+            state.writes += 1
+            writes = ([(address, Path(image).read_bytes())] if address is not None else
+                      [(a, binary[a - self.BASE:a - self.BASE + n]) for a, n in self.WRITES])
+            for a, data in writes:
+                first = (a - self.BASE) // self.SECTOR * self.SECTOR
+                last = -(-(a - self.BASE + len(data)) // self.SECTOR) * self.SECTOR
+                model[first:last] = b"\xff" * (last - first)
+            for a, data in writes:
+                model[a - self.BASE:a - self.BASE + len(data)] = data
+            if state.corrupt is not None:
+                model[state.corrupt - self.BASE] ^= 0xFF
+            return "Erasing memory corresponding to segment 0:\nErasing internal memory sector 0\nFile download complete\n"
+
+        def read_back(probe, address, size, loader):
+            if state.writes and address == state.fail_read_at:
+                raise probe_mod.ProbeError("Error: failed to read the requested memory content")
+            return bytes(model[address - self.BASE:address - self.BASE + size])
+
+        monkeypatch.setattr(_FakeProbe, "program_flash", program)
+        monkeypatch.setattr(_FakeProbe, "read_back", read_back)
+        return state
+
+    @pytest.mark.parametrize("name", ["flash_runs.elf", "flash_runs.hex"])
+    def test_every_run_is_written_and_read_back(self, f407, name) -> None:
+        """FF3."""
+        out = call("flash_firmware", image_path=str(self.FIX / name))
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and "identical" in out["verified_by"]
+        assert out["runs"] == [{"address": "0x08000000", "bytes": 0x94}, {"address": "0x08004000", "bytes": 8}]
+
+    def test_the_erase_report_counts_only_bytes_the_image_does_not_write(self, f407) -> None:
+        """FF4. The second run sits in the first run's 128 KB block; its bytes
+        are the image's, not erase damage, and nothing is counted twice."""
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        erased = out["erased_beyond_image"]
+        assert (erased["from"], erased["to"]) == ("0x08000094", "0x08008000")
+        assert erased["bytes"] == (0x4000 - 0x94) + (0x4000 - 8)
+        assert "other than 0xFF" not in erased["note"] and erased["checked_to"] == "0x08020000"
+
+    def test_a_difference_in_a_later_run_fails_it(self, f407) -> None:
+        """FF3."""
+        f407.corrupt = 0x08004003
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.hex"))
+        assert out["status"] == result.FAILED and out["first_difference"] == "0x08004003"
+
+    def test_a_run_that_cannot_be_read_back_is_not_verified(self, f407) -> None:
+        """FF3."""
+        f407.fail_read_at = 0x08004000
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.UNVERIFIED and "0x08004000" in out["unverified_because"]
+
+    def test_an_image_linked_for_ram_is_refused_and_nothing_written(self, f407, bench) -> None:
+        """FF6."""
+        out = call("flash_firmware", image_path=str(bench.elf))
+        assert out["status"] == result.FAILED and "outside this part's flash" in out["error"]
+        assert f407.writes == 0
+
+    def test_a_run_past_the_end_of_flash_is_refused(self, f407, monkeypatch) -> None:
+        """FF6."""
+        monkeypatch.setattr(_FakeProbe, "nvm_size", 0x4004)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "8 bytes at 0x08004000" in out["error"]
+        assert f407.writes == 0
+
+    def test_a_part_whose_connect_gives_no_flash_size_is_refused(self, f407, monkeypatch) -> None:
+        """FF6."""
+        monkeypatch.setattr(_FakeProbe, "nvm_size", None)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "no flash size" in out["error"]
+        assert f407.writes == 0
+
+    def test_a_flash_base_nobody_measured_is_refused(self, f407, monkeypatch) -> None:
+        """FF2. A part not in the table: its flash base is not known at all."""
+        monkeypatch.setattr(_FakeProbe, "device_id", 0x999)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and f407.writes == 0
+
+    def test_an_address_with_a_file_that_names_its_own_is_refused_before_connecting(self, f407, monkeypatch) -> None:
+        """FF6."""
+        monkeypatch.setattr(_FakeProbe, "identify", lambda self, allow_reset=True: pytest.fail("the probe was touched"))
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"), address="0x08000000")
+        assert out["status"] == result.FAILED and "carries the addresses" in out["error"]
+
+    def test_a_write_that_fails_says_flash_may_have_changed(self, f407) -> None:
+        """FF7."""
+        f407.refuse = "Programming failed:\nError: failed to erase memory"
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "may have" in out["flash_state"]
+
+
 class TestTheEraseBeyondTheImageIsSaid:
     """16 KB written at 0x70000000 on an STM32N6 erased 64 KB, and the result
     said only that the 16 KB read back identical (2026-10-03). The flash here
@@ -2589,7 +2705,7 @@ class TestTheEraseBeyondTheImageIsSaid:
         bench.bin.write_bytes(b"\x5a" * self.SECTOR)
         out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
         erased = out["erased_beyond_image"]
-        assert erased["bytes"] == 0 and "took nothing after the image" in erased["note"]
+        assert erased["bytes"] == 0 and "took nothing beyond the image" in erased["note"]
 
 
 class TestReadBackUsesTheProgrammersUpload:

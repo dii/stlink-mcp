@@ -1371,17 +1371,22 @@ def flash_firmware(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Program a raw binary image (.bin) into boot memory for standalone boot.
-
-Prefer run_firmware while developing. Does not sign. Takes only a .bin, since
-the programmer writes HEX, S-record and ELF files where they say. Refuses an
-unmeasured flash base unless you pass `address`. Verified only when the range
-read back matches the image byte for byte. Says what its erase took beyond the
-image, which is whole sectors. Stops a GDB server holding the probe first
-(`released_probe_first`).
+    """Program an image into boot memory for standalone boot: a raw .bin at the
+part's measured flash base or `address`, or an ELF or Intel HEX file at the
+addresses inside it, each of which must lie in the part's flash. Prefer
+run_firmware while developing. Does not sign. Verified only when every byte
+written reads back the same. Says what its erase took beyond the image. Stops a
+GDB server holding the probe first (`released_probe_first`).
     """
     released: dict[str, Any] = {}
     return {**_flash_firmware(image_path, probe_serial, address, interface, released), **released}
+
+
+#: What a write that stopped partway leaves, said with its failure.
+_FLASH_MAY_HAVE_CHANGED = (
+    "unknown: the programmer may have erased or written part of the range before it "
+    "stopped, and nothing puts that back; write the image again"
+)
 
 
 def _flash_firmware(image_path: str, probe_serial: str | None, address: int | str | None,
@@ -1393,7 +1398,12 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
     not_flashable = image_mod.check_flash_image(image)
     if not_flashable:
         return failed(not_flashable, image_path=str(image))
-    image_size = image.stat().st_size
+    raw = image.suffix.lower() == ".bin"
+    runs = None if raw else image_mod.flash_runs(image)
+    if runs is not None and address is not None:
+        return failed(f"{image.name} carries the addresses it is written to, so `address` cannot choose "
+                      "one. Pass a .bin to write at an address of your own.", image_path=str(image))
+    image_size = image.stat().st_size if runs is None else sum(len(r.data) for r in runs)
     try:
         explicit = None if address is None else _address(address)
     except ValueError as exc:
@@ -1427,11 +1437,14 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
         )
 
     quirks = info.quirks
-    target_address = explicit if explicit is not None else quirks.flash_base
-    if target_address is None:
-        return failed(
-            f"No flash base recorded for {quirks.name}; pass address explicitly."
-        )
+    if runs is None:
+        target_address = explicit if explicit is not None else quirks.flash_base
+        if target_address is None:
+            return failed(
+                f"No flash base recorded for {quirks.name}; pass address explicitly."
+            )
+    else:
+        target_address = None
 
     # The write path does not act on a value nobody has measured.
     #
@@ -1445,6 +1458,8 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
     #
     # An explicit `address` is a different matter and is allowed: the caller has
     # said where to write, so it is their claim rather than the table's guess.
+    # An ELF or HEX file names its own addresses, and the flash base is then
+    # what they are checked against, so it must be measured.
     if explicit is None and not quirks.is_measured("flash_base"):
         return failed(
             f"The flash base for {quirks.name} is "
@@ -1452,35 +1467,38 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
             "this tool writes permanently. Its readback confirms what was "
             "written, not that the address was the right one.",
             hint=(
-                "Either pass `address` explicitly, which records the choice as "
-                "yours, or confirm the base by running an image from RAM first, "
-                "which is reversible and self-verifying."
+                "Either pass a .bin with `address` explicitly, which records the "
+                "choice as yours, or confirm the base by running an image from RAM "
+                "first, which is reversible and self-verifying."
             ),
+            **_after_failure(probe),
         )
+    if runs is not None:
+        refusal = _outside_flash(image, runs, quirks, info)
+        if refusal:
+            return failed(refusal, image_path=str(image), runs=_listed(runs), **_after_failure(probe))
+    else:
+        runs = [image_mod.Run(target_address, image.read_bytes())]
 
     # The erase takes whole sectors, so a small image takes the rest of its last
     # one with it: 16 KB written at 0x70000000 on an STM32N6 erased 64 KB, and
-    # the result said nothing of it (2026-10-03). The bytes after the image are
-    # read before and after the write, and the difference is reported.
-    window = _erase_window(target_address, image_size)
-    before: bytes | None = None
-    if window is not None:
-        try:
-            before = probe.read_back(window[0], window[1], quirks.external_loader)
-        except Exception:  # noqa: BLE001
-            before = None
+    # the result said nothing of it (2026-10-03). The bytes beside the image in
+    # the blocks it touches are read before and after the write, and the
+    # difference is reported.
+    spans = _beside(runs)
+    before = _read_spans(probe, quirks.external_loader, spans)
 
     try:
         output = probe.program_flash(str(image), target_address, quirks.external_loader)
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc), probe_serial=serial, **_after_failure(probe))
+        return failed(str(exc), probe_serial=serial, flash_state=_FLASH_MAY_HAVE_CHANGED, **_after_failure(probe))
 
     written: dict[str, Any] = {
         "probe_serial": serial,
         **_connection_fields(probe, info),
         "image_path": str(image),
         "image_size_bytes": image_size,
-        "address": _hex(target_address),
+        **({"address": _hex(target_address)} if target_address is not None else {"runs": _listed(runs)}),
         "target_was_reset": probe.target_was_reset,
         "signing_required": quirks.requires_signing,
         "programmer_output": output.strip().splitlines()[-3:],
@@ -1497,84 +1515,158 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
     # The programmer's "File download complete" is the vendor's own banner,
     # which the README's opening example shows cannot be trusted on its own, and
     # this is the one tool whose write persists. So flash is read back and
-    # compared with the image, and only a byte-for-byte match is verified.
-    try:
-        readback = probe.read_back(target_address, image_size, quirks.external_loader)
-    except Exception as exc:  # noqa: BLE001
-        return unverified(
-            "The programmer reported the write complete, but reading the range "
-            f"back failed, so nothing checked what flash holds: {exc}",
+    # compared with the image, run by run, and only a byte-for-byte match of
+    # every run is verified.
+    for n, run in enumerate(runs):
+        try:
+            readback = probe.read_back(run.address, len(run.data), quirks.external_loader)
+        except Exception as exc:  # noqa: BLE001
+            checked = f" The {n} run(s) before it read back identical." if n else ""
+            return unverified(
+                "The programmer reported the write complete, but reading back "
+                f"{len(run.data)} bytes from {_hex(run.address)} failed, so nothing checked "
+                f"what flash holds there: {exc}.{checked}",
+                **written,
+            )
+        if readback != run.data:
+            differing = [i for i, (x, y) in enumerate(zip(run.data, readback)) if x != y]
+            first = differing[0]
+            return failed(
+                f"Flash does not hold the image. Read back after the write, "
+                f"{len(differing)} of {len(run.data)} bytes from {_hex(run.address)} differ, the first at "
+                f"0x{run.address + first:08X}: the image has 0x{run.data[first]:02X}, "
+                f"flash has 0x{readback[first]:02X}. The programmer reported the write "
+                "complete. A protected or failing sector, or a write that did not "
+                "erase first, would look like this.",
+                first_difference=_hex(run.address + first),
+                differing_bytes=len(differing),
+                **written,
+            )
+    written.update(_erase_report(probe, quirks.external_loader, spans, before, output))
+    if len(runs) == 1:
+        return verified(
+            f"read back {len(runs[0].data)} bytes from {_hex(runs[0].address)} after the write "
+            "and compared them with the image: identical",
             **written,
         )
-    expected = image.read_bytes()
-    if readback != expected:
-        differing = [i for i, (a, b) in enumerate(zip(expected, readback)) if a != b]
-        first = differing[0]
-        return failed(
-            f"Flash does not hold the image. Read back after the write, "
-            f"{len(differing)} of {image_size} bytes differ, the first at "
-            f"0x{target_address + first:08X}: the image has 0x{expected[first]:02X}, "
-            f"flash has 0x{readback[first]:02X}. The programmer reported the write "
-            "complete. A protected or failing sector, or a write that did not "
-            "erase first, would look like this.",
-            first_difference=_hex(target_address + first),
-            differing_bytes=len(differing),
-            **written,
-        )
-    written.update(_erase_report(probe, quirks.external_loader, window, before, output))
     return verified(
-        f"read back {image_size} bytes from {_hex(target_address)} after the write "
-        "and compared them with the image: identical",
+        f"read back each of the file's {len(runs)} runs, {image_size} bytes, after the write "
+        "and compared them with the file: identical",
         **written,
     )
 
 
-#: How far past an image flash_firmware looks for what its erase took: to the
-#: next 128 KB boundary, the largest sector on the parts measured (the H7's).
+def _listed(runs: list[image_mod.Run]) -> list[dict[str, Any]]:
+    return [{"address": _hex(r.address), "bytes": len(r.data)} for r in runs]
+
+
+def _outside_flash(image: Path, runs: list[image_mod.Run], quirks: FamilyQuirks,
+                   info: TargetInfo) -> str | None:
+    """Why an ELF or HEX file's runs must not be written here, or None."""
+    if info.nvm_size is None:
+        return (f"The connect gave no flash size for {quirks.name}, so the addresses in {image.name} "
+                "cannot be checked against its flash. Convert it to a .bin with "
+                "`arm-none-eabi-objcopy -O binary` and pass `address`.")
+    low, high = quirks.flash_base, quirks.flash_base + info.nvm_size
+    outside = [r for r in runs if not (low <= r.address and r.end <= high)]
+    if not outside:
+        return None
+    listed = ", ".join(f"{len(r.data)} bytes at 0x{r.address:08X}" for r in outside[:4])
+    return (f"{image.name} writes outside this part's flash, 0x{low:08X} to 0x{high - 1:08X}: {listed}. "
+            "An image linked for RAM, run_firmware's kind, looks like this. Nothing was written.")
+
+
+#: The block flash_firmware looks across for what its erase took: 128 KB, the
+#: largest sector on the parts measured (the H7's).
 _ERASE_WINDOW = 0x20000
 
-
-def _erase_window(start: int, size: int) -> tuple[int, int] | None:
-    end = start + size
-    limit = -(-end // _ERASE_WINDOW) * _ERASE_WINDOW
-    return (end, limit - end) if limit > end else None
+#: Spans closer than this are read in one call, the bytes between ignored.
+_READ_TOGETHER = 0x1000
 
 
-def _erase_report(probe: Probe, loader: str | None, window: tuple[int, int] | None,
-                  before: bytes | None, output: str) -> dict[str, Any]:
-    """What the write's erase took after the image, from reads before and after."""
+def _beside(runs: list[image_mod.Run]) -> list[tuple[int, int]]:
+    """The bytes no run writes in the 128 KB blocks the runs touch, as
+    [start, end) spans: what a sector erase may take without the image saying."""
+    spans: list[tuple[int, int]] = []
+    ordered = sorted(runs, key=lambda r: r.address)
+    blocks = sorted({b for r in ordered for b in range(r.address // _ERASE_WINDOW, -(-r.end // _ERASE_WINDOW))})
+    for block in blocks:
+        cursor, high = block * _ERASE_WINDOW, (block + 1) * _ERASE_WINDOW
+        for run in ordered:
+            if run.end <= cursor or run.address >= high:
+                continue
+            if run.address > cursor:
+                spans.append((cursor, run.address))
+            cursor = max(cursor, run.end)
+        if cursor < high:
+            spans.append((cursor, high))
+    merged: list[tuple[int, int]] = []
+    for start, end in spans:
+        if merged and merged[-1][1] == start:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _reads(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    reads: list[tuple[int, int]] = []
+    for start, end in spans:
+        if reads and start - reads[-1][1] < _READ_TOGETHER:
+            reads[-1] = (reads[-1][0], end)
+        else:
+            reads.append((start, end))
+    return reads
+
+
+def _read_spans(probe: Probe, loader: str | None,
+                spans: list[tuple[int, int]]) -> dict[int, int] | None:
+    """Every byte of `spans`, by address, or None when a read failed."""
+    found: dict[int, int] = {}
+    try:
+        for start, end in _reads(spans):
+            data = probe.read_back(start, end - start, loader)
+            found.update((start + i, b) for i, b in enumerate(data))
+    except Exception:  # noqa: BLE001
+        return None
+    return {a: found[a] for start, end in spans for a in range(start, end) if a in found}
+
+
+def _erase_report(probe: Probe, loader: str | None, spans: list[tuple[int, int]],
+                  before: dict[int, int] | None, output: str) -> dict[str, Any]:
+    """What the write's erase took beside the image, from reads before and after."""
     report: dict[str, Any] = {}
     erased = [line.strip() for line in output.splitlines() if line.strip().lower().startswith("erasing")]
     if erased:
         report["programmer_erase"] = erased
-    if window is None:
+    if not spans:
         return report
-    start, length = window
+    total = sum(end - start for start, end in spans)
     if before is None:
         report["erased_beyond_image"] = (
-            f"not checked: the {length} bytes after the image could not be read before the write"
+            f"not checked: the {total} bytes beside the image could not be read before the write"
         )
         return report
-    try:
-        after = probe.read_back(start, length, loader)
-    except Exception as exc:  # noqa: BLE001
-        report["erased_beyond_image"] = f"not checked: reading them after the write failed: {exc}"
+    after = _read_spans(probe, loader, spans)
+    if after is None:
+        report["erased_beyond_image"] = "not checked: reading them after the write failed"
         return report
-    changed = [i for i in range(length) if before[i] != after[i]]
+    checked = {"checked_to": _hex(spans[-1][1]),
+               **({"checked": [f"{_hex(a)} to {_hex(b)}" for a, b in spans]} if len(spans) > 1 else {})}
+    changed = [a for a in sorted(before) if before[a] != after.get(a)]
     if not changed:
-        blank = before.count(0xFF) == length
+        blank = all(v == 0xFF for v in before.values())
         report["erased_beyond_image"] = {
-            "bytes": 0, "checked_to": _hex(start + length),
+            "bytes": 0, **checked,
             "note": ("These bytes were already blank, so whether the erase reached them does not show."
                      if blank else
-                     "These bytes read the same before and after the write: the erase took nothing after the image."),
+                     "These bytes read the same before and after the write: the erase took nothing beyond the image."),
         }
         return report
-    odd = sum(1 for i in changed if after[i] != 0xFF)
+    odd = sum(1 for a in changed if after.get(a) != 0xFF)
     report["erased_beyond_image"] = {
-        "from": _hex(start), "to": _hex(start + changed[-1] + 1), "bytes": len(changed),
-        "checked_to": _hex(start + length),
-        "note": ("The erase takes whole sectors: these bytes after the image held data before the "
+        "from": _hex(changed[0]), "to": _hex(changed[-1] + 1), "bytes": len(changed), **checked,
+        "note": ("The erase takes whole sectors: these bytes beside the image held data before the "
                  "write and read 0xFF now." + (f" {odd} of them changed to something other than 0xFF, "
                                                "which an erase does not do." if odd else "")),
     }

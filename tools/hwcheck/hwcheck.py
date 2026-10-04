@@ -183,9 +183,11 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     report.check(hole["status"] == "failed" and any("0x2c000000" in line for line in hole.get("gdb_output", [])),
                  "H7: a load that fails partway is failed, with GDB's own output", _why(hole))
     await server.call("release_probe", probe_serial=s)
-    elf_flash = await server.call("flash_firmware", image_path=str(images.elf["h7_flash"]), probe_serial=s)
-    report.check(elf_flash["status"] == "failed" and "not a raw binary" in elf_flash.get("error", ""),
-                 "H7: flash_firmware refuses an ELF", _why(elf_flash))
+    ram_flash = await server.call("flash_firmware", image_path=str(images.elf["h7_vars"]), probe_serial=s)
+    report.check(ram_flash["status"] == "failed" and "outside this part's flash" in ram_flash.get("error", "")
+                 and "0x08000000 to 0x081FFFFF" in ram_flash.get("error", ""),
+                 "H7: flash_firmware refuses an ELF linked for RAM, against the 2 MB the connect gives, "
+                 "before writing", _why(ram_flash))
     odd = await server.call("read_memory", address="0x24070001", probe_serial=s)
     report.check(odd["status"] == "failed", "H7: read_memory refuses a misaligned address", _why(odd))
 
@@ -482,8 +484,9 @@ async def check_stops(server: Server, label: str, serial: str, images: Built, re
 
 
 async def check_flash(server: Server, label: str, serial: str, flash_size: int,
-                      image: Path, report: Report) -> None:
-    """Write a board's flash, read it back, and restore the board's own image."""
+                      image: Path, report: Report, elf: Path | None = None) -> None:
+    """Write a board's flash, read it back, and restore the board's own image;
+    with `elf`, write that and its Intel HEX too, at the addresses inside them."""
     programmer = str(find_toolchain().programmer)
     connect = ["-c", "port=SWD", f"sn={serial}", "mode=UR"]
     backup = Path(tempfile.mkdtemp(prefix="stlink-hwcheck-flash-")) / f"{label.lower()}-flash.bin"
@@ -506,6 +509,20 @@ async def check_flash(server: Server, label: str, serial: str, flash_size: int,
         booted = await server.call("reset_target", probe_serial=serial)
         report.check(booted["status"] == "verified",
                      f"{label} flash: the written image's reset handler is where the core starts", _why(booted))
+        if elf is not None:
+            objcopy = find_toolchain().objdump.with_name(find_toolchain().objdump.name.replace("objdump", "objcopy"))
+            hexfile = backup.with_name(f"{label.lower()}-flash.hex")
+            subprocess.run([str(objcopy), "-O", "ihex", str(elf), str(hexfile)], check=True)
+            for path in (elf, hexfile):
+                out = await server.call("flash_firmware", image_path=str(path), probe_serial=serial)
+                report.check(out["status"] == "verified" and bool(out.get("runs")) and "identical" in out.get("verified_by", ""),
+                             f"{label} flash: flash_firmware writes the {path.suffix} file where it says, "
+                             "verified by reading back every run",
+                             f"{_why(out)}; runs {out.get('runs')}; erased {out.get('erased_beyond_image')}")
+                booted = await server.call("reset_target", probe_serial=serial)
+                report.check(booted["status"] == "verified",
+                             f"{label} flash: the {path.suffix} file's reset handler is where the core starts",
+                             _why(booted))
     finally:
         if used:
             restored = subprocess.run([programmer, *connect, "-w", str(trimmed), "0x08000000", "-v"],
@@ -729,6 +746,10 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     ob = await server.call("read_option_bytes", probe_serial=s)
     report.check(ob["status"] == "failed" and "not supported for STM32N6" in ob.get("error", ""),
                  "N6: read_option_bytes fails with ST's reason, the part having none", _why(ob))
+    no_size = await server.call("flash_firmware", image_path=ram_elf, probe_serial=s)
+    report.check(no_size["status"] == "failed" and "no flash size" in no_size.get("error", ""),
+                 "N6: flash_firmware refuses an ELF, its connect giving no flash size to check it against",
+                 _why(no_size))
     await check_names(server, "N6", s, images, report, "n6_vars", "h7_vars", "0x46028000", "board name")
     await server.call("release_probe", probe_serial=s)
     return True
@@ -820,7 +841,7 @@ async def _run(args: argparse.Namespace, images: Built) -> int:
         if h7:
             h7_up = await check_h7(server, h7, images, report)
             if h7_up and args.flash:
-                await check_flash(server, "H7", h7, 0x200000, images.bin["h7_flash"], report)
+                await check_flash(server, "H7", h7, 0x200000, images.bin["h7_flash"], report, images.elf["h7_flash"])
         if n6:
             n6_up = await check_n6(server, n6, images, report)
             if n6_up and args.flash:
@@ -832,7 +853,7 @@ async def _run(args: argparse.Namespace, images: Built) -> int:
         if args.f4:
             f4_up = await check_f4(server, args.f4, images, report, console=bool(args.f4_console))
             if f4_up and args.flash:
-                await check_flash(server, "F4", args.f4, 0x100000, images.bin["f4_flash"], report)
+                await check_flash(server, "F4", args.f4, 0x100000, images.bin["f4_flash"], report, images.elf["f4_flash"])
     if args.jtag and h7:
         console = next((p["console_port"] for p in listed.get("probes", []) if p["serial"] == h7), None)
         env = {"STLINK_MCP_CONSOLE": f"{args.jtag}={console}"} if console else {}

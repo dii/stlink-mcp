@@ -6,6 +6,7 @@ import pytest
 
 from elfgen import elf32_segments, minimal_elf32
 from stlink_mcp import image
+from stlink_mcp.image import check_flash_image, flash_runs
 
 
 class TestLoadSegments:
@@ -87,3 +88,42 @@ class TestCheckRamImage:
         p = tmp_path / "itcm.elf"
         p.write_bytes(elf32_segments((0x24000000, 0x400), (0x00000000, 0x100)))
         assert "ITCM" in image.check_ram_image(p, 0x24000000)
+
+
+class TestFlashRuns:
+    """FF1, FF6. The bytes an ELF or Intel HEX file writes, checked against
+    objcopy's own conversions of one ELF (tests/fixtures/elf/flash_runs.c):
+    its HEX must give the same runs, and every run must be what objcopy's
+    binary holds at that address."""
+
+    FIX = Path(__file__).parent / "fixtures" / "elf"
+
+    def test_the_elf_and_its_hex_write_the_same_bytes(self) -> None:
+        assert flash_runs(self.FIX / "flash_runs.elf") == flash_runs(self.FIX / "flash_runs.hex")
+
+    @pytest.mark.parametrize("name", ["flash_runs.elf", "flash_runs.hex"])
+    def test_each_run_is_what_the_binary_holds_there_and_the_gap_is_in_none(self, name) -> None:
+        runs = flash_runs(self.FIX / name)
+        binary = (self.FIX / "flash_runs.bin").read_bytes()
+        for run in runs:
+            assert run.data == binary[run.address - 0x08000000:run.end - 0x08000000]
+        # Code and the flash copy of .data are adjacent, one run; the config
+        # word 16 KB on is another, with nothing written between.
+        assert [r.address for r in runs] == [0x08000000, 0x08004000]
+        assert runs[0].end < 0x08004000
+
+    def test_a_record_with_a_wrong_checksum_is_refused(self, tmp_path) -> None:
+        text = (self.FIX / "flash_runs.hex").read_text().replace(":0840000001005A5A78563412EF", ":0840000001005A5A78563412EE")
+        bad = tmp_path / "bad.hex"
+        bad.write_text(text)
+        assert "checksum" in check_flash_image(bad)
+
+    def test_a_hex_file_cut_short_is_refused(self, tmp_path) -> None:
+        cut = tmp_path / "cut.hex"
+        cut.write_text("".join((self.FIX / "flash_runs.hex").read_text().splitlines(keepends=True)[:5]))
+        assert "truncated" in check_flash_image(cut)
+
+    def test_an_elf_with_nothing_to_write_is_refused(self, tmp_path) -> None:
+        empty = tmp_path / "empty.elf"
+        empty.write_bytes(minimal_elf32(0x08000000, 0))
+        assert "no bytes to write" in check_flash_image(empty)

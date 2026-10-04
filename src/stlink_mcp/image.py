@@ -45,6 +45,7 @@ class Segment:
     vaddr: int
     filesz: int
     memsz: int
+    offset: int = 0
 
     def covers(self, address: int) -> bool:
         """True when `address` lies inside the bytes this segment writes.
@@ -81,7 +82,7 @@ def load_segments(data: bytes) -> list[Segment]:
         off = e_phoff + i * e_phentsize
         p_type, _p_offset, p_vaddr, p_paddr, p_filesz, p_memsz = struct.unpack_from("<IIIIII", data, off)
         if p_type == _PT_LOAD:
-            segments.append(Segment(paddr=p_paddr, vaddr=p_vaddr, filesz=p_filesz, memsz=p_memsz))
+            segments.append(Segment(paddr=p_paddr, vaddr=p_vaddr, filesz=p_filesz, memsz=p_memsz, offset=_p_offset))
     return segments
 
 
@@ -123,29 +124,47 @@ def check_ram_image(path: Path, vector_table_addr: int) -> str | None:
     return None
 
 
-def check_flash_image(path: Path) -> str | None:
-    """None when `path` is a raw binary flash_firmware can place, else why not.
+#: What flash_firmware writes: a raw binary at an address it is given, or an
+#: ELF or Intel HEX file at the addresses inside it.
+FLASH_FORMATS = (".bin", ".elf", ".hex")
 
-    STM32_Programmer_CLI's `-w <file> <address>` uses the address for a raw
-    binary only, by its manual (UM2237); Intel HEX, S-record and ELF files
-    carry their own addresses and are written there. flash_firmware's check
-    that the flash base was measured, and the address its result reports,
-    describe the write only when that address is the one used, so anything but
-    a .bin is refused. That reading of the manual has not been measured here.
-    The refusal does not depend on it being right, only on it possibly being
-    right, and the cost of it being wrong is a conversion step.
+
+@dataclass(frozen=True)
+class Run:
+    """Bytes an image writes at one address, with nothing between them."""
+    address: int
+    data: bytes
+
+    @property
+    def end(self) -> int:
+        return self.address + len(self.data)
+
+
+def check_flash_image(path: Path) -> str | None:
+    """None when `path` is an image flash_firmware can place, else why not.
+
+    A raw binary is written at the address flash_firmware passes. An ELF or
+    Intel HEX file is written at the addresses inside it, so those come from
+    flash_runs and each is checked against the part's flash before the write
+    (a segment's stored address, p_paddr, measured on an STM32F407 with the
+    programmer's -d on 2026-10-04). S-record is not read here, so it is refused.
     """
     if not path.is_file():
         return f"No such image: {path}"
-    if path.suffix.lower() != ".bin":
+    suffix = path.suffix.lower()
+    if suffix not in FLASH_FORMATS:
         return (
-            f"{path.name} is not a raw binary (.bin). The programmer writes a HEX, "
-            "S-record or ELF file to the addresses inside it rather than to the "
-            "address this tool passes, so the check on the flash base and the "
-            "address in the result would not describe the write. Convert it with "
-            "`arm-none-eabi-objcopy -O binary`, which STM32CubeCLT includes, and "
-            "pass the .bin."
+            f"{path.name} is not a raw binary (.bin), an ELF (.elf) or an Intel HEX "
+            "file (.hex). Convert an S-record or other file with "
+            "`arm-none-eabi-objcopy -O ihex`, which STM32CubeCLT includes."
         )
+    if suffix != ".bin":
+        try:
+            if not flash_runs(path):
+                return f"{path.name} has no bytes to write: no loadable segment or data record carries any."
+        except ImageError as exc:
+            return f"{path.name}: {exc}"
+        return None
     try:
         with path.open("rb") as handle:
             head = handle.read(4)
@@ -156,7 +175,69 @@ def check_flash_image(path: Path) -> str | None:
     if head == b"\x7fELF":
         return (
             f"{path.name} is named .bin but is an ELF file, and the programmer "
-            "would write its headers into flash as data. Convert it with "
-            "`arm-none-eabi-objcopy -O binary` and pass the result."
+            "would write its headers into flash as data. Rename it .elf, or "
+            "convert it with `arm-none-eabi-objcopy -O binary`."
         )
     return None
+
+
+def flash_runs(path: Path) -> list[Run]:
+    """The bytes an ELF or Intel HEX file writes, as runs in address order,
+    adjacent bytes merged. Raises ImageError for a file that is not what its
+    name says, or a HEX file that writes one address twice."""
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ImageError(f"cannot read it: {exc.strerror}") from exc
+    if path.suffix.lower() == ".elf":
+        segments = [s for s in load_segments(data) if s.filesz]
+        if any(s.offset + s.filesz > len(data) for s in segments):
+            raise ImageError("a segment's bytes run past the end of the file; truncated")
+        pieces = [(s.paddr, data[s.offset:s.offset + s.filesz]) for s in segments]
+    else:
+        pieces = _hex_records(data)
+    pieces.sort(key=lambda piece: piece[0])
+    runs: list[Run] = []
+    for address, chunk in pieces:
+        if runs and address < runs[-1].end:
+            raise ImageError(f"two records write 0x{address:08X}")
+        if runs and address == runs[-1].end:
+            runs[-1] = Run(runs[-1].address, runs[-1].data + chunk)
+        else:
+            runs.append(Run(address, bytes(chunk)))
+    return runs
+
+
+def _hex_records(data: bytes) -> list[tuple[int, bytes]]:
+    """The data records of an Intel HEX file, with their full addresses."""
+    try:
+        lines = data.decode("ascii").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ImageError("not an Intel HEX file (not text)") from exc
+    pieces: list[tuple[int, bytes]] = []
+    base = 0
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = bytes.fromhex(line[1:]) if line.startswith(":") else None
+        except ValueError:
+            record = None
+        if record is None or len(record) < 5 or len(record) != record[0] + 5:
+            raise ImageError(f"not an Intel HEX file: line {number} is not a record")
+        if sum(record) & 0xFF:
+            raise ImageError(f"line {number}'s checksum is wrong")
+        kind, payload = record[3], record[4:-1]
+        offset = int.from_bytes(record[1:3], "big")
+        if kind == 0x00:
+            pieces.append((base + offset, payload))
+        elif kind == 0x01:
+            return pieces
+        elif kind == 0x02:
+            base = int.from_bytes(payload, "big") << 4
+        elif kind == 0x04:
+            base = int.from_bytes(payload, "big") << 16
+        elif kind not in (0x03, 0x05):
+            raise ImageError(f"line {number} is a record of type {kind:02X}, which Intel HEX does not have")
+    raise ImageError("no end-of-file record; truncated")

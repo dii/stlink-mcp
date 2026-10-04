@@ -50,6 +50,10 @@ class TargetInfo:
     """The interface the connect banner says it used, "swd" or "jtag": the
     observation, not the request. None when the banner did not say."""
     interface_khz: int | None = None
+    nvm_size: int | None = None
+    """Internal flash in bytes, from the banner's "NVM size    : 2 MBytes"
+    (the H7) or "1 MBytes" (the F407); None where it prints none, as on the
+    STM32N6, which has no internal flash."""
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -71,6 +75,7 @@ _FIELDS = {
     "revision": re.compile(r"^Revision ID\s*:\s*(.+?)\s*$", re.M),
 }
 _DEVICE_ID = re.compile(r"^Device ID\s*:\s*0x([0-9A-Fa-f]+)", re.M)
+_NVM_SIZE = re.compile(r"^NVM size\s*:\s*(\d+)\s*(Bytes|KBytes|MBytes)\s*$", re.M)
 _ERROR = re.compile(r"^(?:Error:\s*(.+?)|(ST-LINK error \(.+?\)))\s*$", re.M)
 
 #: The port ST's stlink-server listens on. GDB servers started with -t start it.
@@ -139,6 +144,10 @@ def parse_target_info(output: str) -> TargetInfo:
     dev = _DEVICE_ID.search(output)
     if dev:
         info.device_id = int(dev.group(1), 16)
+
+    nvm = _NVM_SIZE.search(output)
+    if nvm:
+        info.nvm_size = int(nvm.group(1)) * {"Bytes": 1, "KBytes": 1024, "MBytes": 1024 * 1024}[nvm.group(2)]
 
     # Deduplicate: the CLI retries the connection and repeats every error.
     seen: list[str] = []
@@ -957,12 +966,14 @@ class Probe:
         return result.stdout
 
     def program_flash(
-        self, image: str, address: int, external_loader: str | None = None
+        self, image: str, address: int | None, external_loader: str | None = None
     ) -> str:
+        """Write `image` at `address`, or, for an ELF or HEX file, at the
+        addresses inside it (address None)."""
         argv = self._connect_args(self.access_port, self.connect_mode)
         if external_loader:
             argv += ["-el", str(self.toolchain.external_loader(external_loader))]
-        argv += ["-w", image, f"0x{address:08X}"]
+        argv += ["-w", image] + ([f"0x{address:08X}"] if address is not None else [])
         result = self._run(argv, timeout=300)
         if "File download complete" not in result.stdout:
             message = f"Programming failed:\n{result.stdout.strip()}"
