@@ -43,6 +43,7 @@ TOOL_CALLS: dict[str, dict] = {
     "capture_swo": {"core_clock_hz": 16_000_000, "seconds": 0.01},
     "reset_target": {},
     "read_fault_status": {},
+    "read_option_bytes": {},
     "locate_fault": {},
     "run_until": {"elf_path": "/nonexistent.elf", "location": "main"},
 }
@@ -377,6 +378,13 @@ class _FakeProbe:
         if self.swo_raises:
             raise probe_mod.ProbeError(self.swo_raises)
         return self.swo_text
+
+    # What `-ob displ` printed; the F407's by default. Class-level so a test can
+    # set another board's.
+    option_bytes_text: str = (Path(__file__).parent / "fixtures" / "option_bytes_f4.txt").read_text()
+
+    def option_bytes(self) -> str:
+        return self.option_bytes_text
 
 
 @pytest.fixture
@@ -3089,6 +3097,7 @@ class TestTheReadingToolsNeverReset:
         ("read_memory", {"address": "0x24000000", "length_bytes": 4}),
         ("read_memory", {"address": "0x40011000", "length_bytes": 4}),
         ("read_fault_status", {}),
+        ("read_option_bytes", {}),
     ])
     def test_it_fails_rather_than_reset(self, bench, monkeypatch, name, args) -> None:
         monkeypatch.setattr(server, "Probe", self._Unreachable)
@@ -3110,3 +3119,57 @@ class TestListProbesMarksTheHeld:
         assert out["status"] == result.VERIFIED and entry["serial"] == "AAA1" and entry["gdb_server_held"] is True
         call("release_probe", probe_serial="AAA1")
         assert call("list_probes")["probes"][0]["gdb_server_held"] is False
+
+
+class TestOptionBytesAreReadNeverWritten:
+    """OB1 to OB5. The fixtures are what STM32_Programmer_CLI printed for `-ob
+    displ` on the F407, the H743 and the N6 (2026-10-04)."""
+
+    FIXTURES = Path(__file__).parent / "fixtures"
+
+    @pytest.mark.parametrize("board, sections, checks", [
+        ("f4", 4, {("Write Protection", "WRP11"): ("0x1", "Write protection not active"),
+                   ("BOR Level", "BOR_LEV"): ("0x3", "BOR  OFF    reset threshold level from 1.80 to 2.10 V")}),
+        ("h7", 7, {("Boot address Option Bytes", "BOOT_ADD0"): ("0x800", "0x8000000"),
+                   ("User Configuration", "SWAP_BANK"): ("0x0", "after boot loading, no swap for user sectors")}),
+    ])
+    def test_every_value_comes_with_sts_meaning(self, bench, monkeypatch, board, sections, checks) -> None:
+        """OB2, OB3."""
+        monkeypatch.setattr(_FakeProbe, "option_bytes_text", (self.FIXTURES / f"option_bytes_{board}.txt").read_text())
+        out = call("read_option_bytes")
+        assert_contract(out)
+        assert out["status"] == result.VERIFIED and len(out["option_bytes"]) == sections
+        assert out["read_protection"] == {"value": "0xAA", "meaning": "Level 0, no protection"}
+        assert list(out).index("read_protection") < list(out).index("option_bytes")
+        for (section, name), (value, meaning) in checks.items():
+            assert out["option_bytes"][section][name] == {"value": value, "meaning": meaning}
+
+    def test_a_part_without_them_fails_with_sts_reason(self, bench, monkeypatch) -> None:
+        """OB4."""
+        monkeypatch.setattr(_FakeProbe, "option_bytes_text", (self.FIXTURES / "option_bytes_n6.txt").read_text())
+        out = call("read_option_bytes")
+        assert out["status"] == result.FAILED and "not supported for STM32N6" in out["error"]
+
+    def test_beside_a_held_server_it_reads_in_shared_mode(self, bench, monkeypatch) -> None:
+        """OB5, RM7. The option bytes are read beside run_firmware's server, without letting go."""
+        made: list = []
+        original = _FakeProbe.__init__
+
+        def remember(self, *args, **kwargs):
+            original(self, *args, **kwargs)
+            made.append(kwargs.get("shared", False))
+
+        monkeypatch.setattr(_FakeProbe, "__init__", remember)
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
+        made.clear()
+        out = call("read_option_bytes")
+        assert out["status"] == result.VERIFIED and made and all(made) and list(bench.held) == ["AAA1"]
+
+    def test_nothing_in_the_package_can_write_them(self) -> None:
+        """OB1. The only option-byte command the package sends is the display."""
+        import re
+        package = Path(server.__file__).parent
+        sent = [m for f in package.glob("*.py") for m in re.findall(r'"-ob",\s*"([^"]+)"', f.read_text())]
+        assert sent == ["displ"], sent
+        assert not any(re.search(r'"-ob"\s*\]', f.read_text()) for f in package.glob("*.py"))

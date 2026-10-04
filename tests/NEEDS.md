@@ -109,6 +109,14 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **LF5.** With an ELF, the function, line and instruction at the stacked PC.
 - **LF6.** It leaves the core as it found it.
 
+## read_option_bytes (OB)
+
+- **OB1.** Nothing in the package writes option bytes: some writes cannot be undone.
+- **OB2.** Every option byte the programmer reports, with its value and ST's meaning, in ST's sections.
+- **OB3.** Readout protection comes first.
+- **OB4.** A part ST's programmer has no option bytes for fails with ST's reason.
+- **OB5.** It never halts or resets the target, and reads beside a held server.
+
 ## capture_console (CC)
 
 - **CC1.** The port is the one matched to the probe's serial or the one the setting names, never the first port; with none it refuses.

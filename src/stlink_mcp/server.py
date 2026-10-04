@@ -62,6 +62,7 @@ from .probe import (
     explain_connect_failure,
     list_probes as _list_probes,
     list_probes_with_unreadable,
+    parse_option_bytes,
     reset_landed_at_vector,
     reset_vector_address,
 )
@@ -76,7 +77,7 @@ from .runner import (
     release_server,
     server_is_held,
 )
-from .toolchain import Toolchain, ToolchainError, find_toolchain, run_command
+from .toolchain import Toolchain, ToolchainError, find_toolchain, run_command, strip_ansi
 from .vendordb import VendorDbError, seed_from_directory
 
 # The version goes into the initialize handshake, so a client log or a bug
@@ -2856,6 +2857,67 @@ registers.
         )
 
     return verified("fault status registers read from the target", **detail)
+
+
+@mcp.tool()
+@_serialised
+def read_option_bytes(
+    probe_serial: str | None = None,
+    interface: Interface = "swd",
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Read the option bytes as ST's programmer reads and explains them: readout
+protection first, then each section, such as brown-out level, user
+configuration, boot addresses and write protection, with every value and its
+meaning. Read only: no tool here writes option bytes, since some writes cannot
+be undone. Never halts or resets the target. Fails, with ST's reason, on a part
+the programmer has no option bytes for, such as the STM32N6.
+    """
+    probe: Probe | None = None
+    try:
+        toolchain = _toolchain()
+        serial, _, error = _resolve_probe(toolchain, probe_serial)
+        if error:
+            return failed(error)
+        refusal = _held_refusal(serial)
+        if refusal:
+            return refusal
+        probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
+                      shared=_shares(serial))
+        info = probe.identify(allow_reset=False)
+        _remember_port(serial, probe, info)
+        if not info.connected:
+            return failed(
+                "Could not reach the core without resetting it, and this tool does not reset.",
+                probe_serial=serial, **_connection_fields(probe, info),
+                hint=explain_connect_failure(info, interface),
+            )
+        output = probe.option_bytes()
+    except Exception as exc:  # noqa: BLE001
+        return failed(str(exc), **_after_failure(probe))
+
+    sections = parse_option_bytes(output)
+    detail: dict[str, Any] = {
+        "probe_serial": serial,
+        "device": info.device_name,
+        **_connection_fields(probe, info),
+        "target_was_reset": probe.target_was_reset,
+    }
+    if not sections:
+        lines = [line.strip() for line in strip_ansi(output).splitlines() if line.strip()]
+        errors = [line for line in lines if line.startswith("Error")]
+        return failed(errors[0] if errors else "The programmer printed no option bytes.",
+                      programmer_output=errors or lines[-5:], **detail)
+    rdp = next((fields["RDP"] for fields in sections.values() if "RDP" in fields), None)
+    detail.update(read_protection=rdp, option_bytes=sections)
+    count = sum(len(fields) for fields in sections.values())
+    if rdp is None:
+        return unverified(
+            f"The programmer printed {count} option-byte values and no readout protection (RDP) "
+            "among them, which every STM32 it was run on had; the rest are given as read.",
+            **detail,
+        )
+    return verified(f"the option bytes as the programmer read them from the device: {count} values", **detail)
 
 
 @mcp.tool()

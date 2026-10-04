@@ -248,6 +248,29 @@ def _without_canary(words: dict[int, int], ranges: list[tuple[int, int]]) -> dic
     return {address: word for address, word in words.items() if address != CPUID}
 
 
+_OB_BANK = re.compile(r"^OPTION BYTES BANK:\s*(\d+)\s*$")
+_OB_SECTION = re.compile(r"^\s+([A-Za-z][^:]*?):\s*$")
+_OB_FIELD = re.compile(r"^\s+([A-Za-z][A-Za-z0-9_]*)\s*:\s*(0x[0-9A-Fa-f]+)\s*(?:\((.*)\))?\s*$")
+
+
+def parse_option_bytes(output: str) -> dict[str, dict[str, dict[str, str | None]]]:
+    """`-ob displ` output as {section: {name: {"value", "meaning"}}}, in ST's own
+    sections and words. A section of a bank other than 0 is named with its bank.
+    Captured on an STM32F407 and an STM32H743 (2026-10-04)."""
+    sections: dict[str, dict[str, dict[str, str | None]]] = {}
+    bank, section = "0", None
+    for line in strip_ansi(output).splitlines():
+        if (m := _OB_BANK.match(line)):
+            bank, section = m.group(1), None
+        elif (m := _OB_FIELD.match(line)) and section is not None:
+            meaning = m.group(3).strip() if m.group(3) else None
+            sections[section][m.group(1)] = {"value": m.group(2), "meaning": meaning}
+        elif (m := _OB_SECTION.match(line)):
+            section = m.group(1).strip() if bank == "0" else f"bank {bank}: {m.group(1).strip()}"
+            sections.setdefault(section, {})
+    return {name: fields for name, fields in sections.items() if fields}
+
+
 def parse_core_registers(output: str) -> dict[str, int]:
     """Parse '-coreReg' output into {register: value}."""
     return {name: int(value, 16) for name, value in _CORE_REG.findall(output)}
@@ -873,6 +896,12 @@ class Probe:
         if self.halted_before is False:
             self.release_core(self.access_port)
         return regs
+
+    def option_bytes(self) -> str:
+        """`-ob displ` on the settled port: the programmer reads the option bytes
+        and prints them. It writes nothing, and the F407's program ran on across
+        it, DHCSR reading running after (2026-10-04)."""
+        return self._run(self._connect_args(self.access_port, "HOTPLUG") + ["-ob", "displ"], timeout=90).stdout
 
     def reset_and_halt(self, access_port: int) -> tuple[int | None, str]:
         """Reset the target and halt it, returning the program counter.

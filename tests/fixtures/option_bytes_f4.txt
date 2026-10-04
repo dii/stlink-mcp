@@ -1,0 +1,59 @@
+      -------------------------------------------------------------------
+                        STM32CubeProgrammer v2.23.0                  
+      -------------------------------------------------------------------
+
+ST-LINK SN  : 50FF73064977535531090387
+ST-LINK FW  : V2J48S7
+Board       : --
+Voltage     : 3.26V
+SWD freq    : 4000 KHz
+Connect mode: Hot Plug
+Reset mode  : Software reset
+Device ID   : 0x413
+Revision ID : Rev 2.0
+Device name : STM32F405xx/F407xx/F415xx/F417xx
+NVM size    : 1 MBytes
+Device type : MCU
+Device CPU  : Cortex-M4
+BL Version  : 0x31
+
+
+UPLOADING OPTION BYTES DATA ...
+
+  Bank          : 0x00
+  Address       : 0x40023c14 
+  Size          : 4 Bytes
+
+[==================================================] 100% 
+
+
+OPTION BYTES BANK: 0
+
+   Read Out Protection:
+
+     RDP          : 0xAA (Level 0, no protection) 
+
+   BOR Level:
+
+     BOR_LEV      : 0x3 (BOR  OFF    reset threshold level from 1.80 to 2.10 V) 
+
+   User Configuration:
+
+     WDG_SW       : 0x1 (Software watchdog) 
+     nRST_STOP    : 0x1 (No reset generated) 
+     nRST_STDBY   : 0x1 (No reset generated) 
+
+   Write Protection:
+
+     WRP0         : 0x1 (Write protection not active) 
+     WRP1         : 0x1 (Write protection not active) 
+     WRP2         : 0x1 (Write protection not active) 
+     WRP3         : 0x1 (Write protection not active) 
+     WRP4         : 0x1 (Write protection not active) 
+     WRP5         : 0x1 (Write protection not active) 
+     WRP6         : 0x1 (Write protection not active) 
+     WRP7         : 0x1 (Write protection not active) 
+     WRP8         : 0x1 (Write protection not active) 
+     WRP9         : 0x1 (Write protection not active) 
+     WRP10        : 0x1 (Write protection not active) 
+     WRP11        : 0x1 (Write protection not active) 

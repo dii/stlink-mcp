@@ -249,6 +249,11 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     await check_closed_port(server, s, images, report)
     await check_core_state(server, s, images, report)
 
+    ob = await server.call("read_option_bytes", probe_serial=s)
+    report.check(ob["status"] == "verified" and (ob.get("read_protection") or {}).get("value") == "0xAA"
+                 and "Boot address Option Bytes" in ob.get("option_bytes", {}),
+                 "H7: read_option_bytes gives readout protection first and every section, as ST explains them",
+                 _why(ob))
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified", "H7: reset_target halts at the reset handler the vector table names", _why(reset))
     idle = await server.call("release_probe", probe_serial=s)
@@ -552,6 +557,10 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     await check_read_effects(server, "F4", s, images, report, "f4_read_effects", "ADC1", 0x40012000, 1, 0x4001204C,
                              0x40012308)
     await server.call("run_firmware", elf_path=str(images.elf["f4_ram"]), probe_serial=s, console_seconds=0.5)
+    ob = await server.call("read_option_bytes", probe_serial=s)
+    report.check(ob["status"] == "verified" and (ob.get("read_protection") or {}).get("value") == "0xAA"
+                 and "Write Protection" in ob.get("option_bytes", {}),
+                 "F4: read_option_bytes reads beside the held server, readout protection first", _why(ob))
     reset = await server.call("reset_target", probe_serial=s)
     report.check(reset["status"] == "verified" and reset.get("released_probe_first") is True,
                  "F4: reset_target stops the held GDB server first, says so, and halts at the reset handler",
@@ -710,6 +719,9 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  "N6: run_until stops at a function's inlined copy, where GDB breaks on its unused out-of-line copy",
                  f"{_why(copies)}; {copies.get('location')}; at {copies.get('stopped_at', {}).get('address')}")
     await server.call("release_probe", probe_serial=s)
+    ob = await server.call("read_option_bytes", probe_serial=s)
+    report.check(ob["status"] == "failed" and "not supported for STM32N6" in ob.get("error", ""),
+                 "N6: read_option_bytes fails with ST's reason, the part having none", _why(ob))
     await check_names(server, "N6", s, images, report, "n6_vars", "h7_vars", "0x46028000", "board name")
     await server.call("release_probe", probe_serial=s)
     return True
