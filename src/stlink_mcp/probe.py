@@ -442,9 +442,11 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     if any("DEV_TCP_CMD_ERR" in e for e in info.errors):
         return (
             "The probe itself stopped answering (DEV_TCP_CMD_ERR) while it still reads the "
-            "target's voltage. An STLINK-V3E did this twice after sessions in ST's shared mode: "
-            "no connect mode, clock or USB reset cleared it, unplugging its cable did, and a "
-            "second probe on the same debug lines reached the core meanwhile."
+            "target's voltage. An STLINK-V3E did this after sessions in ST's shared mode, "
+            "mostly after a program took the SWD pins: no connect mode, clock, USB reset, wait "
+            "or GDB server cleared it, and cutting its USB power did, by unplugging it or with "
+            "`uhubctl -l <hub> -p <port> -a cycle` on a hub that switches port power (`uhubctl` "
+            "alone lists them, with each probe's serial)."
         )
     if any("DEV_CONNECT_ERR" in e for e in info.errors):
         return (
