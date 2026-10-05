@@ -8,9 +8,12 @@ answer.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import os
 
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -80,6 +83,48 @@ _ERROR = re.compile(r"^(?:Error:\s*(.+?)|(ST-LINK error \(.+?\)))\s*$", re.M)
 
 #: The port ST's stlink-server listens on. GDB servers started with -t start it.
 STLINK_SERVER_PORT = 7184
+
+
+def stop_idle_daemon(proc: Path = Path("/proc"), grace: float = 3.0) -> list[int]:
+    """Stop ST's stlink-server when no ST-LINK GDB server runs on this machine;
+    the PIDs stopped. Called before every programmer connect and listing.
+
+    The daemon exists so a GDB server started with -t and the programmer can
+    share a probe. Once no GDB server runs, it does harm: it keeps released
+    probes, so plain connects fail with DEV_CONNECT_ERR (2026-10-04); it makes
+    every call shared, 0.44 s against 0.12 s plain on the H7 (2026-10-05); and
+    the H7's STLINK-V3E stuck at a connect under reset made through it after a
+    program had taken the SWD pins, 3 times in 6 with it running and 0 in 3
+    with it stopped (2026-10-05): a suspect, not an established cause. A daemon
+    a GDB server still uses, this process's or another's, is left alone. This
+    server assumes it is the probes' only user, as its users are agents.
+    Without /proc (Windows) it does nothing."""
+    if not proc.is_dir():
+        return []
+    daemons: list[int] = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv0 = (entry / "cmdline").read_bytes().split(b"\0")[0].decode(errors="replace")
+            name = (entry / "comm").read_text().strip()
+        except OSError:
+            continue
+        if Path(argv0).name.startswith("ST-LINK_gdbserver"):
+            return []
+        if name == "stlink-server":
+            daemons.append(int(entry.name))
+    for pid in daemons:
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and any((proc / str(pid)).exists() for pid in daemons):
+        time.sleep(0.1)
+    for pid in daemons:
+        if (proc / str(pid)).exists():
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+    return daemons
 
 
 def sharing_daemon_running(proc_net: tuple[str, ...] = ("/proc/net/tcp", "/proc/net/tcp6")) -> bool:
@@ -535,6 +580,8 @@ class Probe:
         ]
         if self.serial:
             argv.append(f"sn={self.serial}")
+        if not self.shared:
+            stop_idle_daemon()
         if self.shared or sharing_daemon_running():
             argv.append("shared")
         return argv
@@ -1199,6 +1246,7 @@ def parse_probe_list(output: str) -> list[ProbeInfo]:
 def _list_argv(toolchain: Toolchain) -> list[str]:
     """`-l`, and `shared` while the daemon runs: a plain listing showed a probe
     the daemon keeps with no firmware and no target (2026-10-04)."""
+    stop_idle_daemon()
     return [str(toolchain.programmer), "-l"] + (["shared"] if sharing_daemon_running() else [])
 
 

@@ -22,6 +22,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Changed
 
+- ST's `stlink-server` is stopped before a programmer call when no ST-LINK GDB server runs on the machine, so calls after `release_probe` are direct (0.12 s against 0.44 s shared on the H7) and a probe the daemon kept is reached. The server assumes it is the probes' only user. With the daemon left running, the H7's on-board probe stuck at a connect under reset after a program took the SWD pins three times in six, and not at all in three with it stopped.
 - An argument no parameter of the tool has is refused, naming the nearest parameter, and nothing is done. The MCP SDK dropped it without a word: a misspelt `length_bytes` left the default, and a misspelt `interface` would have left SWD.
 - `flash_firmware`'s erase report covers the bytes beside the image in every 128 KB block it touches, before the image as well as after, and never counts the image's own bytes; a write that fails partway says flash may already have changed.
 - Every GDB server keeps the log that records the chip's reason for a stop, `run_firmware`'s too, so `run_until` uses whichever server holds the probe. It used to replace `run_firmware`'s with one of its own, letting go of the probe for a moment, which a program that closes the debug port would not give back; and on the STM32N6, where the kept server was used, its stops came back `unverified` for want of the log. The log grows with every load, about four times the image, and goes when the server stops.

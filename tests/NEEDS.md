@@ -12,6 +12,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X4.** Every call leaves one trace line naming who asked, the tool, the probe and the verdict; a refusal for a held probe says whose call holds it.
 - **X5.** Every tool's description is 40 to 80 words.
 - **X6.** While ST's stlink-server runs, every programmer connect and listing goes through it, so a probe it keeps open is still reached; while it does not run, connects are direct.
+- **X11.** ST's sharing daemon is stopped before a programmer call when no GDB server on the machine runs, so connects after a release are direct; one a GDB server still uses is left alone.
 - **X7.** A read whose CPUID check fails is not a read: wrong data is never returned as data, and a connect that read it counts as not made.
 - **X8.** A call on a part whose access port was measured connects once: an agent waits for every programmer call, about 0.1 s plain and 0.4 s shared, and the STM32N6 cost one more per call before (2026-10-01).
 - **X9.** Every client is told on connecting what the server is for, how to read a result and the usual order of calls, even one that shows its agent no tool descriptions; every tool it names exists.

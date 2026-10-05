@@ -379,6 +379,26 @@ async def check_read_effects(server: Server, label: str, serial: str, images: Bu
         await server.call("release_probe", probe_serial=s)
 
 
+def _daemon_idle() -> bool | None:
+    """Whether ST's stlink-server runs with no ST-LINK GDB server to serve; None
+    without /proc."""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return None
+    daemon = gdb = False
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv0 = (entry / "cmdline").read_bytes().split(b"\0")[0].decode(errors="replace")
+            name = (entry / "comm").read_text().strip()
+        except OSError:
+            continue
+        gdb = gdb or Path(argv0).name.startswith("ST-LINK_gdbserver")
+        daemon = daemon or name == "stlink-server"
+    return daemon and not gdb
+
+
 async def check_names(server: Server, label: str, serial: str, images: Built, report: Report,
                       own: str, other: str, register_address: str, svd_says: str) -> None:
     """Read a variable and a register by name, on a board running images[own]."""
@@ -386,6 +406,10 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
     await server.call("run_firmware", elf_path=str(images.elf[own]), probe_serial=s, console_seconds=1)
     await server.call("release_probe", probe_serial=s)
     var = await server.call("read_memory", probe_serial=s, symbol="g_state", elf_path=str(images.elf[own]))
+    idle = _daemon_idle()
+    report.check(idle is False or idle is None,
+                 f"{label}: after release_probe and one call, ST's sharing daemon is not left running with no GDB server",
+                 f"daemon idle: {idle}")
     value = var.get("value") or {}
     report.check(var["status"] == "verified" and value.get("temperature_mc") == -1234 and value.get("gain") == 1.5
                  and value.get("mode") == "MODE_RUN (3)" and value.get("flags") == {"a": 5, "b": 17, "c": 0xBEEF}
@@ -405,8 +429,9 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
                  f"{_why(sampled)}; g_ticks {ticks}; core {sampled.get('core')}; {sampled.get('samples')} samples")
     until = await server.call("sample_values", what=["g_ticks"], elf_path=elf, probe_serial=s, seconds=10,
                               until="g_ticks changes")
+    # Stopped at the first change: one change seen, at the last sample.
     report.check(until["status"] == "verified" and (until.get("until") or {}).get("held_at_s") is not None
-                 and until.get("samples", 99) <= 3,
+                 and until.get("values", {}).get("g_ticks", {}).get("changes") == 1,
                  f"{label}: sample_values stops at the first sample where until holds", _why(until))
     foreign = await server.call("disassemble", elf_path=str(images.elf[other]), location="writer", probe_serial=s)
     report.check(foreign["status"] != "verified",
