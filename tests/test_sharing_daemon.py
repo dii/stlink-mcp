@@ -63,12 +63,14 @@ def test_a_probe_that_stopped_answering_is_named_as_the_probe() -> None:
     connect through an H7's on-board STLINK-V3E that had stuck after a session
     in shared mode (2026-10-04); a second probe on the same lines reached the
     core, and only cutting the V3E's USB power cleared it: unplugging its cable,
-    or on 2026-10-05 uhubctl on a hub that switches port power."""
+    or on 2026-10-05 uhubctl on a hub that switches port power; with a second
+    probe on the same lines, only cutting both at once reset the board."""
     output = (FIXTURES / "connect_h7_v3_stuck_dev_tcp_cmd_err.txt").read_text()
     info = pm.parse_target_info(output)
     assert not info.connected and "ST-LINK error (DEV_TCP_CMD_ERR)" in info.errors
     hint = pm.explain_connect_failure(info)
     assert "probe itself stopped answering" in hint and "cutting its USB power" in hint and "uhubctl" in hint
+    assert "other probe wired to the same board at the same time" in hint
 
 
 class TestAnIdleDaemonIsStopped:

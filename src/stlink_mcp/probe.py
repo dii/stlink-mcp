@@ -445,8 +445,11 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
             "target's voltage. An STLINK-V3E did this after sessions in ST's shared mode, "
             "mostly after a program took the SWD pins: no connect mode, clock, USB reset, wait "
             "or GDB server cleared it, and cutting its USB power did, by unplugging it or with "
-            "`uhubctl -l <hub> -p <port> -a cycle` on a hub that switches port power (`uhubctl` "
-            "alone lists them, with each probe's serial)."
+            "`uhubctl -l <hub> -p <port> -a off`, then `-a on`, on a hub that switches port power "
+            "(`uhubctl` alone lists them, with each probe's serial). Cut any other probe wired to "
+            "the same board at the same time, for some seconds: while a second one stayed powered, "
+            "cutting this one alone stopped bringing the core back, and cutting both did, 11 times "
+            "of 11, likely because the second fed the board through its pins."
         )
     if any("DEV_CONNECT_ERR" in e for e in info.errors):
         return (
