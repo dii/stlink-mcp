@@ -847,6 +847,10 @@ async def check_together(server: Server, h7: str, n6: str, report: Report) -> No
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--h7", help="serial of the NUCLEO-H743ZI2's own probe")
+    parser.add_argument("--cycle-port", action="append", default=[], metavar="HUB:PORT",
+                        help="power-cycle a USB hub port with uhubctl before the H7 checks, such as one "
+                             "feeding a second probe on the H7's debug lines (one left unpowered, or used, "
+                             "kept the H7's own probe from its core, 2026-10-06)")
     parser.add_argument("--skip", action="append", choices=["h7", "n6"], default=[],
                         help="leave out a board found by name, such as one another run is using")
     parser.add_argument("--n6", help="serial of the NUCLEO-N657X0-Q's own probe")
@@ -883,6 +887,12 @@ async def _run(args: argparse.Namespace, images: Built) -> int:
         print(f"H7 probe {h7 or 'not found'}, N6 probe {n6 or 'not found'}\n", flush=True)
         h7_up = n6_up = False
         if h7:
+            for spec in args.cycle_port:
+                hub, _, port = spec.rpartition(":")
+                done = subprocess.run(["uhubctl", "-l", hub, "-p", port, "-a", "cycle", "-d", "3"],
+                                      capture_output=True, text=True)
+                print(f"power-cycled hub {hub} port {port}: exit {done.returncode}", flush=True)
+                await anyio.sleep(4)
             h7_up = await check_h7(server, h7, images, report)
             if h7_up and args.flash:
                 await check_flash(server, "H7", h7, 0x200000, images.bin["h7_flash"], report, images.elf["h7_flash"])
