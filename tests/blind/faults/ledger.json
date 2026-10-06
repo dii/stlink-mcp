@@ -1284,7 +1284,7 @@
     },
     "n13_round": {
       "rulings": 3,
-      "by": "arbiter-opus (s1 accept, s2 escalate) + orchestrator (s2 accept after two writer rounds, isolation-checked)",
+      "by": "arbiter (s1 accept, s2 escalate) + orchestrator (s2 accept after two writer rounds, isolation-checked)",
       "sample_for_owner": [
         "FAULTS-N13-s2"
       ],
