@@ -1173,6 +1173,8 @@ class TestSwoIsCapturedAndItsSideEffectSaid:
         out = call("capture_swo")
         assert_contract(out)
         assert out["status"] == result.FAILED and "did not start" in out["error"]
+        # CS2: a capture can fail after the trace unit was set up.
+        assert out["trace_left_enabled"] == "possibly" and "power cycle" in out["trace_note"]
 
     @pytest.mark.parametrize("args", [{"itm_port": 32}, {"itm_port": -1}, {"core_clock_hz": 0},
                                       {"seconds": 0}, {"seconds": 61}])

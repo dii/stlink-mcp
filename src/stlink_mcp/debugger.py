@@ -3,7 +3,7 @@
 The GDB side of `run_until` and of `core_registers`' call stack, over a GDB/MI
 session attached to the probe's GDB server. Each fact used here was measured on
 an STM32H7, an STM32F407 and an STM32N6 on 2026-10-02, before it was built
-(docs/v1-plan.md has the measurements):
+(docs/findings.md has the measurements):
 
 - ST-LINK_gdbserver reads the Debug Fault Status Register at every stop and
   clears it, so GDB reads 0 or 1 there afterwards. The server's log at level

@@ -7,8 +7,8 @@ license = { text = "MIT" }
 authors = [{ name = "Dawid Oosthuizen", email = "dawid.oosthuizen@gmail.com" }]
 requires-python = ">=3.11"
 keywords = ["mcp", "stm32", "st-link", "embedded", "debugging", "firmware"]
-# Linux only, deliberately. macOS is plausible and untried, so it is not
-# claimed here; Windows is wrong throughout, not merely untested. The Python
+# Linux only for now. macOS is plausible and untried, so it is not
+# claimed here; Windows has been run on one board and is not yet claimed. The Python
 # classifiers name the declared floor and the version the suite is actually
 # run on, and nothing above it.
 classifiers = [

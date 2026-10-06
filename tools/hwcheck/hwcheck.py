@@ -851,7 +851,7 @@ async def main() -> int:
                         help="before the H7 checks, cut power with uhubctl to these ports of a hub "
                              "together for 10 s, such as 1-1.4:1,3 for the H7's own probe and a second probe "
                              "on its debug lines: cut alone, the H7's probe stopped getting its core back "
-                             "while the other stayed powered (2026-10-06)")
+                             "while the other stayed powered")
     parser.add_argument("--skip", action="append", choices=["h7", "n6"], default=[],
                         help="leave out a board found by name, such as one another run is using")
     parser.add_argument("--n6", help="serial of the NUCLEO-N657X0-Q's own probe")

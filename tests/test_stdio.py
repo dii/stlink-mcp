@@ -91,8 +91,8 @@ def test_a_client_sees_every_tool_and_contract_shaped_results() -> None:
 
 
 def test_a_client_is_told_how_to_use_the_server_even_without_the_tool_descriptions() -> None:
-    """X9. Claude Code shows server instructions for tools it has deferred; agy
-    gives its model the tools through one generic call. Every tool named in
+    """X9. Claude Code shows server instructions for tools it has deferred; Google's
+    Antigravity command line gives its model the tools through one generic call. Every tool named in
     them must exist, and they say how to read a result."""
     import re
     seen = anyio.run(_session)

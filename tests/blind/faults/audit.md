@@ -1,5 +1,7 @@
 # Audit — `src/stlink_mcp/faults.py` (unit slug `faults`)
 
+> This is the record of what the audit found during the run, not a statement of present coverage. The gaps in section 1 were closed afterwards by `test_faults_n5_d` and `test_faults_n11_e`, added before the suite was committed, and by the tests in `test_faults_n13.py`. Line numbers refer to `faults.py` as it was then.
+
 Read: `src/stlink_mcp/faults.py`, `tests/blind/test_faults.py`, `tests/blind/faults/contract.md`.
 No other test file was read. Findings below were checked by running the real suite
 (`.venv/bin/python -m pytest tests/blind/test_faults.py -q`, 89 passed baseline) and by

@@ -1,6 +1,6 @@
 # hwcheck
 
-Checks the README's promises against real boards, through the server over stdio, as an MCP client calls it. docs/findings.md ends with a ledger of what each promise rests on; this is how the hardware column of that ledger is re-run.
+Checks the README's promises against real boards, through the server over stdio, as an MCP client calls it. docs/findings.md has a ledger, "What each README promise rests on"; this is how its hardware column is re-run.
 
 ```sh
 uv run python tools/hwcheck/hwcheck.py
@@ -8,7 +8,9 @@ uv run python tools/hwcheck/hwcheck.py --h7 <serial> --n6 <serial> --jtag <seria
 uv run python tools/hwcheck/hwcheck.py --f4 <serial> --f4-console /dev/serial/by-id/<adapter>
 ```
 
-It knows the NUCLEO-H743ZI2, whose probe reports the board name NUCLEO-H743ZI, and the NUCLEO-N657X0-Q, and finds them by that name in `list_probes` when no serial is given. An STM32F407 board has no board name to find it by, so `--f4` names its probe. Each check prints PASS or FAIL and what it saw, and when a check fails, every call result since the previous check, whole. A board whose first call fails gets one FAIL and SKIP for the rest, since each of its other checks would fail too, at up to a minute each. The exit status is 1 when any failed.
+It knows the NUCLEO-H743ZI2, whose probe reports the board name NUCLEO-H743ZI, and the NUCLEO-N657X0-Q, and finds them by that name in `list_probes` when no serial is given. An STM32F407 board has no board name to find it by, so `--f4` names its probe. Each check prints PASS or FAIL and what it saw, and when a check fails, every call result since the previous check, whole. A board whose first call fails gets one FAIL and SKIP for the rest, since each of its other checks would fail too, at up to a minute each. The exit status is 1 when any check failed or none ran.
+
+Other options: `--skip h7` or `--skip n6` leaves out a board found by name, such as one another run is using; `--keep-images` keeps the built test images and prints where; `--cycle-port HUB:PORTS` cuts power to those ports of a hub with `uhubctl` for 10 s before the H7's checks, all of them together, such as the H7's own probe and a second probe on its debug lines.
 
 ## What it changes on the boards
 

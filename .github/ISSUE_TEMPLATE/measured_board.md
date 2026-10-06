@@ -14,9 +14,16 @@ labels: measurement
 | ram_load_base | | |
 | vector_table_addr | | |
 | flash_base | | |
+| external_loader | | |
+| requires_signing | | |
+| debug_closes_on_run | | |
 
 For example: "ran a RAM image and read its counter advancing", "console output from the new image", or "from the reference manual, not run".
 
+Leave a row empty when you do not know it.
+
 **What was run** The image, how it was linked, and what showed it started.
+
+**`board_state`'s result**, whole, as it was returned on this board.
 
 **Probe firmware and STM32CubeCLT version**

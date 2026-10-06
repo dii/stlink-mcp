@@ -151,7 +151,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 ## capture_swo (CS)
 
 - **CS1.** It is verified only when text arrives on the port; silence is unverified and names a wrong clock among the causes.
-- **CS2.** The result says trace output was left on.
+- **CS2.** The result of a capture says trace output was left on, and one that failed partway says it may have been.
 - **CS3.** It works over SWD only.
 
 ## The part tables and settings

@@ -4,7 +4,7 @@ about: STM32_Programmer_CLI -l output, for the parser, especially from an ST-LIN
 labels: parser
 ---
 
-Only on-board ST-LINK V3s and one ST-LINK/V2 have been captured so far, and the parser is tested against captured output, never invented output. A listing from any other probe is useful even when nothing looks wrong.
+The parser is tested against captured output, never invented output, so a listing from a probe whose listing has not been captured yet, an ST-LINK/V2-1 especially, is useful even when nothing looks wrong.
 
 **Probe generation and firmware**
 

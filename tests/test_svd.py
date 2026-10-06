@@ -4,7 +4,7 @@ These read the SVD files of the STM32CubeCLT install on the machine running
 them, and skip without one. The files are not copied here: each says
 Apache-2.0, but the folder they ship in carries ST's SLA0048, the agreement
 that keeps the device database out of this repository, and which governs is
-the owner's call. What they rely on was measured on 2026-10-02 against
+not settled here. What they rely on was measured on 2026-10-02 against
 STM32CubeCLT 1.22.0.
 """
 

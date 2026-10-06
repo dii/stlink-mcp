@@ -12,6 +12,6 @@ What is here, for the `faults` unit:
 - `faults/audit.md`: needs with no failing test, and behaviour with no need, found by reading the tests against the contract.
 - `faults/sources/`: the documents the contract cites, with their provenance and licences, and a note on the citations that do not resolve by path.
 
-The procedure itself, who may see what and when, is not published in this repository; these files are its record for this unit. Line numbers in them refer to the code as it was during the run, not as it is now.
+The writers wrote tests from the contract alone; the arbiter ruled on disputed clauses and seeds, and the owner, the project's author, decided what the arbiter passed up. The procedure itself, who may see what and when, is not published in this repository; these files are its record for this unit. Line numbers in them refer to the code as it was during the run, not as it is now.
 
 If you change `faults.py`, check that the text each seed finds still occurs exactly once, so every seed still injects the defect it describes. It does as of 2026-09-28, after the classification helpers were added beside `decode()`.

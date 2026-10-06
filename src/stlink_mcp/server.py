@@ -3844,7 +3844,11 @@ probe when stlink-server is installed. Hearing nothing is unverified.
             )
         text = probe.capture_swo(core_clock_hz, seconds, itm_port)
     except Exception as exc:  # noqa: BLE001
-        return failed(str(exc), **_after_failure(probe))
+        # CS2: the programmer may have set up the trace unit before failing.
+        return failed(
+            str(exc), **_after_failure(probe), trace_left_enabled="possibly",
+            trace_note="The programmer may have turned trace output on before this failed. " + _TRACE_NOTE,
+        )
 
     detail: dict[str, Any] = {
         "probe_serial": serial,

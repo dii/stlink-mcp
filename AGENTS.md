@@ -8,7 +8,7 @@ An MCP server that lets an agent program, run and inspect an STM32 target over S
 
 ### What it is
 
-An MCP server, on the current MCP 2.x SDK, that a user runs **locally on the machine their STM32 board is plugged into** and attaches to a local agent session. Once attached, the agent can detect the attached board or be told what it is, and can then **flash it, reset it and interrogate it** over whatever debug and communication interfaces that board provides: SWD, JTAG, the serial console, and later SWO or RTT.
+An MCP server, on the current MCP 2.x SDK, that a user runs **locally on the machine their STM32 board is plugged into** and attaches to a local agent session. Once attached, the agent can detect the attached board or be told what it is, and can then **flash it, reset it and interrogate it** over whatever debug and communication interfaces that board provides: SWD, JTAG, SWO and the serial console.
 
 Getting it running and attached is part of the product, not a footnote. A user should be able to install it, point an agent client at it, and have a working board conversation without reading the source.
 
@@ -73,7 +73,7 @@ Registers whose read changes state live in the same spirit in `src/stlink_mcp/re
 
 ## Tests
 
-`uv run pytest`. Parser samples are real captured tool output, never invented, because an invented sample tests the parser against your belief about the format, which is the thing most likely to be wrong. Hardware-dependent paths are not unit tested; they are exercised by hand against a board and the result recorded in the commit message.
+`uv run pytest`. Parser samples are real captured tool output, never invented, because an invented sample tests the parser against your belief about the format, which is the thing most likely to be wrong. Each test names the need it checks, from `tests/NEEDS.md`. Hardware-dependent paths are not unit tested; `tools/hwcheck` runs them against the boards, and what was run and what it showed goes in `docs/findings.md`.
 
 ## Public repo hygiene
 
