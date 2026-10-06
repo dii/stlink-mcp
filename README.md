@@ -62,7 +62,7 @@ uv sync
 uv run stlink-mcp --check
 ```
 
-`--check` reports the toolchain it found, the vendor database, any board file and the probes attached, then exits without starting the server. It lists probes the same way `list_probes` does, which neither halts nor resets them. Like every programmer call here, it first stops ST's `stlink-server` if no ST-LINK GDB server is using it (see [Holding the probe](#holding-the-probe)).
+`--check` reports the toolchain it found, the vendor database, any board file and the probes attached, then exits without starting the server. It lists probes the same way `list_probes` does, which neither halts nor resets them. On Linux, like every programmer call here, it first stops ST's `stlink-server` if no ST-LINK GDB server is running (see [Holding the probe](#holding-the-probe)).
 
 ## Use it from an MCP client
 
@@ -95,7 +95,7 @@ Every result has a status. verified: verified_by says what was observed. unverif
 
 A usual session: `list_probes`, then `board_state` to identify the board; `run_firmware` to load an ELF into RAM and start it, or `flash_firmware` to write flash. Without halting the program: `capture_console`, `capture_swo`, `sample_values`, `read_memory`, `read_fault_status`, `read_option_bytes` and `disassemble`. Halting it: `run_until`, `core_registers` and `locate_fault`. `reset_target` restarts it; `release_probe` when done.
 
-Give `probe_serial` on every call: without it each call first lists the probes, which takes a second or more and holds up every other board. Give addresses as "0x..." strings. `run_firmware` keeps holding the probe, and while it does, a core that locks up is reset, which clears its fault registers: when looking for a crash, run with `keep_probe=False`. `reset_target` and `flash_firmware` stop the holding server first and say so. A call that halts or resets the target says so. If the running program has closed the debug port, `board_state` gets back in by resetting the target; `reset_target` cannot. An argument no tool parameter has is refused, not ignored.
+Give `probe_serial` on every call: without it each call first lists the probes, which takes a second or more and holds up every other board. Give addresses as "0x..." strings. `run_firmware` keeps holding the probe, and while it does, a core that locks up is reset, which clears its fault registers: when looking for a crash, run with `keep_probe=False`. `reset_target` and `flash_firmware` stop the holding server first and say so. A call that halts or resets the target says so. If the running program has closed the debug port, `board_state` can get back in by resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up code, only a power cycle does. An argument no tool parameter has is refused, not ignored.
 ```
 
 ## Tools
@@ -107,7 +107,7 @@ Give `probe_serial` on every call: without it each call first lists the probes, 
 | `run_firmware` | Resets the target, loads an ELF into RAM and starts it | Console output after the load, or else program-counter samples inside the image. What the probe kept from before the run never counts. `failed` if GDB did not finish the load. Refuses an image not [linked for RAM](#running-an-image-from-ram). Keeps the probe afterwards unless `keep_probe` is false |
 | `flash_firmware` | Writes a raw binary (.bin), an ELF or an Intel HEX file to flash, for the board to boot | Reads every written range back; only an identical readback is `verified`. Says what its erase took beyond the image. Does not start the image. See [Writing flash](#writing-flash) |
 | `read_memory` | Reads 32-bit words, a variable by name, or a peripheral register by name, without halting or resetting the target | The words themselves. A variable is `verified` only when the target runs the ELF it was decoded with. Refuses a short read, and a register whose [read changes state](#reads-that-change-state) unless told `read_effects_ok` |
-| `sample_values` | Samples up to eight variables, addresses or registers together, a few times a second for up to 60 s, without halting the program | Each value as itself if it never changed, or as first, last, range, number of changes and when it first changed, with the core's state at each sample. `until` stops at the first sample where a condition holds. A change and change back between two samples does not show |
+| `sample_values` | Samples up to eight variables, addresses or registers together, a few times a second for up to 60 s, without halting the program | Each value as itself if it never changed, or as first, last, range, number of changes and when it first changed, with how many samples found the core running, halted or otherwise. `until` stops at the first sample where a condition holds. A change and change back between two samples does not show |
 | `core_registers` | Reads the core registers, halting the core for the read; with the ELF, the call stack with each frame's arguments and locals | The registers themselves. Says whether the core runs afterwards. Without the ELF it may reset to reach the core, and says so; with it, it refuses instead |
 | `run_until` | Runs the target until it reaches a function, a line or an address, or writes a variable, and holds the core there | `verified` only when the chip's debug fault status register names a breakpoint or a watchpoint at the stop. A time limit that runs out is `unverified`. See [Stopping the target](#stopping-the-target) |
 | `read_fault_status` | Reads and decodes the Cortex-M fault registers, without halting or resetting the target | The raw registers, a plain-English diagnosis, and the faulting address when the hardware recorded it. A clean read beside a held GDB server that caught a vector is `unverified`. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers |
@@ -123,7 +123,7 @@ Give `probe_serial` on every call: without it each call first lists the probes, 
 
 `run_firmware` loads through a GDB server and keeps it holding the probe after the program has started. The other tools reach the core beside it, in ST's shared mode, without halting it. `reset_target` and `flash_firmware` stop the server first and say so in `released_probe_first`, because a reset or a flash write made beside it breaks its GDB session. Shared mode needs ST's `stlink-server`, which STM32CubeCLT installs on the PATH. Without it the server keeps the probe to itself, and `read_memory`, `sample_values`, `read_fault_status`, `locate_fault`, `read_option_bytes`, `capture_swo`, and `disassemble` given a probe, refuse until `release_probe`.
 
-The server assumes it is the only user of the probes, since its users are agents: when no ST-LINK GDB server is running on the machine, it stops `stlink-server` before its next programmer call, so that a probe the daemon kept open can be reached. A debugger in an IDE sharing a probe with it is not supported.
+The server assumes it is the only user of the probes, since its users are agents: on Linux, when no ST-LINK GDB server is running on the machine, it stops `stlink-server` before its next programmer call, so that a probe the daemon kept open can be reached. It does not do this on other systems. A debugger in an IDE sharing a probe with it is not supported.
 
 Whether to hold is a trade, and the agent makes it: `run_firmware(keep_probe=False)` lets go as soon as the program starts, and `release_probe` lets go later.
 
@@ -162,7 +162,7 @@ Every tool call writes one line to the server's stderr, which MCP clients keep i
 
 ### SWD or JTAG
 
-Every tool that connects takes `interface`, `swd` (the default) or `jtag`, except `capture_swo`, which works over SWD only. The result reports the interface and, where the programmer connected, the clock it used. Not every probe does JTAG: a NUCLEO-H743ZI2's own STLINK-V3E does not, and answers a JTAG connect as if no target were attached, so the result's hint names that first. There is no fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.
+Every tool that connects takes `interface`, `swd` (the default) or `jtag`, except `capture_swo`, which works over SWD only, and `release_probe`, which uses the interface of the server it releases. The result reports the interface and, where the programmer connected, the clock it used. Not every probe does JTAG: a NUCLEO-H743ZI2's own STLINK-V3E does not, and answers a JTAG connect as if no target were attached, so the result's hint names that first. There is no fallback from one to the other: the tool connects over the interface it was given, and a GDB server kept for one interface is not reused for the other.
 
 ### Names instead of addresses
 
@@ -174,9 +174,9 @@ It reads a peripheral register by name, given `register` as `PERIPHERAL.REGISTER
 
 `board_state` reads the core's debug status register and samples the program counter five times, none of which halts the core, and says whether the core is running, sleeping, halted or locked up, and where it is executing, by function and line when given the ELF. The sampler works only while the debug trace unit is on, which a GDB session turns on and a reset turns off, so straight after a reset it gives nothing and says why. A core that sets neither the halt nor the lockup bit and runs no instructions between two reads is reported as `not seen running`, not guessed at.
 
-`run_firmware` uses the same samples: an image that prints nothing, or a board with no console, is `verified` when every sample lies inside the image it just loaded.
+`run_firmware` uses the same samples: an image that prints nothing, or a board with no console, is `verified` when every sample lies inside the image it just loaded. It can sample only beside a server that shares the probe, so without `stlink-server` it needs `keep_probe=False`, and the result says so.
 
-Every programmer call that connects or reads also reads the core's CPUID register, whose top byte is 0x41 on every Cortex-M part. A core asleep without debug can read back the same word at every address with no error; such a read fails with that reason rather than being returned as data.
+Identification, and every memory read, also reads the core's CPUID register, whose top byte is 0x41 on every Cortex-M part. A core asleep without debug can read back the same word at every address with no error; such a read fails with that reason rather than being returned as data.
 
 ### Reads that change state
 

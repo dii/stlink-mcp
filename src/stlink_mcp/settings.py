@@ -120,6 +120,6 @@ def check() -> None:
     if os.environ.get("STLINK_MCP_CLT_ROOT"):
         from .toolchain import ToolchainError, find_toolchain
         try:
-            find_toolchain()
+            find_toolchain().check()
         except ToolchainError as exc:
             raise SettingError(str(exc)) from None

@@ -6,7 +6,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Added
 
-- `sample_values`: variables, addresses or registers sampled together while the program runs, without halting or resetting it, each summarised (first, last, range, changes and when it first changed) with the core's state at each sample, and `until` to stop at the first sample where a condition holds.
+- `sample_values`: variables, addresses or registers sampled together while the program runs, without halting or resetting it, each summarised (first, last, range, changes and when it first changed) with how many samples found the core running or not, and `until` to stop at the first sample where a condition holds.
 - `disassemble`: a function by name, or the code around an address, from the ELF, each instruction with its source file and line and the function an inlined copy came from; at most 256 instructions, the rest of a longer function by address. A name two static functions share is refused with both, where objdump's own lookup takes the first. Given `probe_serial` it compares the target's code with the ELF's, without halting it, and is verified only when they match.
 - `read_option_bytes`: the option bytes as STM32_Programmer_CLI reads and explains them, readout protection first, then each of ST's sections with every value and its meaning. Read only: nothing in the package writes option bytes. On the STM32N6 it fails with ST's reason.
 - `flash_firmware` takes ELF and Intel HEX files, written to the addresses inside them. Every run of bytes must lie in the part's flash, from its measured base and the size its connect reports, or nothing is written; an image linked for RAM is refused, and so is any such file on the STM32N6, whose connect gives no size. `address` with such a file is refused, since the file says where.
@@ -17,13 +17,13 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - `locate_fault` and `run_until` give the instruction at the fault or the stop, disassembled from the ELF. `run_until` also stops on a function's inlined copies, since GDB breaks only on its out-of-line copy.
 - Reads that change state: `read_memory` refuses, before anything is read, a register whose read is known to change it, such as the UART, SPI, I2C and ADC data registers and the RTC's time registers, from a list kept by peripheral block and from ST's own readAction marks. `read_effects_ok` reads it anyway and says what the read did. Any other read in the peripheral range names the registers it covered. Board files take `[[read_effects]]` entries for registers the list does not cover.
 - The server sends MCP instructions when a client connects: what it is for, how to read a result, and the usual order of calls. The README carries the same text for clients that do not pass it on to their agent.
-- `tools/hwcheck` checks read effects on the H7 and the F407, writes and restores the start of the N6's external flash with `--flash`, and can power-cycle probes first with `--cycle-port`.
+- `tools/hwcheck` checks read effects on the H7 and the F407, writes and restores the flash of the H7, the F407 and the start of the N6's external flash with `--flash`, and can power-cycle probes first with `--cycle-port`.
 
 ### Changed
 
 - An argument no parameter of the tool has is refused, naming the nearest parameter, and nothing is done. The MCP SDK dropped it without a word, so a misspelt `length_bytes` read the default length.
 - The tools reach a probe a GDB server holds: the server is started in ST's shared mode, and the reading tools connect beside it without halting the core while GDB stays attached. `reset_target` and `flash_firmware` stop the server first and say so in `released_probe_first`. Shared mode needs `stlink-server`, which STM32CubeCLT installs; without it those tools refuse until `release_probe`, as before.
-- ST's `stlink-server` is stopped before a programmer call when no ST-LINK GDB server runs on the machine, so calls after `release_probe` connect directly and reach a probe the daemon kept. The server assumes it is the probes' only user.
+- On Linux, ST's `stlink-server` is stopped before a programmer call when no ST-LINK GDB server runs on the machine, so calls after `release_probe` connect directly and reach a probe the daemon kept. The server assumes it is the probes' only user.
 - `release_probe` resumes a core `run_until` left halted.
 - Every GDB server keeps the log that records the chip's reason for a stop, so `run_until` uses whichever server holds the probe rather than replacing it.
 - Tools that may reset (`board_state`, `core_registers` without `elf_path`, `run_firmware`, `flash_firmware`) try a connect under reset after a hotplug and a reset-pulse connect have failed.
@@ -35,7 +35,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - A call stack names a file as addr2line does, "src/main.c" rather than "main.c".
 - Result text is cut to what changes what the agent does: `board_state` gives each family a short `note`, and the notes on halts, watchpoints, trace, buffered console text, read effects and fault registers are a sentence or two. The connect-failure hint names the likely causes and what to do about each.
 - The tool descriptions say that `reset_target` cannot get past a debug port the running program closed and `board_state` can, and that the default `keep_probe` resets a core that locks up.
-- A wrong `STLINK_MCP_CLT_ROOT` stops start-up with the reason, as the other settings do.
+- A `STLINK_MCP_CLT_ROOT` that names no complete install stops start-up with the reason, as the other settings do.
 - `list_probes` returns the programmer's errors beside the probes it listed, since a probe this user cannot open prints an error and no entry.
 
 ### Fixed
@@ -44,10 +44,15 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - `sample_values` and `disassemble` raised on hex digits without their `0x` prefix, such as "08000000", and returned no status; they now refuse them, as `read_memory` does.
 - `run_firmware` connected, possibly resetting the board, before finding that the ELF did not exist; it now checks first, and its refusals after the connect say whether the board was reset.
 - A failed `capture_swo` did not say that the trace output may have been left on.
+- A failed `run_firmware` did not say that the GDB server it started had reset and halted the target, and `run_until`'s refusals after attaching did not say that GDB had halted the core.
+- An exception a tool did not handle, such as the programmer timing out on a hung probe in `board_state`, reached the agent with no status; it is now a `failed` result that says whether the target was touched is not known.
+- A probe serial typed in lower case was not matched to the server holding that probe, so another call could reset beside it. Serials are now taken in upper case, as the programmer prints them.
+- `release_probe` read the core's state over SWD after a run over JTAG; it now uses the interface of the server it released.
+- A run that could not be sampled because the GDB server keeps the probe to itself now says why, and that `keep_probe=False` would let it be sampled.
 - `read_memory` read an ADC's common data register without a word, though on an STM32H743 reading it cleared EOC as reading the ADC's own data register does. CDR is now on the read-effects list.
 - Tools that halt the core to read it leave it as they found it. In shared mode a halt made through the programmer outlived the command, so `locate_fault` left a running core halted; and `core_registers` through GDB resumed a core it found halted.
 - A board released while ST's `stlink-server` ran could not be reached again: the daemon kept the probe open, a plain connect failed with DEV_CONNECT_ERR, which the parser dropped, and `list_probes` showed the board with no firmware. DEV_CONNECT_ERR is now reported and explained.
-- Reads that returned wrong data with no error were reported `verified`: on an STM32H743 whose core slept on WFI, every address read 0x01010001. Every programmer call that connects or reads now also reads the core's CPUID register, and fails when its top byte is not Arm's 0x41.
+- Reads that returned wrong data with no error were reported `verified`: on an STM32H743 whose core slept on WFI, every address read 0x01010001. Identification and every memory read now also read the core's CPUID register, and fail when its top byte is not Arm's 0x41.
 - Texts an agent reads that had gone out of date: which tools refuse beside a server that keeps the probe to itself, that tool calls run one at a time (calls on different probes run together), and that `core_registers` cannot reach a held probe.
 
 ## [0.7.0] - 2026-10-03

@@ -33,8 +33,8 @@ If the problem is in how probes are listed, paste the output of `STM32_Programme
 A value is `measured` when someone ran it on the part and watched it work, and only measured values go into `FAMILIES` in `src/stlink_mcp/quirks.py`; a test fails the build otherwise. The table is keyed on the device ID the probe reports, which is coarser than a part number, so put in only values that hold for everything behind the ID, and keep anything that varies by board or by image out of it. For a part this project has not measured:
 
 1. Describe it in a board file first (see the README). Everything there is `user-stated`, and the tools will use it.
-2. `access_port`: `board_state` reports the port that reached the core and whether it was the one the table names.
-3. `ram_load_base` and `vector_table_addr`: run an image linked for RAM with `run_firmware` and confirm it started, by console output from the new image, or with `sample_values` and `until "<counter> changes"` on a counter it increments.
+2. `access_port`: a connect that answers is not enough, since a port can answer identity and still not halt the core. `core_registers`, which halts the core, working on that port is.
+3. `ram_load_base` and `vector_table_addr`: run an image linked to load at `ram_load_base`, with its vector table at `vector_table_addr`, with `run_firmware`, and confirm it started, by console output from the new image, or with `sample_values` and `until "<counter> changes"` on a counter it increments.
 4. `flash_base`: write a .bin there with `flash_firmware` and `address`, see it `verified`, then `reset_target` and see the core halt at that image's reset handler.
 5. Open an issue or pull request with the device ID, the board, each value and how you established it. A value you took from a reference manual and did not run is still worth sending, labelled as such.
 

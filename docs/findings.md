@@ -178,6 +178,7 @@ Skipping the listing exposed something it had been hiding. The programmer ignore
 | --- | --- | --- |
 | No tool reports success it did not observe; `ok` is never set by hand | Every tool's verified path, on the H7, the N6 and the F407 | The no-literal-`ok` rule is a test |
 | ST's tools overstate (the three examples) | N6, 2026-08-14 to 08-16 | |
+| A failed call says whether it reset or halted the target, or that this is not known, and an unhandled error still returns a status | Throughout, for the failures the boards produced | A run failing after its GDB server started, `run_until` refused after attaching, an unhandled exception: fake |
 | `--check` reports the toolchain, the database, any board file and the probes, and starts nothing | Linux, throughout; Windows 11, 2026-10-03 | |
 | The guide the server sends reaches the agent; the README's copy matches it | Claude Code, headless, 2026-10-05; a client that did not pass it on, the same day | The copy matching is a test |
 | An argument no parameter has is refused, naming the nearest | Over stdio against the real server, 2026-10-05 (a test, no board needed) | |

@@ -605,6 +605,25 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert_contract(r)
         assert r["status"] == result.FAILED
         assert r["gdb_server_held"] is True and "gdb_server_note" not in r, "it shares the probe"
+        # N4: the server started for the run reset and halted the target.
+        assert r["target_was_reset"] is True and r["halted_during_call"] is True
+
+    def test_a_failure_beside_a_held_server_does_not_claim_the_target_was_untouched(
+        self, bench, monkeypatch
+    ) -> None:
+        """N4. The held server's GDB connect halts the program and the load
+        resets it; a failure partway cannot say which of those happened."""
+        from stlink_mcp.runner import RunError
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf))
+
+        def gdb_times_out(*args, **kwargs):
+            raise RunError("arm-none-eabi-gdb did not finish within 180s")
+
+        monkeypatch.setattr(server, "load_and_run", gdb_times_out)
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert r["status"] == result.FAILED
+        assert r["target_was_reset"] is None and "not known" in r["reset_note"]
         bench.shares = False
         r = call("run_firmware", elf_path=str(bench.elf))
         assert "read_memory" in r["gdb_server_note"] and "release_probe" in r["gdb_server_note"]
@@ -651,6 +670,14 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         r = call("run_firmware", elf_path=str(bench.elf))
         assert_contract(r)
         assert r["status"] == result.UNVERIFIED
+
+    def test_a_run_that_could_not_be_sampled_says_why(self, bench) -> None:
+        """RF1: samples are read beside the server only when it shares the probe."""
+        bench.console_port = None
+        bench.shares = False
+        r = call("run_firmware", elf_path=str(bench.elf))
+        assert r["status"] == result.UNVERIFIED
+        assert "stlink-server" in r["unverified_because"] and "keep_probe=False" in r["unverified_because"]
 
     def test_no_console_is_unverified_rather_than_assumed_good(self, bench) -> None:
         """This one used to be ok=True with verified_by "nothing"."""
@@ -877,6 +904,30 @@ class TestRunFirmwareKeepsTheProbe:
         server._stopped["AAA1"] = {"address": "0x34180500", "function": "writer"}
         out = call("release_probe", probe_serial="AAA1")
         assert "running again" in out["core_after"]["AAA1"] and not board["halted"]
+
+    def test_the_core_is_read_over_the_interface_the_run_used(self, bench, monkeypatch) -> None:
+        """N8: after a run over JTAG, the read after the release goes over JTAG."""
+        used: list[str] = []
+
+        class _Session:
+            def __init__(self, gdb, elf, port) -> None:
+                pass
+
+            def close(self, detach: bool = True) -> None:
+                pass
+
+        class _Recording(_FakeProbe):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                used.append(self.interface)
+
+        monkeypatch.setattr(server.gdbmi, "Session", _Session)
+        bench.console_text = "up\n"
+        call("run_firmware", elf_path=str(bench.elf), interface="jtag")
+        server._stopped["AAA1"] = {"address": "0x34180500", "function": "writer"}
+        monkeypatch.setattr(server, "Probe", _Recording)
+        call("release_probe", probe_serial="AAA1")
+        assert used and set(used) == {"jtag"}
 
     def test_a_second_run_is_not_credited_with_the_first_images_output(self, bench, monkeypatch) -> None:
         """RF1. A model of the H7: the image a held server last started prints on
@@ -1507,6 +1558,8 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         assert out["status"] == result.FAILED and "another program's code" in out["error"]
         assert self._Session.closes == [True], "detached, so the core it halted runs on"
         assert self.dropped, "the server it started is stopped, leaving the probe as it was"
+        # N4: attaching halted it, if only for the call.
+        assert out["halted_during_call"] is True and out["core_after"].startswith("resumed")
 
     @pytest.mark.parametrize("args", [{"location": None}, {"watch": "g_watched"}])
     def test_one_of_location_or_watch(self, bench, args) -> None:
@@ -3077,6 +3130,38 @@ class TestThePortWarningReachesTheToolThatFails:
         p = pm.Probe(toolchain=SimpleNamespace(programmer="x"), serial="AAAA0001", try_first=1)
         p.identify()
         assert p.access_port == 0 and "nobody measured" in p.unmeasured_port_warning
+
+
+class TestAnExceptionIsStillAResult:
+    """X1: a failure no tool turned into a result reached the agent with no
+    status: a probe that hangs makes the programmer time out with ToolchainError,
+    which board_state and run_firmware did not catch."""
+
+    @pytest.mark.parametrize("name,args", [("board_state", {}), ("run_firmware", {"elf_path": None})])
+    def test_it_is_failed_and_does_not_claim_the_target_untouched(self, bench, monkeypatch, name, args) -> None:
+        from stlink_mcp.toolchain import ToolchainError
+
+        def hangs(self, allow_reset=True):
+            raise ToolchainError("STM32_Programmer_CLI did not finish within 90s")
+
+        monkeypatch.setattr(_FakeProbe, "identify", hangs)
+        out = call(name, **{k: (str(bench.elf) if v is None else v) for k, v in args.items()})
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "did not finish" in out["error"]
+        assert out["target_was_reset"] is None
+
+
+class TestOneProbeOneSpelling:
+    """A serial typed in lower case named the same probe to the programmer, but
+    the server's record of what it holds was keyed by the spelling, so another
+    call missed the held server."""
+
+    def test_a_lower_case_serial_is_the_same_probe(self, bench) -> None:
+        bench.console_text = "up\n"
+        ran = call("run_firmware", elf_path=str(bench.elf), probe_serial="aaaa0001")
+        assert ran["status"] != result.FAILED, ran.get("error")
+        # What list_probes marks as held, by the serial the programmer prints.
+        assert "AAAA0001" in server.held_serials()
 
 
 class TestAnEmptyListingSaysWhatItCanShow:

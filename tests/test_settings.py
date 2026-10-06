@@ -39,6 +39,17 @@ class TestTheInstallDirectoryIsChecked:
         with pytest.raises(settings.SettingError, match="STLINK_MCP_CLT_ROOT"):
             settings.check()
 
+    def test_an_install_without_gdb_is_refused(self, monkeypatch, tmp_path) -> None:
+        """The programmer alone runs the reads, and every run, stop and call
+        stack then fails."""
+        from stlink_mcp.toolchain import Toolchain
+        programmer = Toolchain(root=tmp_path).programmer
+        programmer.parent.mkdir(parents=True)
+        programmer.touch()
+        monkeypatch.setenv("STLINK_MCP_CLT_ROOT", str(tmp_path))
+        with pytest.raises(settings.SettingError, match="incomplete"):
+            settings.check()
+
     def test_unset_is_not_checked_at_start_up(self, monkeypatch) -> None:
         """A machine without the tools still starts, and each tool says why."""
         monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)

@@ -108,8 +108,9 @@ second or more and holds up every other board. Give addresses as "0x..." strings
 keeps holding the probe, and while it does, a core that locks up is reset, which clears its fault \
 registers: when looking for a crash, run with `keep_probe=False`. `reset_target` and \
 `flash_firmware` stop the holding server first and say so. A call that halts or resets the target \
-says so. If the running program has closed the debug port, `board_state` gets back in by resetting \
-the target; `reset_target` cannot. An argument no tool parameter has is refused, not ignored.
+says so. If the running program has closed the debug port, `board_state` can get back in by \
+resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up code, only a \
+power cycle does. An argument no tool parameter has is refused, not ignored.
 """
 
 
@@ -353,17 +354,34 @@ def _serialised(tool: _Tool) -> _Tool:
 
     @functools.wraps(tool)
     def gated(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        bound = signature.bind_partial(*args, **kwargs).arguments
+        binding = signature.bind_partial(*args, **kwargs)
+        bound = binding.arguments
+        # One spelling per probe: what the server holds, and the GDB ports and
+        # locks, are keyed by serial, and the programmer prints them upper case.
+        if takes_serial and isinstance(bound.get("probe_serial"), str):
+            bound["probe_serial"] = bound["probe_serial"].strip().upper()
         serial = bound.get("probe_serial") if takes_serial else None
         caller = _caller_from(bound.get("ctx"))
         token = _CALLER.set(caller)
         try:
             if serial is None or _listing_needed(serial, console):
                 with _GATE.exclusive():
-                    result = tool(*args, **kwargs)
+                    result = tool(*binding.args, **binding.kwargs)
             else:
                 with _GATE.shared(), _probe_lock(serial):
-                    result = tool(*args, **kwargs)
+                    result = tool(*binding.args, **binding.kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # X1: an exception the tool did not turn into a result would reach
+            # the agent with no status, and N4: what it did to the target first
+            # is not known here.
+            result = failed(
+                f"The call failed with {type(exc).__name__}: {exc}",
+                target_was_reset=None,
+                reset_note=(
+                    "This failure was not handled where it happened, so whether the "
+                    "target was reset or halted first is not known."
+                ),
+            )
         finally:
             _CALLER.reset(token)
         _trace(caller, tool.__name__, bound, result)
@@ -683,8 +701,8 @@ def list_probes(
     """List every attached ST-LINK with its firmware, board name, serial console and
 whether a GDB server holds it. Use the console mapping rather than the order of
 /dev/ttyACM*, which does not follow the probes. Listing takes about a second,
-and over ten while a GDB server holds a probe, which is why the other tools
-should be given `probe_serial`.
+and often much longer while a GDB server holds a probe, which is why the other
+tools should be given `probe_serial`.
     """
     try:
         toolchain = _toolchain()
@@ -770,7 +788,7 @@ def board_state(
 running, sleeping, halted or locked up, from program-counter samples read
 without halting it; given `elf_path`, where in the source they fall. If the
 core cannot be reached as it runs, reconnects through a reset, which restarts
-the program and gets past a debug port the program closed; `target_was_reset` says
+the program and can get past a debug port the program closed; `target_was_reset` says
 so. Never resets beside a GDB server holding the probe. `family.provenance`
 says which values were measured.
     """
@@ -909,8 +927,8 @@ def run_firmware(
     keep_probe: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Load an ELF into target RAM, reset, start it, and verify that it started: by
-its board's console output, or else by program-counter samples inside the
+    """Reset the target, load an ELF into its RAM, start it, and verify that it
+started: by its board's console output, or else by program-counter samples inside the
 image. Refuses an image not linked for RAM: vector table at board_state's
 `vector_table_addr`, every segment within 0x20000000-0x3FFFFFFF. Keeps the
 probe afterwards, and a core that then locks up is reset, clearing its fault
@@ -987,6 +1005,7 @@ release_probe says what that costs. No signing.
     buffered = ""
     gdb_server = None
     gdb_output = ""
+    stage = "before the server"
 
     try:
         # Inside the try: running out of ports raises RunError, which used to
@@ -995,10 +1014,12 @@ release_probe says what that costs. No signing.
         reused = held_server(serial) is not None
         # Family's port, not the one the programmer settled on: see
         # Probe.gdb_access_port for why those differ.
+        stage = "starting the server"
         gdb_server = acquire_server(
             toolchain, probe.gdb_access_port(info), gdb_port, serial=serial,
             interface=interface,
         )
+        stage = "held server" if reused else "new server"
         if reused and port:
             # A new server halts the running program as it starts, before the
             # console opens; a held one does not, and the previous image then
@@ -1050,7 +1071,7 @@ release_probe says what that costs. No signing.
         # probe. It used to be a bare error, and the next read_memory then
         # failed with "held" for a reason the agent had not been told.
         return failed(
-            str(exc), probe_serial=serial,
+            str(exc), probe_serial=serial, **_reset_before_a_failed_run(probe, stage),
             **_held_disclosure(serial), **_server_output(gdb_server),
         )
 
@@ -1065,6 +1086,7 @@ release_probe says what that costs. No signing.
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
+        "elf_path": str(elf),
         **_connection_fields(probe, info),
         **_held_disclosure(serial),
         **({} if keep_probe or not quirks.debug_closes_on_run else {"warning": _RELEASE_WARNING}),
@@ -1134,6 +1156,11 @@ release_probe says what that costs. No signing.
             sampled = (f"the core is executing this image's code: {core['core']['samples_inside_image']} "
                        "program-counter samples, read without halting it, lie inside the image's "
                        "loaded segments")
+    elif not text.strip():
+        detail["core_not_sampled"] = (
+            "stlink-server is not installed, so the GDB server keeps the probe to itself "
+            "and nothing samples the program counter beside it; keep_probe=False would."
+        )
 
     if console_error is not None:
         detail["console_error"] = console_error
@@ -1249,7 +1276,8 @@ def _sample_reason(detail: dict[str, Any]) -> str:
     """What the program-counter samples showed, for an unverified run."""
     core = detail.get("core")
     if not core:
-        return " core_registers() shows where the program counter is."
+        why = f" Its program counter was not sampled: {detail['core_not_sampled']}" if "core_not_sampled" in detail else ""
+        return why + " core_registers() shows where the program counter is."
     if core["state"] == "not read":
         return (f" Its program counter could not be sampled: {core['why']} "
                 "core_registers() reads it by halting the core.")
@@ -1336,6 +1364,27 @@ def _stop_holder_first(serial: str | None) -> dict[str, Any]:
     return {"released_probe_first": True}
 
 
+def _reset_before_a_failed_run(probe: Probe, stage: str) -> dict[str, Any]:
+    """N4 for a run that failed once its GDB server was asked for: a new server
+    resets and halts the target as it starts, and with a held one the program
+    is halted and the load resets it, neither of which the agent can see."""
+    if stage == "new server":
+        return {"target_was_reset": True, "halted_during_call": True, "reset_note": (
+            "The GDB server started for this run reset and halted the target as it "
+            "started; core_registers says where the core is now.")}
+    if stage in ("starting the server", "held server"):
+        return {"target_was_reset": True if probe.target_was_reset else None, "reset_note": (
+            "This failed after the run began to use a GDB server, which halts the "
+            "target and resets it before the load; whether it got that far is not known.")}
+    return {"target_was_reset": probe.target_was_reset}
+
+
+def _after_attach(was_halted: bool) -> dict[str, Any]:
+    """N4 for a run_until refused after GDB attached, which halts the core."""
+    return {"halted_during_call": True,
+            "core_after": "halted, where an earlier stop left it" if was_halted else _DETACH_RESUMED}
+
+
 def _server_output(gdb_server: Any) -> dict[str, Any]:
     """The GDB server's last lines, when a server was started, for diagnosis."""
     if gdb_server is None:
@@ -1362,6 +1411,8 @@ held.
         quirks = [_held[s][1].quirks for s in affected if s in _held]
         stops = {s: _stopped.pop(s) for s in affected if s in _stopped}
 
+    # N8: the core is read afterwards over the interface the run used.
+    interfaces = {s: getattr(held_server(s), "interface", "swd") for s in stops}
     for serial in stops:
         _resume_through_gdb(serial)
     released = release_server(probe_serial)
@@ -1374,7 +1425,7 @@ held.
     if holders:
         detail["held_by"] = holders
     if released and stops:
-        detail["core_after"] = {s: _core_state_after_release(s, stop) for s, stop in stops.items()}
+        detail["core_after"] = {s: _core_state_after_release(s, stop, interfaces[s]) for s, stop in stops.items()}
     if released and any(q.debug_closes_on_run for q in quirks):
         detail["warning"] = _RELEASE_WARNING
 
@@ -1403,13 +1454,13 @@ def _resume_through_gdb(serial: str | None) -> None:
         pass
 
 
-def _core_state_after_release(serial: str | None, stop: dict[str, Any]) -> str:
+def _core_state_after_release(serial: str | None, stop: dict[str, Any], interface: str = "swd") -> str:
     """Whether a core run_until left halted runs again once its server is gone,
     from DHCSR's S_HALT bit, read without a reset. Stopping the server resumed
     it on the H7, the F407 and the N6 (measured 2026-10-02); this observes it."""
     where = f"halted by run_until at {stop.get('address')} ({stop.get('function') or 'unknown function'})"
     try:
-        probe = Probe(_toolchain(), serial=serial, try_first=_settled_port(serial))
+        probe = Probe(_toolchain(), serial=serial, interface=interface, try_first=_settled_port(serial))
         info = probe.identify(allow_reset=False)
         if not info.connected:
             return f"{where}; whether it runs now could not be read without a reset"
@@ -1455,9 +1506,9 @@ _FLASH_MAY_HAVE_CHANGED = (
 
 def _flash_firmware(image_path: str, probe_serial: str | None, address: int | str | None,
                     interface: str, released: dict[str, Any]) -> dict[str, Any]:
-    # Checked before anything touches the probe, like run_firmware's image
-    # check: a refusal after identify() would already have connected, and
-    # possibly reset, for nothing.
+    # Checked before anything touches the probe, as run_firmware checks that
+    # its ELF exists: a refusal after identify() would already have connected,
+    # and possibly reset, for nothing.
     image = Path(image_path).expanduser()
     not_flashable = image_mod.check_flash_image(image)
     if not_flashable:
@@ -2570,6 +2621,7 @@ The rest of the chip keeps running.
             return failed(
                 f"Refused: {mismatch}, so a breakpoint would land in another program's code. "
                 "Load this ELF, or give the one the target runs.", probe_serial=serial,
+                **_after_attach(was_halted),
             )
         with _STATE:
             held_info = (_held.get(serial) or (None, None, None))[1]
@@ -2590,7 +2642,7 @@ The rest of the chip keeps running.
             session = None
             if started:
                 _drop_debug_server(serial)
-            return failed(str(exc), probe_serial=serial)
+            return failed(str(exc), probe_serial=serial, **_after_attach(was_halted))
         regs = debugger_mod.registers(session) | debugger_mod.system_registers(session)
         session.close(detach=False)
         session = None
