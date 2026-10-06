@@ -526,7 +526,7 @@ def _console_by_serial(serial: str) -> tuple[str | None, str | None, str]:
 
     udev's /dev/serial/by-id names where Linux has them. Elsewhere pyserial's
     port list, which on Windows reported the ST-LINK's serial for its COM port
-    (COM3, serial 003E00463234510337333934, STLINK-V3, 2026-10-02)."""
+    (COM3, with the STLINK-V3's own serial, 2026-10-02)."""
     if _BY_ID_DIR.is_dir():
         port, note = _udev_console(serial)
         return port, note, _UDEV
