@@ -146,7 +146,16 @@ Remove that write and the port survives across runs. With the stock image, keepi
 
 `flash_firmware` writes a .bin to the `address` you give, or to the part's flash base when that base is `measured` (see [Where addresses come from](#where-addresses-come-from)). An ELF or Intel HEX file goes to the addresses inside it, and every byte must lie in the part's flash, from its measured base and the flash size the connect reports; `address` with such a file is refused. In practice, ELF and HEX files can be written on the measured STM32F4 and STM32H7 parts; on the STM32N6, whose connect reports no flash size, and on any part whose base is not measured, write a .bin with `address`. S-record files are refused.
 
-The erase takes whole sectors, so the bytes beside the image in each 128 KB block it touches are read before and after the write, and the result names any that were erased. On a part whose flash sectors are larger than 128 KB, part of an erase can fall outside what is checked. A write that fails partway says flash may already have changed. The tool does not start the image or sign it: on a part that boots only signed images, such as the STM32N6, it writes what it is given and its `next_step` says to sign the image first.
+The erase takes whole sectors, so the bytes beside the image in each 128 KB block it touches are read before and after the write, and the result names any that were erased. On a part whose flash sectors are larger than 128 KB, part of an erase can fall outside what is checked. A write that fails partway says flash may already have changed. The tool does not start the image or sign it; its `next_step` says what the part's boot ROM needs to boot it, where that is recorded.
+
+### The STM32N6
+
+The STM32N6 has no internal flash: its boot ROM copies an image from the board's external flash into RAM and runs it.
+
+- To boot from flash (BOOT1 low), an image needs ST's header. On a part whose secure-boot fuse is not blown, a header with no keys will do: `STM32_SigningTool_CLI -bin image.bin -nk -t fsbl -hv 2.3 -align -o image-boot.bin`, then write `image-boot.bin`.
+- The boot ROM leaves the debug port closed in flash boot. For the debugger to reach a flash-booted image, the image must open it as its first act, on every boot, in development builds only: ST's `HAL_BSEC_ConfigDebug` and `HAL_BSEC_UnlockDebug`, which write 0xB451B400 to `BSEC_DBGCR` and 0xB4 to `BSEC_AP_UNLOCK`. After a reset, the image opens it again and the probe gets back in.
+- Write the external flash in development boot (BOOT1 high). After a flash boot, ST's flash loader hangs the core and only a power cycle brings the board back, so `flash_firmware` reads the boot pins first and refuses in flash boot. `board_state` reports the boot mode it reads.
+- ST's start-up code turns off a clock the debug port needs, which closes the port once the probe lets go; see [Holding the probe](#holding-the-probe).
 
 ### More than one board
 
@@ -266,6 +275,7 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * **Serial number not found, or old firmware.** STM32CubeProgrammer refuses ST-LINK firmware that is too old. STLinkUpgrade, in the STM32CubeCLT install, updates it (select the probe, Open in update mode, Upgrade).
 * **run_firmware refuses the image.** It has to be linked for RAM; see [Running an image from RAM](#running-an-image-from-ram).
 * **flash_firmware refuses an ELF or HEX file.** See [Writing flash](#writing-flash): on most parts, write a .bin with `address`.
+* **An STM32N6 booted from flash cannot be reached.** The image has to open the debug port itself, or the board has to be in development boot; see [The STM32N6](#the-stm32n6).
 * **Other tools report the probe as held.** A GDB server holds the probe and `stlink-server` is not installed, so nothing can connect beside it. Install STM32CubeCLT's `stlink-server`, or call `release_probe`. After a program that closes the debug port, such as ST's stock start-up code on an STM32N6, the board may then need a power cycle before the next run.
 
 ## Limitations

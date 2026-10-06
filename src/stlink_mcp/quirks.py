@@ -101,6 +101,16 @@ class FamilyQuirks:
     leaves this None.
     """
 
+    boot_pins: tuple[int, int, int, int] | None = None
+    """Where the part reports its boot pins, to tell development boot from flash
+    boot: (clock enable register, its bit, boot pin status register, the bits
+    that read set in development boot). The status register reads only while that
+    clock runs, so with the clock off the boot mode is unknown, not flash boot.
+
+    On the STM32N6 ST's external loader hangs the core once the board has booted
+    from its flash (2026-10-06), so the write path refuses there before the
+    loader runs (FF8)."""
+
     debug_closes_on_run: bool | None = None
     """Whether firmware typically leaves the debug access port unreachable.
 
@@ -158,6 +168,10 @@ class FamilyQuirks:
     agent_note: str | None = None
     """For the agent, in board_state: only what changes what it does with this
     family, in a sentence or two. A board file's own `notes` stand in for it."""
+
+    flash_boot_note: str | None = None
+    """For the agent, in flash_firmware's next step: what this family's boot ROM
+    needs to boot the written image, and to debug it once booted (FF9)."""
 
     provenance: Mapping[str, str] = field(default_factory=dict)
     """Per-field override of where a value came from, keyed by field name.
@@ -224,7 +238,10 @@ class FamilyQuirks:
         return {
             f.name: self.provenance_of(f.name)
             for f in fields(self)
-            if f.name not in ("name", "notes", "agent_note", "provenance", "default_provenance")
+            # boot_pins is how the tools read a fact, not one an agent acts on;
+            # board_state reports the boot mode it reads instead (BS7).
+            if f.name not in ("name", "notes", "agent_note", "flash_boot_note", "boot_pins",
+                              "provenance", "default_provenance")
             and getattr(self, f.name) is not None
         }
 
@@ -342,14 +359,26 @@ FAMILIES: dict[str, FamilyQuirks] = {
         vector_table_addr=0x34180400,
         flash_base=0x70000000,
         external_loader="MX25UM51245G_STM32N6570-NUCLEO.stldr",
-        requires_signing=True,
+        requires_signing=False,
+        # RCC_APB4HENR bit 0 (SYSCFG clock); SYSCFG_BOOTSR bit 1 (BOOT1): 0x2 in
+        # development boot and 0x0 in flash boot, read through the probe 2026-10-06.
+        boot_pins=(0x56028278, 0x1, 0x56008100, 0x2),
         debug_closes_on_run=True,
         agent_note=(
-            "No internal flash: booting from the external flash at 0x70000000 needs a "
-            "signed image. Core debug is on access port 1. An image built on ST's start-up "
-            "code (SystemInit) turns the SYSCFG clock off, which closes the debug port once "
-            "the probe is let go, until a power cycle; while run_firmware holds the probe "
-            "it stays reachable, and an image without that one write keeps it open."
+            "Core debug is on access port 1. ST's start-up code (SystemInit) turns the "
+            "SYSCFG clock off, which closes the debug port once the probe lets go, until "
+            "a power cycle. Booted from flash (BOOT1 low), the debug port stays closed "
+            "unless the image opens it as its first act, in development builds only: "
+            "HAL_BSEC_ConfigDebug and HAL_BSEC_UnlockDebug, that is 0xB451B400 to "
+            "BSEC_DBGCR (0x56009E8C) and 0xB4 to BSEC_AP_UNLOCK (0x56009E90), every boot. "
+            "The external flash is written in development boot (BOOT1 high) only."
+        ),
+        flash_boot_note=(
+            "The boot ROM boots from flash, with BOOT1 low and after a power cycle, an "
+            "image carrying ST's header; on a part whose secure-boot fuse is not blown "
+            "a header with no keys will do: STM32_SigningTool_CLI -bin image.bin -nk "
+            "-t fsbl -hv 2.3 -align -o image-boot.bin, and write image-boot.bin. To debug "
+            "it once booted, the image must open debug (board_state's family note says how)."
         ),
         notes=(
             "No internal flash. The boot ROM reads a signed FSBL out of external "
@@ -357,9 +386,20 @@ FAMILIES: dict[str, FamilyQuirks] = {
             "Core debug is on access port 1, and the trap is that AP0 still "
             "reports device ID, name, CPU and revision perfectly well while being "
             "unable to halt the core, so identifying the target does not tell you "
-            "the port is right. The debug port is only open in DEV boot mode "
-            "(BOOT1 high); in the standalone boot configuration a connect fails "
-            "with 'Unable to get core ID', which is expected and not a fault. "
+            "the port is right. The boot ROM opens debug in development boot "
+            "(BOOT1 high), leaving BSEC_DBGCR at 0xB451B400 and BSEC_AP_UNLOCK at "
+            "0xB4; in flash boot (BOOT1 low) it leaves debug closed, and a connect "
+            "fails with 'Unable to get core ID' unless the image writes those two "
+            "values itself, which on 2026-10-06 let the probe reach a flash-booted "
+            "image with no reset, and again after a software or hardware reset. "
+            "Booting from flash: an image with ST's header added with no keys "
+            "(STM32_SigningTool_CLI -nk -t fsbl -hv 2.3 -align) booted on this "
+            "board, whose secure-boot fuse is not blown, so requires_signing is "
+            "False; an image with no header was not tried. ST's external loader "
+            "hangs the core once the board has booted from flash (HAL_XSPI_DeInit, "
+            "its first access to the flash controller), the session is lost, and "
+            "only a power cycle recovers the board; the cause is not established "
+            "(docs/findings.md, 2026-10-06), so writes need development boot. "
             "ST'S OWN SystemInit CLOSES AP1, and it is one line. At the end of "
             "system_stm32n6xx_fsbl.c: `RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;`. "
             "SystemInit turns the SYSCFG clock on early to write INITSVTORCR and "

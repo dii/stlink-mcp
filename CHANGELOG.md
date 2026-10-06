@@ -16,6 +16,8 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - `board_state` says whether the core runs, is halted, locked up or sleeping, from DHCSR, with program-counter samples read without halting it; given `elf_path`, where in the source they fall.
 - `locate_fault` and `run_until` give the instruction at the fault or the stop, disassembled from the ELF. `run_until` also stops on a function's inlined copies, since GDB breaks only on its out-of-line copy.
 - Reads that change state: `read_memory` refuses, before anything is read, a register whose read is known to change it, such as the UART, SPI, I2C and ADC data registers and the RTC's time registers, from a list kept by peripheral block and from ST's own readAction marks. `read_effects_ok` reads it anyway and says what the read did. Any other read in the peripheral range names the registers it covered. Board files take `[[read_effects]]` entries for registers the list does not cover.
+- `board_state` says whether an STM32N6 is in development boot or flash boot, from its boot pins.
+- `tools/hwcheck/n6_flash_boot.py`: boots the N6 from its external flash with an image that opens debug, and checks the tools around it, a step per position of the BOOT1 switch.
 - The server sends MCP instructions when a client connects: what it is for, how to read a result, and the usual order of calls. The README carries the same text for clients that do not pass it on to their agent.
 - `tools/hwcheck` checks read effects on the H7 and the F407, writes and restores the flash of the H7, the F407 and the start of the N6's external flash with `--flash`, and can power-cycle probes first with `--cycle-port`.
 
@@ -36,6 +38,8 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - Result text is cut to what changes what the agent does: `board_state` gives each family a short `note`, and the notes on halts, watchpoints, trace, buffered console text, read effects and fault registers are a sentence or two. The connect-failure hint names the likely causes and what to do about each.
 - The tool descriptions say that `reset_target` cannot get past a debug port the running program closed and `board_state` can, and that the default `keep_probe` resets a core that locks up.
 - A `STLINK_MCP_CLT_ROOT` that names no complete install stops start-up with the reason, as the other settings do.
+- On an STM32N6 in flash boot, `flash_firmware` refuses before ST's flash loader runs, since that loader then hangs the core until a power cycle.
+- The STM32N6 entry no longer says it boots only signed images: an image with ST's header and no keys boots on a part whose secure-boot fuse is not blown. `flash_firmware`'s next step and `board_state`'s note say how to add that header and how to open debug in the image; the connect-failure and reset hints say that a flash-booted N6 stays closed unless its image opens debug.
 - `list_probes` returns the programmer's errors beside the probes it listed, since a probe this user cannot open prints an error and no entry.
 
 ### Fixed

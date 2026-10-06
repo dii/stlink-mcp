@@ -487,9 +487,9 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
         "The running program may have closed the debug port: taken the SWD pins, "
         "stopped a clock or slept without debug. board_state gets past it by "
         "reconnecting through a reset, which restarts the program; reset_target does not.",
-        "The boot configuration may keep the debug port closed: parts that boot "
-        "from external memory open it only in the development boot mode set by a "
-        "BOOT pin or switch.",
+        "The boot configuration may keep the debug port closed: an STM32N6 booted "
+        "from its flash (BOOT1 low) keeps it closed unless the running image opens "
+        "it, and development boot (BOOT1 high) opens it.",
         "Another program may have the probe open: an IDE, OpenOCD, or a GDB server "
         "this server did not start, which it cannot see.",
         "The target may be unpowered or held in reset: list_probes gives access_ports "

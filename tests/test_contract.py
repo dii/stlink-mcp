@@ -2595,14 +2595,55 @@ class TestFlashIsReadBackBeforeItIsVerified:
         assert out["status"] == result.VERIFIED
         assert "read back 16 bytes" in out["verified_by"]
 
-    def test_a_part_that_boots_only_signed_images_is_told_to_sign(self, bench) -> None:
-        """The bench is an STM32N6, whose boot ROM starts only a signed image. Its
-        next step said only to set the boot switches (found 2026-10-03, writing
-        the N6's external flash for the first time)."""
+    def test_the_next_step_says_what_the_boot_rom_needs(self, bench) -> None:
+        """FF9. The bench is an STM32N6. Its next step said only to set the boot
+        switches (2026-10-03), then to sign the image; measured 2026-10-06, the boot
+        ROM wants ST's header and no signature, and the image must open debug."""
         bench.bin.write_bytes(bytes(range(16)))
         out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
-        assert out["status"] == result.VERIFIED and out["signing_required"] is True
-        assert "sign it" in out["next_step"]
+        assert out["status"] == result.VERIFIED and out["signing_required"] is False
+        assert "-nk" in out["next_step"] and "open debug" in out["next_step"]
+
+
+class TestTheBootPinsAreReadBeforeTheLoaderRuns:
+    """FF8 and BS7. On the STM32N6, ST's external loader hung the core once the
+    board had booted from its flash, and only a power cycle brought the board back
+    (2026-10-06). SYSCFG_BOOTSR read 0x2 in development boot and 0x0 in flash
+    boot; it reads only while the SYSCFG clock (RCC_APB4HENR bit 0) runs."""
+
+    CLOCK, PINS = 0x56028278, 0x56008100
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        yield
+        _FakeProbe.memory = {}
+
+    def _pins(self, clock: int, pins: int) -> None:
+        _FakeProbe.memory = {self.CLOCK: clock, self.PINS: pins}
+
+    def test_flash_boot_is_refused_before_the_loader_runs(self, bench, monkeypatch) -> None:
+        self._pins(1, 0)
+        monkeypatch.setattr(_FakeProbe, "program_flash", lambda *a: pytest.fail("the loader ran to write"))
+        monkeypatch.setattr(_FakeProbe, "read_back", lambda *a: pytest.fail("the loader ran to read"))
+        bench.bin.write_bytes(bytes(range(16)))
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and out["boot_mode"] == "flash"
+        assert "development boot" in out["next_step"]
+
+    @pytest.mark.parametrize("clock,pins,mode", [(1, 2, "development"), (0, 0, None)])
+    def test_otherwise_it_writes(self, bench, clock, pins, mode) -> None:
+        """Development boot writes; a stopped clock is an unknown, not flash boot."""
+        self._pins(clock, pins)
+        bench.bin.write_bytes(bytes(range(16)))
+        out = call("flash_firmware", image_path=str(bench.bin), address="0x70000000")
+        assert out["status"] == result.VERIFIED
+
+    @pytest.mark.parametrize("clock,pins,mode", [(1, 2, "development"), (1, 0, "flash"), (0, 2, None)])
+    def test_board_state_says_the_boot_mode_it_read(self, bench, clock, pins, mode) -> None:
+        self._pins(clock, pins)
+        out = call("board_state")
+        assert out.get("boot_mode") == mode
 
     def test_flash_that_differs_from_the_image_fails_and_says_where(self, bench) -> None:
         bench.bin.write_bytes(bytes(range(16)))

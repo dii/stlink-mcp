@@ -103,8 +103,11 @@ class TestSTM32N6:
         """The 0x400 gap is the signing header the boot ROM prepends."""
         assert n6.vector_table_addr == n6.ram_load_base + 0x400
 
-    def test_flash_boot_requires_signing(self, n6: quirks.FamilyQuirks) -> None:
-        assert n6.requires_signing is True
+    def test_flash_boot_needs_the_header_and_not_a_signature(self, n6: quirks.FamilyQuirks) -> None:
+        """FF9. Measured 2026-10-06: an image with ST's header added with no keys
+        booted from flash on a part whose secure-boot fuse is not blown."""
+        assert n6.requires_signing is False
+        assert "-nk" in n6.flash_boot_note and "open debug" in n6.flash_boot_note
 
 
 class TestProvenanceCannotQuietlyClaimAMeasurement:
@@ -169,7 +172,8 @@ class TestProvenanceCannotQuietlyClaimAMeasurement:
         from "nobody has said", and the provenance model then reports an origin
         for a claim the entry never made."""
         assert quirks.FamilyQuirks(name="x", access_port=0).requires_signing is None
-        assert quirks.for_device_id(0x486).requires_signing is True
+        assert quirks.for_device_id(0x486).requires_signing is False
+        assert quirks.for_device_id(0x486).provenance_of("requires_signing") == quirks.MEASURED
         assert quirks.DEFAULT.requires_signing is False
 
 

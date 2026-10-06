@@ -1,12 +1,18 @@
 """Does an STM32N6 booted from its external flash stay debuggable when its
-first-stage boot loader opens debug, and can it be rewritten without the BOOT1
-switch? A bench measurement in steps, each run with the switch where it says.
+first-stage boot loader opens debug, and does flash_firmware keep ST's loader
+away from it there? A bench measurement in steps, each run with the switch where it says.
 
-    uv run python tools/hwcheck/n6_flash_boot.py write    # BOOT1 in development boot
-    uv run python tools/hwcheck/n6_flash_boot.py boot     # BOOT1 in flash boot, power cycled
-    uv run python tools/hwcheck/n6_flash_boot.py rewrite  # still flash boot
-    uv run python tools/hwcheck/n6_flash_boot.py closed   # still flash boot
-    uv run python tools/hwcheck/n6_flash_boot.py recover  # BOOT1 in development boot, power cycled
+    uv run python tools/hwcheck/n6_flash_boot.py write         # BOOT1 in development boot
+    uv run python tools/hwcheck/n6_flash_boot.py boot          # BOOT1 in flash boot, power cycled
+    uv run python tools/hwcheck/n6_flash_boot.py refuse        # still flash boot
+    uv run python tools/hwcheck/n6_flash_boot.py write-closed  # development boot, power cycled
+    uv run python tools/hwcheck/n6_flash_boot.py closed        # flash boot, power cycled
+    uv run python tools/hwcheck/n6_flash_boot.py recover       # development boot, power cycled
+
+`refuse` checks that flash_firmware will not run ST's loader in flash boot,
+which on 2026-10-06 hung the core until a power cycle (docs/findings.md), and
+that a reset brings the image back with debug open. The `closed` pair is the
+control: an image that does not open debug keeps the probe out.
 
 Before each step, say where the switch is; each step ends by saying what to
 do next. The images are build_images.py's n6_boot_open, n6_boot_open_b and
@@ -39,8 +45,10 @@ BSEC = {"bsec_sr": 0x56009E40, "dbgcr": 0x56009E8C, "ap_unlock": 0x56009E90, "hd
         "boot_pins": 0x56008100}
 NEXT = {
     "write": "Set BOOT1 to flash boot (low), power-cycle the board, then run: boot",
-    "boot": "Leave BOOT1 in flash boot, then run: rewrite",
-    "rewrite": "Leave BOOT1 in flash boot, then run: closed",
+    "boot": "Leave BOOT1 in flash boot, then run: refuse",
+    "refuse": "For the control, set BOOT1 to development boot (high), power-cycle, run: write-closed; "
+              "or, to finish, the same and run: recover",
+    "write-closed": "Set BOOT1 to flash boot (low), power-cycle the board, then run: closed",
     "closed": "Set BOOT1 to development boot (high), power-cycle the board, then run: recover",
     "recover": "Leave BOOT1 in development boot, where tools/hwcheck expects it.",
 }
@@ -87,7 +95,8 @@ async def _runs(server: Server, serial: str) -> tuple[int | None, int | None]:
     return _counter(first, N6_COUNTER), _counter(second, N6_COUNTER)
 
 
-async def write(server: Server, serial: str, boot: dict[str, Path], keep: Path, report: Report) -> None:
+async def write(server: Server, serial: str, boot: dict[str, Path], keep: Path, report: Report,
+                image: str = "n6_boot_open") -> None:
     await server.call("release_probe", probe_serial=serial)
     board = await server.call("board_state", probe_serial=serial)
     report.check(board["status"] == "verified" and board.get("access_port") == 1,
@@ -102,9 +111,10 @@ async def write(server: Server, serial: str, boot: dict[str, Path], keep: Path, 
             return
         backup.write_bytes(probe.read_back(BASE, KEPT, N6_LOADER))
         print(f"      saved the first 128 KB of the external flash to {backup}", flush=True)
-    out = await server.call("flash_firmware", image_path=str(boot["n6_boot_open"]), probe_serial=serial)
-    report.check(out["status"] == "verified", "development boot: the image that opens debug is written at 0x70000000",
-                 _why(out))
+    report.check(board.get("boot_mode") == "development", "development boot: board_state reads it from the boot pins",
+                 f"boot_mode {board.get('boot_mode')}")
+    out = await server.call("flash_firmware", image_path=str(boot[image]), probe_serial=serial)
+    report.check(out["status"] == "verified", f"development boot: {image} is written at 0x70000000", _why(out))
 
 
 async def boot_step(server: Server, serial: str, report: Report) -> None:
@@ -116,32 +126,33 @@ async def boot_step(server: Server, serial: str, report: Report) -> None:
     report.check(board["status"] == "verified" and board.get("access_port") == 1,
                  "flash boot: board_state reaches the core the image opened",
                  f"{_why(board)}; target_was_reset {board.get('target_was_reset')}")
+    report.check(board.get("boot_mode") == "flash", "flash boot: board_state reads it from the boot pins",
+                 f"boot_mode {board.get('boot_mode')}")
     a, b = await _runs(server, serial)
     report.check(a is not None and b is not None and b > a, "flash boot: the counter advances, read by the probe",
                  f"{a and hex(a)} then {b and hex(b)}")
     await _registers(server, serial)
 
 
-async def rewrite(server: Server, serial: str, boot: dict[str, Path], report: Report) -> None:
+async def refuse(server: Server, serial: str, boot: dict[str, Path], report: Report) -> None:
     out = await server.call("flash_firmware", image_path=str(boot["n6_boot_open_b"]), probe_serial=serial)
-    report.check(out["status"] == "verified", "flash boot: flash_firmware writes a second image without the switch",
-                 f"{_why(out)}; target_was_reset {out.get('target_was_reset')}")
+    report.check(out["status"] == "failed" and out.get("boot_mode") == "flash",
+                 "flash boot: flash_firmware refuses before ST's loader runs", _why(out))
+    a, b = await _runs(server, serial)
+    report.check(a is not None and b is not None and b > a, "flash boot: the image still runs after the refusal",
+                 f"{a and hex(a)} then {b and hex(b)}")
     reset = await server.call("reset_target", probe_serial=serial)
     print(f"      reset_target: {_why(reset)}", flush=True)
     text = await _console(server, serial)
-    ticks = _ticks(text, "n6 boot open B")
-    report.check(bool(ticks), "flash boot: the second image boots after the reset (its console)",
+    ticks = _ticks(text, "n6 boot open A")
+    report.check(bool(ticks) and min(ticks) < 50, "flash boot: after the reset the image boots again (its console)",
                  f"ticks {ticks[:3]}..." if ticks else f"heard {text[:160]!r}")
     board = await server.call("board_state", probe_serial=serial)
     report.check(board["status"] == "verified" and board.get("access_port") == 1,
                  "flash boot: the probe reaches the core again after the reset", _why(board))
 
 
-async def closed(server: Server, serial: str, boot: dict[str, Path], report: Report) -> None:
-    out = await server.call("flash_firmware", image_path=str(boot["n6_boot_closed"]), probe_serial=serial)
-    report.check(out["status"] == "verified", "flash boot: the image that does not open debug is written", _why(out))
-    reset = await server.call("reset_target", probe_serial=serial)
-    print(f"      reset_target: {_why(reset)}", flush=True)
+async def closed(server: Server, serial: str, report: Report) -> None:
     text = await _console(server, serial)
     ticks = _ticks(text, "n6 boot closed")
     report.check(bool(ticks), "flash boot: it boots (its console)",
@@ -183,10 +194,12 @@ async def _run(args: argparse.Namespace) -> int:
             await write(server, serial, boot, Path(args.keep), report)
         elif args.step == "boot":
             await boot_step(server, serial, report)
-        elif args.step == "rewrite":
-            await rewrite(server, serial, boot, report)
+        elif args.step == "refuse":
+            await refuse(server, serial, boot, report)
+        elif args.step == "write-closed":
+            await write(server, serial, boot, Path(args.keep), report, image="n6_boot_closed")
         elif args.step == "closed":
-            await closed(server, serial, boot, report)
+            await closed(server, serial, report)
         else:
             await recover(server, serial, Path(args.keep), report)
     print(f"\n{len(report.rows) - report.failed} of {len(report.rows)} as predicted. Next: {NEXT[args.step]}", flush=True)

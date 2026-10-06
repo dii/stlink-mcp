@@ -33,6 +33,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **BS3.** The core's state comes from DHCSR without halting it, and "running" needs evidence that instructions retired.
 - **BS4.** Program-counter samples are placed in the source when an ELF is given.
 - **BS5.** Every family value carries its provenance, and only `measured` ones are presented as seen to work.
+- **BS7.** On a part whose boot pins it knows how to read, it says whether the board is in development boot or flash boot, and says nothing when it cannot read them.
 - **BS6.** A core found halted by a vector catch beside a held server is reported as most likely a lockup the server reset, with `keep_probe=False` as the way to keep the fault.
 
 ## run_firmware (RF)
@@ -59,6 +60,8 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **FF5.** It stops a server holding the probe first, and says so.
 - **FF6.** Every run of bytes an ELF or HEX file writes lies inside the part's flash, from its measured base for the connect's "NVM size"; anything else, or a part whose connect gives no size, is refused before anything is written, and so is `address` with such a file, since the file says where.
 - **FF7.** A write that fails partway says flash may already have changed.
+- **FF8.** On a part whose external loader hangs the core once the board has booted from that flash (the STM32N6), a write is refused before the loader runs when the boot pins read flash boot, saying to set development boot; the board keeps running.
+- **FF9.** After a write, the next step says what the part's boot ROM needs to boot the image and to debug it there, where the family records it.
 
 ## read_memory (RM)
 

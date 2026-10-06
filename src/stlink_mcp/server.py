@@ -897,6 +897,9 @@ says which values were measured.
         stopped = _stopped.get(serial)
     if not cached:
         state["core"] = _core_report(toolchain, probe, elf_path)
+        mode, _ = _boot_mode(probe, quirks)
+        if mode:
+            state["boot_mode"] = mode
     elif stopped:
         state["core"] = {"state": "halted", "by": "run_until", "at": stopped}
     else:
@@ -1364,6 +1367,23 @@ def _stop_holder_first(serial: str | None) -> dict[str, Any]:
     return {"released_probe_first": True}
 
 
+def _boot_mode(probe: Probe, quirks: FamilyQuirks) -> tuple[str | None, str | None]:
+    """BS7: "development" or "flash" from the part's boot pins, or None and why
+    not. Read without halting; the status register reads only while its clock
+    runs, so a stopped clock is an unknown, not flash boot."""
+    if quirks.boot_pins is None:
+        return None, None
+    clock_register, clock_bit, pins_register, development_bits = quirks.boot_pins
+    try:
+        words = probe.read_ranges([(clock_register, 4), (pins_register, 4)])
+    except Exception as exc:  # noqa: BLE001
+        return None, f"the boot pins could not be read: {exc}"
+    if not words.get(clock_register, 0) & clock_bit:
+        return None, "the boot pin register's clock is off"
+    pins = words.get(pins_register, 0)
+    return ("development" if pins & development_bits == development_bits else "flash"), None
+
+
 def _reset_before_a_failed_run(probe: Probe, stage: str) -> dict[str, Any]:
     """N4 for a run that failed once its GDB server was asked for: a new server
     resets and halts the target as it starts, and with a held one the program
@@ -1594,6 +1614,18 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
     else:
         runs = [image_mod.Run(target_address, image.read_bytes())]
 
+    # FF8: on the STM32N6, ST's external loader hangs the core once the board has
+    # booted from its flash; the session is lost and only a power cycle brings the
+    # board back (2026-10-06). So the boot pins are read before the loader runs.
+    if quirks.external_loader is not None and _boot_mode(probe, quirks)[0] == "flash":
+        return failed(
+            f"The boot pins read flash boot. On {quirks.name}, ST's external loader hangs "
+            "the core once the board has booted from its flash, and only a power cycle "
+            "brings the board back, so nothing was written and the loader did not run.",
+            next_step="Set development boot (BOOT1 high), power-cycle the board, and write again.",
+            probe_serial=serial, boot_mode="flash", **_after_failure(probe),
+        )
+
     # The erase takes whole sectors, so a small image takes the rest of its last
     # one with it: 16 KB written at 0x70000000 on an STM32N6 erased 64 KB, and
     # the result said nothing of it (2026-10-03). The bytes beside the image in
@@ -1617,12 +1649,13 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
         "signing_required": quirks.requires_signing,
         "programmer_output": output.strip().splitlines()[-3:],
         "next_step": (
-            "This does not start the image, and this part boots only a signed image, which "
-            "this tool does not make: sign it (ST's STM32_SigningTool_CLI), write the signed "
-            "file, set the board's boot configuration to boot from flash and reset it."
-            if quirks.requires_signing else
-            "This does not start the image. Set the board's boot configuration to "
-            "boot from flash and reset it."
+            "This does not start the image. "
+            + (quirks.flash_boot_note if quirks.flash_boot_note else
+               "This part boots only a signed image, which this tool does not make: sign it "
+               "(ST's STM32_SigningTool_CLI), write the signed file, set the board's boot "
+               "configuration to boot from flash and reset it."
+               if quirks.requires_signing else
+               "Set the board's boot configuration to boot from flash and reset it.")
         ),
     }
 
@@ -2970,10 +3003,11 @@ def _reset_target(probe_serial: str | None, interface: str, released: dict[str, 
         )
         if quirks.debug_closes_on_run:
             hint = (
-                f"On {quirks.name} the debug access port is most likely to have "
-                "been closed ALREADY, by an image that ran before this call, and "
-                "a reset does not reopen it on this family. Only removing power "
-                "does. This is not evidence that the reset failed, and it is not "
+                f"On {quirks.name} the debug access port was most likely closed "
+                "ALREADY: by ST's start-up code in an image that ran before this "
+                "call, which only removing power undoes, or, booted from flash, by "
+                "an image that does not open debug, which development boot gets "
+                "past. This is not evidence that the reset failed, and it is not "
                 "evidence that it worked."
             )
         else:

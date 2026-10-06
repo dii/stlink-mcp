@@ -694,10 +694,10 @@ async def check_n6_flash(server: Server, serial: str, report: Report) -> None:
         out = await server.call("flash_firmware", image_path=str(pattern), probe_serial=serial)
         erased = out.get("erased_beyond_image") if isinstance(out.get("erased_beyond_image"), dict) else {}
         report.check(out["status"] == "verified" and "identical" in out.get("verified_by", "")
-                     and "sign it" in out.get("next_step", "")
+                     and "-nk" in out.get("next_step", "")
                      and (erased.get("from"), erased.get("to")) == ("0x70004000", "0x70010000"),
                      "N6 flash: flash_firmware writes the external flash through its loader, verified by "
-                     "reading back, says to sign, and reports the rest of the 64 KB sector erased",
+                     "reading back, says what the boot ROM needs, and reports the rest of the 64 KB sector erased",
                      f"{_why(out)}; erased {erased}")
     finally:
         try:
@@ -717,6 +717,8 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     board = await server.call("board_state", probe_serial=s)
     report.check(board["status"] == "verified" and board["family"]["name"] == "STM32N6" and board.get("access_port") == 1,
                  "N6: board_state identifies the family on AP1", _why(board))
+    report.check(board.get("boot_mode") == "development",
+                 "N6: board_state reads development boot from the boot pins", f"boot_mode {board.get('boot_mode')}")
     if not _answered(board, "N6"):
         return False
     printing = await server.call("run_firmware", elf_path=str(images.elf["n6_print"]), probe_serial=s,
