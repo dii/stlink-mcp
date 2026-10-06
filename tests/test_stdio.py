@@ -121,3 +121,11 @@ def test_the_readme_gives_users_the_same_guide_the_server_sends() -> None:
     from stlink_mcp.server import INSTRUCTIONS
     readme = (Path(__file__).parent.parent / "README.md").read_text()
     assert INSTRUCTIONS.strip() in readme
+
+
+def test_the_guide_names_every_tool() -> None:
+    """X9. A client that shows the agent no tool descriptions leaves the guide
+    as the only place the agent learns a tool exists."""
+    from stlink_mcp import server
+    missing = [name for name in server.mcp._tool_manager._tools if f"`{name}`" not in server.INSTRUCTIONS]
+    assert not missing, f"INSTRUCTIONS does not name {missing}"

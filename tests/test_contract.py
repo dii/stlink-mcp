@@ -672,6 +672,16 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         assert r["status"] == result.FAILED
         assert "not linked" in r["error"] and "0x08000000" in r["error"]
         assert "vector_table_addr" in r
+        # RF3: the connect before this refusal may have reset the board.
+        assert "target_was_reset" in r
+
+    def test_a_missing_elf_is_refused_before_the_board_is_touched(self, bench, monkeypatch) -> None:
+        """RF3: a connect may reset the target, so a call that cannot run must
+        not connect at all."""
+        monkeypatch.setattr(_FakeProbe, "identify", lambda self, allow_reset=True: pytest.fail("the probe was touched"))
+        r = call("run_firmware", elf_path=str(bench.elf) + ".missing")
+        assert_contract(r)
+        assert r["status"] == result.FAILED and "No such ELF" in r["error"]
 
     def test_a_flash_segment_beside_a_ram_vector_table_is_refused_before_any_load(
         self, bench, monkeypatch
@@ -927,6 +937,20 @@ class TestRunFirmwareKeepsTheProbe:
         call("run_firmware", elf_path=str(bench.elf))
         out = call("read_memory")
         assert out["status"] == result.FAILED and "stlink-server" in out["error"]
+
+    def test_the_note_names_every_tool_that_refuses(self, bench) -> None:
+        """N3: the note is how an agent learns which calls will refuse, so it
+        names each tool that goes through the held-probe refusal, and no other."""
+        import inspect
+        bench.shares = False
+        bench.console_text = "up\n"
+        note = call("run_firmware", elf_path=str(bench.elf))["gdb_server_note"]
+        tools = server.mcp._tool_manager._tools
+        refusing = {name for name, tool in tools.items()
+                    if any(f"{helper}(" in inspect.getsource(tool.fn)
+                           for helper in ("_held_refusal", "_probe_for_read", "_compare_with_target"))}
+        named = {name for name in tools if re.search(rf"\b{name}\b", note)}
+        assert refusing and named - {"release_probe"} == refusing
 
 
 class TestALockupUnderAHeldServerIsNamed:
@@ -2889,6 +2913,21 @@ class TestLocateFaultFollowsTheFrame:
         out = call("locate_fault")
         assert out["status"] == result.FAILED and "restarted" in out["error"]
 
+    def test_it_never_asks_for_a_resetting_connect(self, bench, monkeypatch) -> None:
+        """LF6: a reset restarts the program, and the fault and its frame go
+        with it, so a connect that may reset is never the way in."""
+        self._fault(0xFFFFFFF9)
+        asked: list[bool] = []
+        real_identify = _FakeProbe.identify
+
+        def recording(self, allow_reset=True):
+            asked.append(allow_reset)
+            return real_identify(self, allow_reset)
+
+        monkeypatch.setattr(_FakeProbe, "identify", recording)
+        call("locate_fault")
+        assert asked and not any(asked)
+
 
 class TestTheLastSettledPortIsTriedFirst:
     """X8. On an STM32N6 AP0 answers identity and AP1 is the port that works, so a
@@ -3050,6 +3089,15 @@ class TestAnEmptyListingSaysWhatItCanShow:
         assert out["status"] == result.UNVERIFIED
         assert out["errors"] == errs and "udev" in out["hint"]
 
+    def test_errors_beside_listed_probes_are_kept(self, bench, monkeypatch) -> None:
+        """LP4."""
+        errs = ["ST-LINK error (DEV_USB_COMM_ERR)"]
+        listed = [probe_mod.ProbeInfo(serial="AAA1")]
+        monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: (listed, 0, errs))
+        out = call("list_probes")
+        assert_contract(out)
+        assert out["count"] >= 1 and out["errors"] == errs and "missing" in out["errors_note"]
+
     def test_an_empty_bus_is_verified_and_points_below_the_tool(self, bench, monkeypatch) -> None:
         monkeypatch.setattr(server, "list_probes_with_unreadable", lambda tc: ([], 0, []))
         out = call("list_probes")
@@ -3209,6 +3257,12 @@ class TestDisassembly:
         monkeypatch.setattr(server.disasm_mod, "run_command", run)
         monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(objdump=Path("objdump"), gdb=Path("gdb")))
         return asked
+
+    def test_hex_without_its_prefix_is_refused_not_a_crash(self, objdump) -> None:
+        """X1: "08000034" raised from int() and came back with no status."""
+        out = call("disassemble", elf_path=str(self.ELF), location="08000034")
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "0x prefix" in out["error"] and not objdump
 
     def _target_holds_the_elf(self, monkeypatch, start: int, stop: int, changed: int | None = None) -> None:
         from elftools.elf.elffile import ELFFile
@@ -3413,6 +3467,7 @@ class TestSampleValues:
         {"what": []},
         {"what": ["0x24070002"]},
         {"what": ["0x24070000"], "until": "0x24070000 ~ 1"},
+        {"what": ["08000000"]},
     ])
     def test_what_it_cannot_do_is_refused_before_anything_is_read(self, target, args) -> None:
         """SV8."""

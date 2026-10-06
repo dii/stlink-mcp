@@ -87,19 +87,17 @@ claude mcp add stlink -- uv --directory /path/to/stlink-mcp run stlink-mcp
 
 ## Telling the agent how to use it
 
-When it connects, the server gives every client a short guide: what it is for, how to read a result, and the usual order of calls. Claude Code shows it to the agent even when it has not loaded the tool descriptions. agy, Google's Antigravity command line, did not show it to its model when asked (2026-10-05). For a client like that, put the same text in your project's `AGENTS.md` or `GEMINI.md`:
+When it connects, the server gives every client a short guide: what it is for, how to read a result, and the usual order of calls. Claude Code shows it to the agent even when it has not loaded the tool descriptions. Some clients do not pass it on; for those, put the same text in your project's `AGENTS.md` or `GEMINI.md`:
 
 ```text
 stlink-mcp drives STM32 boards through an ST-LINK probe with ST's STM32CubeCLT tools.
 
 Every result has a status. verified: verified_by says what was observed. unverified: it may have worked, but nothing checked it, and unverified_because says why; this is not success. failed: error says why. Read the status before the values.
 
-A usual session: `list_probes` and `board_state` to find and identify the board; `run_firmware` to load an ELF into RAM and start it, or `flash_firmware` to write flash; while the program runs, `capture_console`, `sample_values` and `read_memory`, none of which halts it; to stop and inspect, `run_until`, `core_registers`, `read_fault_status`, `locate_fault` and `disassemble`; `release_probe` when done.
+A usual session: `list_probes`, then `board_state` to identify the board; `run_firmware` to load an ELF into RAM and start it, or `flash_firmware` to write flash. Without halting the program: `capture_console`, `capture_swo`, `sample_values`, `read_memory`, `read_fault_status`, `read_option_bytes` and `disassemble`. Halting it: `run_until`, `core_registers` and `locate_fault`. `reset_target` restarts it; `release_probe` when done.
 
-`run_firmware` keeps holding the probe, and the reading tools work beside it; `reset_target` and `flash_firmware` stop that first and say so. A call that halts or resets the target says so. Name `probe_serial` when more than one probe is attached. An argument no tool parameter has is refused, not ignored.
+Give `probe_serial` on every call: without it each call first lists the probes, which takes a second or more and holds up every other board. Give addresses as "0x..." strings. `run_firmware` keeps holding the probe, and while it does, a core that locks up is reset, which clears its fault registers: when looking for a crash, run with `keep_probe=False`. `reset_target` and `flash_firmware` stop the holding server first and say so. A call that halts or resets the target says so. If the running program has closed the debug port, `board_state` gets back in by resetting the target; `reset_target` cannot. An argument no tool parameter has is refused, not ignored.
 ```
-
-A misspelt argument is refused with the nearest parameter named, so an agent that guesses a name finds out at once.
 
 ## Tools
 

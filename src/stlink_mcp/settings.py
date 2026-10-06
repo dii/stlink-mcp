@@ -115,3 +115,11 @@ def check() -> None:
     gdb_port_base()
     console_baud()
     _parse_console(os.environ.get(CONSOLE, ""))
+    # S1: a wrong install directory used to start a server whose every tool
+    # then failed. Unset, the usual places are searched when a tool needs them.
+    if os.environ.get("STLINK_MCP_CLT_ROOT"):
+        from .toolchain import ToolchainError, find_toolchain
+        try:
+            find_toolchain()
+        except ToolchainError as exc:
+            raise SettingError(str(exc)) from None

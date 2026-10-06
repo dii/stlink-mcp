@@ -485,8 +485,8 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
         )
     hints += [
         "The running program may have closed the debug port: taken the SWD pins, "
-        "stopped a clock or slept without debug. A tool that may reset gets past it "
-        "with a connect under reset, which restarts the program.",
+        "stopped a clock or slept without debug. board_state gets past it by "
+        "reconnecting through a reset, which restarts the program; reset_target does not.",
         "The boot configuration may keep the debug port closed: parts that boot "
         "from external memory open it only in the development boot mode set by a "
         "BOOT pin or switch.",

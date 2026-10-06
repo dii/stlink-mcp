@@ -31,6 +31,20 @@ class TestNumbersAreCheckedNotTrusted:
             settings.check()
 
 
+class TestTheInstallDirectoryIsChecked:
+    """S1."""
+
+    def test_a_directory_without_the_programmer_is_refused(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("STLINK_MCP_CLT_ROOT", str(tmp_path))
+        with pytest.raises(settings.SettingError, match="STLINK_MCP_CLT_ROOT"):
+            settings.check()
+
+    def test_unset_is_not_checked_at_start_up(self, monkeypatch) -> None:
+        """A machine without the tools still starts, and each tool says why."""
+        monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
+        settings.check()
+
+
 class TestConsoleBelongsToAProbe:
     """A bare path applied to several boards is the wrong-board failure the
     console mapping exists to prevent, so it applies only to a lone probe."""

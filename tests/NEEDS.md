@@ -2,19 +2,19 @@
 
 Every test should check one of these needs and name it, by ID, in its name or docstring. A need is something the agent or the user relies on, stated in what they observe, not in how the code does it. A test that only checks how the code does it (an argument list, a message's exact wording that no need requires, a value computed the same way the code computes it) is not testing a need, and changing the code without changing what anyone observes should not break it.
 
-The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The rest are per tool, then per part-specific table. Written 2026-10-04, before the test review that maps the tests onto them; X8 and T1 added by that review, for tests that checked them with no need written.
+The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The rest are per tool, then per part-specific table.
 
 ## Every tool
 
 - **X1.** Every result keeps the contract (`status`, `ok`, and `verified_by`, `unverified_because` or `error`), on success and on every failure: no toolchain, no probe, an exception inside the tool.
 - **X2.** With more than one probe attached, a call that names none is refused with the serials to choose from; nothing picks the first.
-- **X3.** Calls on different probes run together; calls on one probe wait their turn.
+- **X3.** Calls on different probes run together; calls on one probe wait their turn. A call that names no probe, or has to list them, waits for every other call.
 - **X4.** Every call leaves one trace line naming who asked, the tool, the probe and the verdict; a refusal for a held probe says whose call holds it.
 - **X5.** Every tool's description is 40 to 80 words.
 - **X6.** While ST's stlink-server runs, every programmer connect and listing goes through it, so a probe it keeps open is still reached; while it does not run, connects are direct.
 - **X11.** ST's sharing daemon is stopped before a programmer call when no GDB server on the machine runs, so connects after a release are direct; one a GDB server still uses is left alone.
 - **X7.** A read whose CPUID check fails is not a read: wrong data is never returned as data, and a connect that read it counts as not made.
-- **X8.** A call on a part whose access port was measured connects once: an agent waits for every programmer call, about 0.1 s plain and 0.4 s shared, and the STM32N6 cost one more per call before (2026-10-01).
+- **X8.** The access port that last worked for a probe is tried first, so a part whose working port is not 0 does not pay for a failed connect on every call (about 1.1 s on an STM32N6).
 - **X9.** Every client is told on connecting what the server is for, how to read a result and the usual order of calls, even one that shows its agent no tool descriptions; every tool it names exists.
 - **X10.** An argument no parameter has is refused, naming it and the nearest parameter, and nothing is done; it is never dropped.
 - **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
@@ -24,7 +24,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **LP1.** Each attached probe is listed once, with its serial, firmware, board and console port.
 - **LP2.** A probe's console is the port matched to its serial, never one taken by position.
 - **LP3.** It works while probes are held, and marks the held ones.
-- **LP4.** A probe it could not read is counted and its errors given, not dropped.
+- **LP4.** A probe entry it could not read is counted, and errors the programmer printed are returned whether or not any probe was listed.
 
 ## board_state (BS)
 
@@ -33,13 +33,13 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **BS3.** The core's state comes from DHCSR without halting it, and "running" needs evidence that instructions retired.
 - **BS4.** Program-counter samples are placed in the source when an ELF is given.
 - **BS5.** Every family value carries its provenance, and only `measured` ones are presented as seen to work.
-- **BS6.** A core halted by a vector catch beside a held server is named for what it likely was.
+- **BS6.** A core found halted by a vector catch beside a held server is reported as most likely a lockup the server reset, with `keep_probe=False` as the way to keep the fault.
 
 ## run_firmware (RF)
 
 - **RF1.** It is verified only by evidence from this image: console output after the load, or program-counter samples inside the image. Output the previous image printed never counts.
 - **RF2.** It is failed when the load did not complete, with GDB's own output.
-- **RF3.** It refuses, before touching the target, an image that is not linked for the family's RAM.
+- **RF3.** A missing ELF is refused before the probe is touched. An image not linked for the family's RAM is refused before anything is loaded, and the refusal says whether reaching the board reset it.
 - **RF4.** It resets before loading and says so.
 - **RF5.** It keeps the probe afterwards unless `keep_probe` is false, and the result says which.
 - **RF6.** A load address nobody measured is disclosed on success, not only on refusal.
@@ -92,9 +92,9 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 ## core_registers (CR)
 
 - **CR1.** It gives the same registers whichever way it reads them.
-- **CR2.** It leaves the core as it found it, running or halted, and says which from DHCSR.
+- **CR2.** Unless reaching the core needed a reset, it leaves the core as it found it, running or halted, and says which.
 - **CR3.** With an ELF it gives the call stack; with one the target does not run, no stack.
-- **CR4.** It reports whether reaching the core needed a reset.
+- **CR4.** Without an ELF it may reset to reach the core, and says so; with one, it refuses rather than reset.
 
 ## read_fault_status (FS)
 
@@ -112,7 +112,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **LF3.** Words that do not look like a frame make it unverified.
 - **LF4.** An imprecise bus error is noted: the stacked PC is late.
 - **LF5.** With an ELF, the function, line and instruction at the stacked PC.
-- **LF6.** It leaves the core as it found it.
+- **LF6.** It never resets the target, since a reset loses the fault, and leaves the core as it found it.
 
 ## read_option_bytes (OB)
 
@@ -120,30 +120,30 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **OB2.** Every option byte the programmer reports, with its value and ST's meaning, in ST's sections.
 - **OB3.** Readout protection comes first.
 - **OB4.** A part ST's programmer has no option bytes for fails with ST's reason.
-- **OB5.** It never halts or resets the target, and reads beside a held server.
+- **OB5.** It never halts or resets the target, and reads beside a held server that shares the probe, refusing beside one that does not, as RM7.
 
 ## disassemble (DA)
 
 - **DA1.** The instructions of a function, by name or by an address inside it, each with its source file and line and the function an inlined copy came from; an address outside every function gives the code around it, and says so.
-- **DA2.** A name two functions share is refused with both, never resolved to one: objdump's own lookup by name takes the first without a word (2026-10-04).
-- **DA3.** Without a probe it says the target's code was not compared; with one it reads that code without halting or resetting the target, and is verified only when it is the ELF's.
+- **DA2.** A name two functions share is refused with both, never resolved to one: objdump's own lookup by name takes the first without a word.
+- **DA3.** Without `probe_serial` it says the target's code was not compared; with one it reads that code without halting or resetting the target, and is verified only when it is the ELF's.
 - **DA4.** At most 256 instructions; `cut` says when the function has more, and every part of it can be reached by address.
 
 ## sample_values (SV)
 
-- **SV1.** It never halts or resets the target, refuses rather than reset at a closed port, and samples beside a held server.
-- **SV2.** One sample's values all come from one programmer call; each value comes back as itself if it never changed, else as first, last, range, how many samples changed it and when it first did.
+- **SV1.** It never halts or resets the target, refuses rather than reset at a closed debug port, and samples beside a held server that shares the probe, refusing beside one that does not, as RM7.
+- **SV2.** One sample's values are read together; each value comes back as itself if it never changed, else as first, last, range, how many samples changed it and when it first did. Past 48 values, the unchanged ones are counted rather than listed.
 - **SV3.** Variables are decoded with the ELF's types, a member can be named, and an ELF the target does not run gives no values.
 - **SV4.** A register known to change state when read is refused unless `read_effects_ok`, and then the result says the effect happened at every sample.
 - **SV5.** `until` stops at the first sample where it holds and says when and with what value; not seen in time is unverified, and says that a change between two samples would not show.
 - **SV6.** The core's state at each sample is counted from DHCSR, and a core not running in some is said, so an unchanging value is not taken for a stuck program.
 - **SV7.** A read that fails partway stops the sampling, keeps what was read and says when it failed.
-- **SV8.** At most 8 values, 2048 bytes a sample and 60 seconds, refused before anything is read.
+- **SV8.** At most 8 values, 2048 bytes a sample and 60 seconds, and addresses it cannot read, are refused before any sample is taken.
 
 ## capture_console (CC)
 
 - **CC1.** The port is the one matched to the probe's serial or the one the setting names, never the first port; with none it refuses.
-- **CC2.** What the probe buffered before the port opened comes back apart, and never counts as heard.
+- **CC2.** What the probe buffered before the port opened comes back separately, and never counts as heard.
 - **CC3.** Hearing nothing is unverified.
 - **CC4.** It captures at most 60 seconds.
 - **CC5.** A capture interrupted partway keeps what it heard.

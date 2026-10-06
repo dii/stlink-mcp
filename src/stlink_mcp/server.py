@@ -88,24 +88,28 @@ from .vendordb import VendorDbError, seed_from_directory
 # report shows which build answered.
 #: What every client is told on connecting, whether or not it loads the tools'
 #: descriptions: Claude Code shows server instructions for tools it has
-#: deferred, and agy gives its model the tools only through one generic call.
+#: deferred, and Google's Antigravity command line gives its model the tools
+#: only through one generic call.
 INSTRUCTIONS = """\
 stlink-mcp drives STM32 boards through an ST-LINK probe with ST's STM32CubeCLT tools.
 
 Every result has a status. verified: verified_by says what was observed. unverified: it may have \
-worked, but nothing checked it, and unverified_because says why; this is not success. failed: error \
-says why. Read the status before the values.
+worked, but nothing checked it, and unverified_because says why; this is not success. failed: \
+error says why. Read the status before the values.
 
-A usual session: `list_probes` and `board_state` to find and identify the board; `run_firmware` to \
-load an ELF into RAM and start it, or `flash_firmware` to write flash; while the program runs, \
-`capture_console`, `sample_values` and `read_memory`, none of which halts it; to stop and inspect, \
-`run_until`, `core_registers`, `read_fault_status`, `locate_fault` and `disassemble`; \
-`release_probe` when done.
+A usual session: `list_probes`, then `board_state` to identify the board; `run_firmware` to load \
+an ELF into RAM and start it, or `flash_firmware` to write flash. Without halting the program: \
+`capture_console`, `capture_swo`, `sample_values`, `read_memory`, `read_fault_status`, \
+`read_option_bytes` and `disassemble`. Halting it: `run_until`, `core_registers` and \
+`locate_fault`. `reset_target` restarts it; `release_probe` when done.
 
-`run_firmware` keeps holding the probe, and the reading tools work beside it; `reset_target` and \
-`flash_firmware` stop that first and say so. A call that halts or resets the target says so. Name \
-`probe_serial` when more than one probe is attached. An argument no tool parameter has is refused, \
-not ignored.
+Give `probe_serial` on every call: without it each call first lists the probes, which takes a \
+second or more and holds up every other board. Give addresses as "0x..." strings. `run_firmware` \
+keeps holding the probe, and while it does, a core that locks up is reset, which clears its fault \
+registers: when looking for a crash, run with `keep_probe=False`. `reset_target` and \
+`flash_firmware` stop the holding server first and say so. A call that halts or resets the target \
+says so. If the running program has closed the debug port, `board_state` gets back in by resetting \
+the target; `reset_target` cannot. An argument no tool parameter has is refused, not ignored.
 """
 
 
@@ -116,7 +120,7 @@ class _Server(MCPServer):
     2026-10-05): `lenght` left read_memory reading its default 32 bytes, and a
     misspelt `interface` would connect over SWD with nothing to say so, which
     N8 forbids. Agents guess parameter names when a client does not show them
-    the schemas, as a model run through agy did in the evaluation."""
+    the schemas, as a model run through Google's Antigravity command line did."""
 
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
         tool = self._tool_manager.get_tool(name)
@@ -655,8 +659,8 @@ def _address(value: int | str, name: str = "address") -> int:
 #: anyone needed; several reads are cheap.
 _MAX_READ_BYTES = 1024
 
-#: The longest console capture. Tool calls run one at a time, so a capture
-#: holds up every other call, on every board, until it ends.
+#: The longest console capture. A capture holds up every other call on its
+#: probe until it ends, and every call on every probe when it names no probe.
 _MAX_CAPTURE_SECONDS = 60.0
 
 
@@ -665,8 +669,9 @@ def _capture_seconds_problem(seconds: float, name: str) -> str | None:
         return None
     return (
         f"{name} is {seconds}. Give more than 0 and at most "
-        f"{_MAX_CAPTURE_SECONDS:g}: tool calls run one at a time, so a capture "
-        "holds up every other call until it ends."
+        f"{_MAX_CAPTURE_SECONDS:g}: a capture holds up every other call on its "
+        "probe until it ends, and every call on every probe when no probe_serial "
+        "is given."
     )
 
 
@@ -675,11 +680,11 @@ def _capture_seconds_problem(seconds: float, name: str) -> str | None:
 def list_probes(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """List every attached ST-LINK with its firmware, board name and serial console.
-
-The console mapping is the useful part with more than one board: it is not
-positional, so pairing probes with /dev/ttyACM* by order gets it wrong. Works
-while other probes are held by a GDB server; those are marked as held.
+    """List every attached ST-LINK with its firmware, board name, serial console and
+whether a GDB server holds it. Use the console mapping rather than the order of
+/dev/ttyACM*, which does not follow the probes. Listing takes about a second,
+and over ten while a GDB server holds a probe, which is why the other tools
+should be given `probe_serial`.
     """
     try:
         toolchain = _toolchain()
@@ -714,6 +719,14 @@ while other probes are held by a GDB server; those are marked as held.
                 "replug the probe, and `lsusb` for devices with vendor ID 0483."
             ),
             **detail,
+        )
+    if errors:
+        # LP4: a probe this user cannot open prints an error and no entry, so
+        # the list may be one short.
+        detail["errors"] = errors
+        detail["errors_note"] = (
+            "The programmer also printed errors. A probe this user cannot open "
+            "prints an error and no entry, so one may be missing from this list."
         )
     if not probes:
         detail["hint"] = (
@@ -753,13 +766,13 @@ def board_state(
     elf_path: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Identify the target, the probe and its family, and say whether the core
-runs, is halted or locked up, with program-counter samples read without halting
-it; given `elf_path`, where in the source they fall. A hotplug connect that
-cannot reach the core is retried with resetting connects, and
-`target_was_reset` says so; never beside a GDB server that holds the probe,
-which it reads through without halting. Only `measured` values in
-`family.provenance` have been seen to work.
+    """Identify the target, the probe and its family, and say whether the core is
+running, sleeping, halted or locked up, from program-counter samples read
+without halting it; given `elf_path`, where in the source they fall. If the
+core cannot be reached as it runs, reconnects through a reset, which restarts
+the program and gets past a debug port the program closed; `target_was_reset` says
+so. Never resets beside a GDB server holding the probe. `family.provenance`
+says which values were measured.
     """
     try:
         toolchain = _toolchain()
@@ -896,18 +909,21 @@ def run_firmware(
     keep_probe: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Load an ELF into target RAM, start it, and verify that it started.
-
-Verified by its board's console output, or else by program-counter samples
-inside the image, read without halting; `failed` if the load did not complete.
-Refuses an image whose vector table is not at the family's RAM address or with
-a segment outside SRAM. Resets the target first. Keeps the probe afterwards;
-`keep_probe=False` lets go once the program starts. release_probe says what
-each costs. No signing.
+    """Load an ELF into target RAM, reset, start it, and verify that it started: by
+its board's console output, or else by program-counter samples inside the
+image. Refuses an image not linked for RAM: vector table at board_state's
+`vector_table_addr`, every segment within 0x20000000-0x3FFFFFFF. Keeps the
+probe afterwards, and a core that then locks up is reset, clearing its fault
+registers; `keep_probe=False` lets go once the program starts, and
+release_probe says what that costs. No signing.
     """
     too_long = _capture_seconds_problem(console_seconds, "console_seconds")
     if too_long:
         return failed(too_long)
+    # Checked before the connect, which may reset the target to reach it.
+    elf = Path(elf_path).expanduser()
+    if not elf.exists():
+        return failed(f"No such ELF: {elf}")
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:
@@ -951,12 +967,9 @@ each costs. No signing.
         return failed(
             f"No RAM-execution layout is recorded for {quirks.name}. "
             "Add it to quirks.py, or supply it for this device, and say where "
-            "the value came from rather than guessing."
+            "the value came from rather than guessing.",
+            probe_serial=serial, target_was_reset=probe.target_was_reset,
         )
-
-    elf = Path(elf_path).expanduser()
-    if not elf.exists():
-        return failed(f"No such ELF: {elf}")
     # A GDB load writes wherever the image says. Refuse, before any server is
     # started, an image that is not linked for this family's RAM: a flash-linked
     # build would be programmed into flash on the run path (found by the
@@ -964,7 +977,7 @@ each costs. No signing.
     not_ram = image_mod.check_ram_image(elf, quirks.vector_table_addr)
     if not_ram:
         return failed(
-            not_ram, probe_serial=serial, elf_path=str(elf),
+            not_ram, probe_serial=serial, elf_path=str(elf), target_was_reset=probe.target_was_reset,
             vector_table_addr=f"0x{quirks.vector_table_addr:08X}",
             vector_table_provenance=layout_provenance,
         )
@@ -1272,8 +1285,9 @@ def _held_disclosure(serial: str | None) -> dict[str, Any]:
     if server is not None and not server.shared:
         disclosure["gdb_server_note"] = (
             "stlink-server is not installed, so this server keeps the probe to itself: "
-            "read_memory, read_fault_status, locate_fault and capture_swo refuse until "
-            "release_probe(). Installing STM32CubeCLT puts stlink-server on the PATH."
+            "read_memory, sample_values, read_fault_status, locate_fault, "
+            "read_option_bytes, capture_swo, and disassemble given a probe, refuse "
+            "until release_probe(). Installing STM32CubeCLT puts stlink-server on the PATH."
         )
     return disclosure
 
@@ -1335,14 +1349,13 @@ def release_probe(
     probe_serial: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Stop the GDB server holding a probe; with no serial, every probe's.
-
-Held, the debugger stays connected whatever the program does, and only these
-tools and STM32_Programmer_CLI with `shared` reach the probe; a core that locks
-up is reset, which clears its fault registers. Released, a program that closes
-the debug port keeps it closed until a reset restarts the program, or with ST's
-STM32N6 start-up code, a power cycle. Resumes a core run_until holds.
-`unverified` if nothing was held.
+    """Stop the GDB server holding a probe; with no serial, every probe's. Resumes a
+core run_until left halted. While held, the debugger stays connected whatever
+the program does, but a core that locks up is reset, clearing its fault
+registers. Once released, a program that closes the debug port keeps it closed
+until board_state reconnects through a reset, restarting the program, or, on an STM32N6
+running ST's start-up code, until a power cycle. `unverified` if nothing was
+held.
     """
     with _STATE:
         affected = [probe_serial] if probe_serial is not None else list(_held)
@@ -1422,12 +1435,12 @@ def flash_firmware(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Program an image into boot memory for standalone boot: a raw .bin at the
-part's measured flash base or `address`, or an ELF or Intel HEX file at the
-addresses inside it, each of which must lie in the part's flash. Prefer
-run_firmware while developing. Does not sign. Verified only when every byte
-written reads back the same. Says what its erase took beyond the image. Stops a
-GDB server holding the probe first (`released_probe_first`).
+    """Program an image into flash for standalone boot: a raw .bin at `address`, or
+at the part's flash base, or an ELF or Intel HEX file at the addresses inside
+it, which must lie in the part's flash. Without `address` the flash base must
+be measured (board_state's `family.provenance`). Verified only when every byte
+written reads back the same. Does not sign or start the image; `next_step` says how it boots. Prefer run_firmware
+while developing.
     """
     released: dict[str, Any] = {}
     return {**_flash_firmware(image_path, probe_serial, address, interface, released), **released}
@@ -1502,10 +1515,9 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
     # Elsewhere this server will act on an unmeasured address and let the
     # observation decide, because a RAM load that used the wrong base is undone
     # by a reset and there IS an observation: the target either produces console
-    # output or it does not. Neither is true here. This tool writes persistently
-    # and has no readback, so a wrong base would be reported by the only check
-    # available, the programmer's own banner, which is the specific thing this
-    # project exists to distrust.
+    # output or it does not. Neither is true here. This tool writes persistently,
+    # and its readback confirms what was written, not that it went to the right
+    # place.
     #
     # An explicit `address` is a different matter and is allowed: the caller has
     # said where to write, so it is their claim rather than the table's guess.
@@ -1739,11 +1751,12 @@ def read_memory(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Read target memory without halting or resetting it, given one of: `address`
-(4-byte aligned, `length_bytes` a multiple of 4, at most 1024); `symbol`, a
-variable decoded with the types in `elf_path`; or `register`, such as "RCC.CR",
-decoded from ST's SVD file (`svd` names one). Refuses to read a register known
-to change state when read, such as a UART's data register, unless
-`read_effects_ok`. Refuses rather than reset at a closed port.
+(an integer or a "0x..." string, 4-byte aligned, `length_bytes` a multiple of
+4, at most 1024); `symbol`, a variable decoded with the types in `elf_path`; or
+`register`, such as "RCC.CR", decoded from ST's SVD file for the part (`svd`
+picks one). Refuses a register whose read changes state,
+such as a UART's data register, unless `read_effects_ok`. Refuses rather than
+reset at a closed debug port.
     """
     given = [name for name, value in (("address", address), ("symbol", symbol), ("register", register))
              if value is not None]
@@ -2110,12 +2123,13 @@ def sample_values(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Sample values while the program runs, without halting or resetting it:
-`what` lists variables (decoded with `elf_path`'s types; "g_state.mode" picks a
-member), 32-bit word addresses, or registers such as "ADC3.ISR". All are read
-together, every 0.1 to 0.6 s, for `seconds` (at most 60), and each comes back as
-first, last, range and changes, with the core's state across the samples.
-`until`, such as "g_state.mode == MODE_RUN" or "g_ticks changes", stops early.
+    """Sample values while the program runs, without halting or resetting it: `what`
+lists variables (decoded with `elf_path`'s types; "g_state.mode" picks a
+member), "0x..." word addresses, or registers such as "ADC3.ISR" (`svd` and
+`read_effects_ok` as in read_memory). All are read together, a few times a
+second, for `seconds` (at most 60), with the core's state; each comes back with
+first, last, range and changes. `until`, such as "g_state.mode == MODE_RUN" or
+"g_ticks changes", stops early.
     """
     if not what:
         return failed("what is empty: name at least one variable, address or register.")
@@ -2185,7 +2199,10 @@ def _sampled_without_probe(entry: str, elf_path: str | None) -> _Sampled | str |
     """An address or a variable, resolved without the probe; None for what can
     only be a register, which needs the part's SVD file; a string to refuse with."""
     if re.fullmatch(r"0x[0-9A-Fa-f]+|\d+", entry):
-        address = int(entry, 0)
+        try:
+            address = _address(entry)
+        except ValueError as exc:
+            return str(exc)
         if address % 4:
             return f"{entry} is not 4-byte aligned; an address is sampled as one 32-bit word."
         return _Sampled(f"0x{address:08X}", address, 4, lambda data: int.from_bytes(data, "little"), hex=True)
@@ -2515,11 +2532,11 @@ def run_until(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Run the target until it reaches `location` (a function, its inlined copies
-included, "file.c:line" or an address) or writes `watch` (a variable or an
-address, of 1, 2 or 4 aligned bytes), for at most `seconds`, and leave the core
-halted there, with the call stack. Needs the ELF the target runs. Verified only
-when the chip's debug status register names the stop; a watchpoint stops just
-after the write. The rest of the chip keeps running.
+included, "file.c:line" or a "0x..." address) or writes `watch` (a variable, or a
+"0x..." address watched as 4 bytes), for at most `seconds`. The core is left halted where it stopped, with the call stack, until
+release_probe. Needs the ELF the target runs. Verified only when the chip's
+DFSR names the stop; a watchpoint stops just after the write.
+The rest of the chip keeps running.
     """
     if (location is None) == (watch is None):
         return failed("Give one of location or watch.")
@@ -2785,14 +2802,12 @@ def reset_target(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Reset the target and check that it actually restarted.
-
-The reset is a resetting connect; the core is halted at the reset vector just
-long enough to compare the PC against word 1 of the vector table, then
-released, and that brief halt is reported. The result does not claim whether
-the core is halted now, because nothing here can observe that. To hold the
-core stopped, use run_until. Stops a GDB server holding the probe first, as
-`released_probe_first` says.
+    """Reset the target and check that it restarted: the program counter is compared
+with the reset vector during a brief halt, which is reported, and the core is
+then left running from reset. Needs an open debug port: when the running
+program has closed it, board_state reconnects through a reset, and this tool
+does not. Stops a GDB server holding the probe first
+(`released_probe_first`). To stop the core somewhere, use run_until.
     """
     released: dict[str, Any] = {}
     return {**_reset_target(probe_serial, interface, released), **released}
@@ -2996,12 +3011,12 @@ def core_registers(
     elf_path: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Read the core registers, halting the core for the read; with `elf_path`,
-also the call stack with each frame's arguments and locals.
-
-Says whether the core runs again afterwards. Works while run_until holds the
-core, and leaves it halted there. Reports `target_was_reset` when reaching the
-core needed a reset. Perturbing, so never used inside routine checks.
+    """Read the core registers, halting the core for the read; with `elf_path`, also
+the call stack with each frame's arguments and locals. Says whether the core
+runs again afterwards. Works while run_until holds the core halted, and leaves
+it so. Without `elf_path`, a core it cannot reach as it runs is reached through
+a reset, which `target_was_reset` reports; with `elf_path` it
+refuses instead. Halts the core, so not for routine checks.
     """
     probe: Probe | None = None
     try:
@@ -3068,14 +3083,11 @@ def read_fault_status(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Read and decode the Cortex-M fault status registers without halting or
-resetting the target.
-
-The registers are sticky until software clears them, so call this after a
-crash, or on a running target to check whether it faulted and recovered. The
-result says whether a fault is active, what happened in plain English, the
-faulting address when the hardware recorded it, and how to find the faulting
-instruction. Refuses Cortex-M0, M0+, M1 and M23 cores, which lack these
-registers.
+resetting the target. They stay set until software or a reset clears them, so
+call this first after a crash; a probe run_firmware still holds resets a core
+that locks up, which clears them. Says whether a fault is active, what happened
+in plain words, the faulting address when the hardware recorded it, and how to
+find the instruction. Refuses Cortex-M0, M0+, M1 and M23 cores.
     """
     probe: Probe | None = None
     try:
@@ -3312,14 +3324,12 @@ def locate_fault(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Find the instruction that faulted, from the exception frame. Halts the core
-to read registers.
-
-Call it while the core sits in a fault handler. Uses EXC_RETURN in LR to find
-the stack holding the frame and returns the stacked PC and LR; with `elf_path`,
-their functions and source lines. Refuses when the core is not in a handler or
-LR no longer holds EXC_RETURN, and says when the words found do not look like a
-frame.
+    """Find the instruction that faulted, from the exception frame. Halts the core to
+read registers, and never resets it, since a reset loses the fault: refuses
+when the core cannot be reached without one. Call it while the core sits in a
+fault handler. Returns the stacked PC and LR, from the stack that EXC_RETURN in
+LR names; with `elf_path`, their functions and source lines. Refuses when the
+core is not in a handler or LR no longer holds EXC_RETURN.
     """
     elf: Path | None = None
     if elf_path:
@@ -3337,11 +3347,14 @@ frame.
             return refusal
         probe = Probe(toolchain, serial=serial, interface=interface, try_first=_settled_port(serial),
                       shared=_shares(serial))
-        info = probe.identify()
+        # Never a resetting connect: a reset restarts the program, and the fault
+        # and its frame go with it. It used to reset to get in and then refuse.
+        info = probe.identify(allow_reset=False)
         _remember_port(serial, probe, info)
         if not info.connected:
             return failed(
-                "Could not reach the core.",
+                "Could not reach the core without resetting it, and this tool does not reset: a "
+                "reset restarts the program, and the fault and its frame go with it.",
                 probe_serial=serial,
                 target_was_reset=probe.target_was_reset,
                 errors=info.errors,
@@ -3532,10 +3545,10 @@ def disassemble(
 ) -> dict[str, Any]:
     """Disassemble a function, or the code around an address, from the ELF, with
 each instruction's source file and line and the function an inlined copy comes
-from. `location` is a function name or an address. Reads only the ELF; with
-`probe_serial` it also compares the target's code with the ELF's, without
-halting it, and is verified only when they match. At most 256 instructions;
-`cut` says when there were more.
+from. `location` is a function name or an address. Without `probe_serial` it
+reads only the ELF; with it, it also compares the target's code with the ELF's,
+without halting, and is verified only when they match. At most 256
+instructions; `cut` says when there were more.
     """
     elf = Path(elf_path).expanduser()
     if not elf.is_file():
@@ -3550,7 +3563,10 @@ halting it, and is verified only when they match. At most 256 instructions;
         return failed(str(exc), elf_path=str(elf))
     at: int | None = None
     if re.fullmatch(r"0x[0-9A-Fa-f]+|\d+", location.strip()):
-        at = int(location.strip(), 0) & ~1
+        try:
+            at = _address(location.strip(), "location") & ~1
+        except ValueError as exc:
+            return failed(str(exc), elf_path=str(elf))
         holding = {(f.start, f.size): f for f in table if f.start <= at < f.start + f.size}
         if holding:
             chosen = min(holding.values(), key=lambda f: f.size)
@@ -3665,13 +3681,13 @@ def capture_console(
     probe_serial: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Capture what a target prints on its serial console for a number of seconds.
+    """Capture what a target prints on its serial console for up to 60 seconds.
 
 The port is the one the probe list maps to this probe's serial, or the one
 STLINK_MCP_CONSOLE names for it, never the first /dev/ttyACM*; refused when
-there is none. At most 60 seconds. What the probe buffered before the port
-opened comes back apart, in `console_buffered`. Hearing nothing is unverified:
-silence cannot be told from a port not wired to the target.
+there is none. What the probe buffered before the port opened comes back
+separately, in `console_buffered`. Hearing nothing is unverified: silence
+cannot be told from a port not wired to the target.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")
     if too_long:
@@ -3792,11 +3808,11 @@ def capture_swo(
 ) -> dict[str, Any]:
     """Capture what the target writes to an ITM stimulus port, over the SWO pin.
 
-`core_clock_hz` is the clock the core runs at while it writes, which only the
-firmware knows; a wrong one gives nothing or garbled text. Does not halt or
+`core_clock_hz` is the clock the core runs at while it writes; a wrong one
+gives nothing or garbled text. Does not halt or
 reset, but turns trace output on and leaves it on, taking the SWO pin from the
 application until a power cycle. SWD only. Works beside a GDB server holding the
-probe. Hearing nothing is unverified.
+probe when stlink-server is installed. Hearing nothing is unverified.
     """
     too_long = _capture_seconds_problem(seconds, "seconds")
     if too_long:
