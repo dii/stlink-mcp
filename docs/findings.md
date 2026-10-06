@@ -530,3 +530,16 @@ Over stdio, MCP SDK 2.0.0 dropped an argument no parameter had without a word: `
 The users of this server are agents, not people with an IDE beside it, so it treats itself as the probes' only user. ST's `stlink-server` exists so a GDB server started with `-t` and the programmer can share a probe; once no GDB server runs, it only does harm. It keeps released probes, so plain connects fail with DEV_CONNECT_ERR (2026-10-04). It makes every call shared, 0.44 s against 0.12 s plain on the H7. And with it left running, the H7's on-board probe stuck at a connect under reset after a program had taken the SWD pins in 3 of 6 tries, against 0 of 3 with it stopped (a pre-registered test, Fisher's exact p = 0.46: consistent with it being the cause, not proof).
 
 So before every programmer connect and listing, the server stops `stlink-server` if no ST-LINK GDB server runs on the machine; one a GDB server uses, its own or another process's, is left alone. On the boards, after `release_probe`, `sample_values` took 10 samples in 2.04 s on the N6 and 11 in 2.03 s on the F407, against 5 in about 2.3 s with the daemon running.
+
+## Booting the N6 from its external flash (2026-10-06)
+
+On the NUCLEO-N657X0-Q, whose security state reads closed (BSEC_SR NVSTATE 0x0D), with BOOT1 low, through `tools/hwcheck/n6_flash_boot.py` and the programmer by hand, each action followed by a read of the image's counter:
+
+- An image with ST's boot header added with no keys (`STM32_SigningTool_CLI -nk -t fsbl -hv 2.3 -align`), written at 0x70000000 in development boot, booted from flash after a power cycle. RM0486 3.2 says a part whose secure-boot fuse is not blown runs an image whether or not it is correctly signed. Whether an image with no header boots was not tried.
+- The boot ROM leaves debug closed in flash boot (RM0486 3.9). An image whose first act writes 0xB451B400 to BSEC_DBGCR and 0xB4 to BSEC_AP_UNLOCK was reached by the probe on access port 1 with a plain connect and no reset, and its counter read advancing. In development boot the boot ROM itself leaves those two registers at the same values. The boot level read 0x51 (level 1) in both modes.
+- A software reset and a hardware reset through the probe each restarted that image, which opened debug again, and the probe reached it after each.
+- ST's external loader for the board's flash failed in flash boot. A 4 KB read ended "Data read failed", and a write failed to erase sector 0. Each time the image stopped, the core's port stopped answering, and a reset did not bring the board back; a power cycle did, and the old image booted, so nothing had been erased. The same loader read and wrote this flash in development boot on 2026-10-03.
+- Not established: why the loader fails after a flash boot. Resetting the flash controllers first was attempted by loading a test image into RAM with the programmer (halt, write, set MSP and PC, run); in flash boot that method did not run even a plain image, so the attempt says nothing yet.
+
+So on this board, debugging after a flash boot needs an image that opens debug, and writing the external flash needs development boot.
+

@@ -143,6 +143,12 @@ void reset_handler(void) {
                                        0x51 (from boot level 1), UNLOCK 0xB4 */
     REG(0x56009E90) = 0xB4u;        /* BSEC_AP_UNLOCK: open access port 1, the core's */
 #endif
+#ifdef RESET_XSPI  /* STM32N6: put the flash controllers back as a power-up leaves them, since
+                      the boot ROM's flash boot leaves them configured and ST's external loader
+                      then fails to erase or read. RCC_AHB5RSTSR/RSTCR: XSPIM, XSPI2, XSPI1. */
+    REG(0x56028A20) = (1u << 13) | (1u << 12) | (1u << 5);
+    REG(0x56029220) = (1u << 13) | (1u << 12) | (1u << 5);
+#endif
 #ifdef BOOT_REPORT  /* the SYSCFG clock as the boot ROM left it, then on: the boot-pin register
                        needs it, and debug access port 1 closes without it (docs/findings.md,
                        2026-08-16). Every BOOT_REPORT image does this, so the images with and
