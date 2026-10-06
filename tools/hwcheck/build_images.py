@@ -34,6 +34,7 @@ _H7 = ["-mcpu=cortex-m7", "-DHAS_UART", "-DCOUNTER_ADDR=0x24070000u"]
 _N6 = ["-mcpu=cortex-m55", "-DCOUNTER_ADDR=0x341B0000u", "-DDELAY=300000"]
 _F4 = ["-mcpu=cortex-m4", "-DF4_UART5", "-DCOUNTER_ADDR=0x2001F000u", "-DDELAY=1000000"]
 _SOFT = ["-mfloat-abi=soft"]
+_N6_BOOT = ["-DN6_UART", "-DBOOT_REPORT"]
 _FAULT = ["-DSET_VTOR", "-DFAULT_AFTER=3"]
 
 
@@ -44,6 +45,9 @@ class Image:
     linker_script: str
     binary: bool = False
     """Also produce a raw .bin with objcopy, for flash_firmware."""
+    boot_header: bool = False
+    """Also produce <name>-boot.bin: the .bin with the STM32N6 boot ROM's header,
+    added by STM32_SigningTool_CLI with no keys, to boot from external flash."""
     notes: str = ""
     source: str = "beacon.c"
 
@@ -112,6 +116,15 @@ VARIANTS: list[Image] = [
           notes="SPI1 and ADC1 left holding data, UART5 listening on PD2, never read again"),
     Image("n6_close", _N6 + _SOFT + ["-DCLOSE_AP1"], "n6_ram.ld",
           notes="turns the SYSCFG clock off as ST's start-up code does, closing AP1 until a power cycle"),
+    # For tools/hwcheck/n6_flash_boot.py: booted from external flash by the boot ROM.
+    Image("n6_boot_open", _N6 + _SOFT + _N6_BOOT + ["-DOPEN_DEBUG", '-DTAG="n6 boot open A"'],
+          "n6_ram.ld", binary=True, boot_header=True,
+          notes="opens debug as its first act, prints its boot state and ticks"),
+    Image("n6_boot_open_b", _N6 + _SOFT + _N6_BOOT + ["-DOPEN_DEBUG", '-DTAG="n6 boot open B"'],
+          "n6_ram.ld", binary=True, boot_header=True, notes="the same, telling itself apart from A"),
+    Image("n6_boot_closed", _N6 + _SOFT + _N6_BOOT + ['-DTAG="n6 boot closed"'],
+          "n6_ram.ld", binary=True, boot_header=True,
+          notes="the same without opening debug, as an image that never does"),
 ]
 
 
@@ -125,6 +138,7 @@ def build(out_dir: Path) -> Built:
     toolchain = find_toolchain()
     gnu = toolchain.root / "GNU-tools-for-STM32" / "bin"
     gcc, objcopy = gnu / f"arm-none-eabi-gcc{_EXE}", gnu / f"arm-none-eabi-objcopy{_EXE}"
+    signing_tool = toolchain.programmer.parent / f"STM32_SigningTool_CLI{_EXE}"
     if not gcc.exists():
         raise SystemExit(f"No arm-none-eabi-gcc under {gnu}; STM32CubeCLT includes one.")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -141,6 +155,15 @@ def build(out_dir: Path) -> Built:
             raw = out_dir / f"{image.name}.bin"
             subprocess.run([str(objcopy), "-O", "binary", str(elf), str(raw)], check=True)
             built.bin[image.name] = raw
+        if image.boot_header:
+            # Header version 2.3 is the STM32N6's; -align pads the payload to 0x400, where
+            # the image's vector table is linked (n6_ram.ld). No keys: the boot ROM of a
+            # part whose secure-boot fuse is not blown runs an image "regardless of whether
+            # it is correctly signed" (RM0486 3.2). Not yet run on a board.
+            boot = out_dir / f"{image.name}-boot.bin"
+            subprocess.run([str(signing_tool), "-bin", str(raw), "-nk", "-t", "fsbl", "-hv", "2.3",
+                            "-align", "-o", str(boot), "-s"], check=True, capture_output=True)
+            built.bin[f"{image.name}-boot"] = boot
     return built
 
 

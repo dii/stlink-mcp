@@ -101,6 +101,23 @@ static void putu(uint32_t v) { char b[11]; int i = 10; b[i] = 0; do { b[--i] = '
 
 static void delay(uint32_t n) { for (volatile uint32_t i = 0; i < n; i++) {} }
 
+#ifdef BOOT_REPORT  /* STM32N6: the boot and debug state as this image sees it, printed so a
+                       console shows it even when the debug port stays closed. RM0486 4.5. */
+static void puthex(uint32_t v) {
+    puts_("0x");
+    for (int i = 28; i >= 0; i -= 4) putc_("0123456789ABCDEF"[(v >> i) & 0xF]);
+}
+static void boot_report(uint32_t clock_at_entry) {
+    puts_("stlink-mcp hw check " TAG " bsec_sr "); puthex(REG(0x56009E40));  /* NVSTATE, 31:26 */
+    puts_(" apb4h_at_entry "); puthex(clock_at_entry);                        /* bit 0: SYSCFG clock */
+    puts_(" hdpl "); puthex(REG(0x56009E94));                                  /* BSEC_HDPLSR */
+    puts_(" dbgcr "); puthex(REG(0x56009E8C));                                 /* BSEC_DBGCR */
+    puts_(" ap_unlock "); puthex(REG(0x56009E90));                             /* BSEC_AP_UNLOCK */
+    puts_(" boot_pins "); puthex(REG(0x56008100));                             /* SYSCFG_BOOTSR */
+    puts_("\r\n");
+}
+#endif
+
 extern void (*const vectors[16])(void);
 
 #ifdef CLOSE_SWD  /* PA13 and PA14, SWDIO and SWCLK on these parts, made plain inputs:
@@ -117,6 +134,22 @@ static void close_swd(void) {
 #endif
 
 void reset_handler(void) {
+#ifdef OPEN_DEBUG  /* STM32N6 booted from flash: the boot ROM leaves debug closed, and only
+                      secure privileged code after it can open it (RM0486 3.9, 4.3.11, 4.5.18
+                      and 4.5.19). Both registers can be written once per reset, and part of
+                      BSEC_AP_UNLOCK clears at every warm reset, so every boot writes both.
+                      For development builds only: it undoes the part's protection. */
+    REG(0x56009E8C) = 0xB451B400u;  /* BSEC_DBGCR: AUTH_SEC 0xB4 (secure debug too), AUTH_HDPL
+                                       0x51 (from boot level 1), UNLOCK 0xB4 */
+    REG(0x56009E90) = 0xB4u;        /* BSEC_AP_UNLOCK: open access port 1, the core's */
+#endif
+#ifdef BOOT_REPORT  /* the SYSCFG clock as the boot ROM left it, then on: the boot-pin register
+                       needs it, and debug access port 1 closes without it (docs/findings.md,
+                       2026-08-16). Every BOOT_REPORT image does this, so the images with and
+                       without OPEN_DEBUG differ in the BSEC writes alone. */
+    uint32_t clock_at_entry = REG(0x56028278);  /* RCC_APB4HENR */
+    REG(0x56028A78) = 1u;                       /* RCC_APB4HENSR: SYSCFGENS */
+#endif
 #ifdef CLOSE_AP1  /* STM32N6: what the end of ST's stock SystemInit does, RCC_APB4ENCR2 =
                      SYSCFGENC. Without the SYSCFG clock, debug access port 1 closes until
                      power is removed (docs/findings.md, 2026-08-16). */
@@ -128,6 +161,9 @@ void reset_handler(void) {
     uart_init();
     for (uint32_t tick = 0;; tick++) {
         REG(COUNTER_ADDR) = 0xC0FFEE00u + tick;
+#ifdef BOOT_REPORT
+        if ((tick & 7) == 0) boot_report(clock_at_entry);
+#endif
         puts_("stlink-mcp hw check " TAG " tick "); putu(tick); puts_("\r\n");
 #ifdef CLOSE_SWD
         if (tick == 2) close_swd();
