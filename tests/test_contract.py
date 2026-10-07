@@ -615,17 +615,17 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         resets it; a failure partway cannot say which of those happened."""
         from stlink_mcp.runner import RunError
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
 
         def gdb_times_out(*args, **kwargs):
             raise RunError("arm-none-eabi-gdb did not finish within 180s")
 
         monkeypatch.setattr(server, "load_and_run", gdb_times_out)
-        r = call("run_firmware", elf_path=str(bench.elf))
+        r = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         assert r["status"] == result.FAILED
         assert r["target_was_reset"] is None and "not known" in r["reset_note"]
         bench.shares = False
-        r = call("run_firmware", elf_path=str(bench.elf))
+        r = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         assert "read_memory" in r["gdb_server_note"] and "release_probe" in r["gdb_server_note"]
 
     def test_a_run_says_it_reset_the_target(self, bench) -> None:
@@ -675,7 +675,7 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
         """RF1: samples are read beside the server only when it shares the probe."""
         bench.console_port = None
         bench.shares = False
-        r = call("run_firmware", elf_path=str(bench.elf))
+        r = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         assert r["status"] == result.UNVERIFIED
         assert "stlink-server" in r["unverified_because"] and "keep_probe=False" in r["unverified_because"]
 
@@ -811,10 +811,9 @@ class TestRunFirmwareCannotReportASuccessItDidNotSee:
 
 
 class TestRunFirmwareKeepsTheProbe:
-    """The GDB server keeps the probe after a run, so a program that closes the
-    debug port cannot lock the debugger out. From b6e5aa8 it let go after every
-    run, which turned such a program into a reset or a power cycle; whether to
-    let go is the agent's choice, with release_probe (2026-10-04)."""
+    """RF5. With keep_probe=True the GDB server keeps the probe after a run and
+    the reading tools work beside it. Held by default from 2026-10-04 to keep a
+    closing debug port open, which it did not (2026-10-07); let go by default since."""
 
     @pytest.fixture
     def ran(self, bench, monkeypatch):
@@ -830,7 +829,7 @@ class TestRunFirmwareKeepsTheProbe:
 
         monkeypatch.setattr(_FakeProbe, "__init__", remember)
         bench.console_text = "up\n"
-        out = call("run_firmware", elf_path=str(bench.elf))
+        out = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         assert out["status"] == result.VERIFIED and out["gdb_server_held"] is True
         made.clear()
         return made
@@ -878,9 +877,20 @@ class TestRunFirmwareKeepsTheProbe:
         assert out["status"] == result.VERIFIED and made[-1] is False, "sampled with nothing held"
         assert "power cycle" in out["warning"], "the bench is an STM32N6"
 
-    def test_a_kept_probe_carries_no_release_warning(self, bench) -> None:
+    def test_the_n6_warning_does_not_depend_on_holding(self, bench) -> None:
+        """Holding did not keep the N6's port open against ST's start-up code
+        (2026-10-07), so the warning comes either way."""
         bench.console_text = "up\n"
-        assert "warning" not in call("run_firmware", elf_path=str(bench.elf))
+        for keep in (False, True):
+            assert "power cycle" in call("run_firmware", elf_path=str(bench.elf), keep_probe=keep)["warning"]
+            call("release_probe")
+
+    def test_by_default_it_lets_go_once_the_program_starts(self, bench) -> None:
+        """RF5: holding did not keep a closing debug port open, and a held server
+        resets a core that locks up, clearing its fault registers."""
+        bench.console_text = "up\n"
+        out = call("run_firmware", elf_path=str(bench.elf))
+        assert out["status"] == result.VERIFIED and out["gdb_server_held"] is False and bench.held == {}
 
     def test_release_lets_a_stopped_core_run_again(self, bench, monkeypatch) -> None:
         """RP2. A model of the F407 in shared mode: GDB's detach lets a halted core
@@ -900,7 +910,7 @@ class TestRunFirmwareKeepsTheProbe:
         monkeypatch.setattr(_FakeProbe, "read_memory", lambda self, address, length_bytes:
                             {address: 0x00030003 if board["halted"] else 0x01010001})
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         server._stopped["AAA1"] = {"address": "0x34180500", "function": "writer"}
         out = call("release_probe", probe_serial="AAA1")
         assert "running again" in out["core_after"]["AAA1"] and not board["halted"]
@@ -923,7 +933,7 @@ class TestRunFirmwareKeepsTheProbe:
 
         monkeypatch.setattr(server.gdbmi, "Session", _Session)
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf), interface="jtag")
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf), interface="jtag")
         server._stopped["AAA1"] = {"address": "0x34180500", "function": "writer"}
         monkeypatch.setattr(server, "Probe", _Recording)
         call("release_probe", probe_serial="AAA1")
@@ -974,8 +984,8 @@ class TestRunFirmwareKeepsTheProbe:
         monkeypatch.setattr(server, "load_and_run", load_and_start)
         monkeypatch.setattr(server.console_mod, "ConsoleCapture", _Capture)
         bench.console_text = ""  # the image prints nothing
-        call("run_firmware", elf_path=str(bench.elf))
-        out = call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
+        out = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         assert_contract(out)
         assert "tick 25" not in out["console"] and "console" not in (out.get("verified_by") or "")
 
@@ -985,7 +995,7 @@ class TestRunFirmwareKeepsTheProbe:
     def test_without_stlink_server_the_reading_tools_refuse(self, bench, monkeypatch) -> None:
         bench.shares = False
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         out = call("read_memory")
         assert out["status"] == result.FAILED and "stlink-server" in out["error"]
 
@@ -995,7 +1005,7 @@ class TestRunFirmwareKeepsTheProbe:
         import inspect
         bench.shares = False
         bench.console_text = "up\n"
-        note = call("run_firmware", elf_path=str(bench.elf))["gdb_server_note"]
+        note = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))["gdb_server_note"]
         tools = server.mcp._tool_manager._tools
         refusing = {name for name, tool in tools.items()
                     if any(f"{helper}(" in inspect.getsource(tool.fn)
@@ -1016,13 +1026,13 @@ class TestALockupUnderAHeldServerIsNamed:
         bench.console_text = "up\n"
 
     def test_board_state_beside_the_server_says_what_it_likely_is(self, bench, caught) -> None:
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         core = call("board_state")["core"]
         assert core["state"] == "halted" and core["dfsr"] == "0x00000009"
         assert "keep_probe=False" in core["state_note"]
 
     def test_read_fault_status_beside_the_server_says_it(self, bench, caught) -> None:
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         out = call("read_fault_status")
         assert out["any_fault_active"] is False and "keep_probe=False" in out["vector_catch_note"]
         assert out["status"] == result.UNVERIFIED, "a clean read there is not evidence of no fault"
@@ -1078,7 +1088,7 @@ class TestWhereTheCoreRunsSaysWhetherASilentImageStarted:
         """Without stlink-server the programmer cannot read beside the server."""
         bench.shares = False
         monkeypatch.setattr(_FakeProbe, "core", probe_mod.CoreState(0x01010000, 0x01000000, (0x34180500,)))
-        out = call("run_firmware", elf_path=str(bench.elf))
+        out = call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         assert out["status"] == result.UNVERIFIED and "core" not in out
 
     def test_board_state_says_where_with_the_elf(self, bench, monkeypatch) -> None:
@@ -1521,7 +1531,7 @@ class TestRunUntilClaimsOnlyWhatTheChipSaid:
         monkeypatch.setattr(server.debugger_mod, "registers", lambda session: {"PC": 0x24000042, "XPSR": 0x01000000})
         monkeypatch.setattr(server.debugger_mod, "system_registers", lambda session: {})
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         monkeypatch.setattr(server, "release_server", lambda serial=None: pytest.fail("let go of the probe"))
         out = call("run_until", elf_path=self.ELF, location="writer")
         assert out["status"] == (result.FAILED if mismatch else result.VERIFIED) and list(bench.held) == ["AAA1"]
@@ -3233,7 +3243,7 @@ class TestOneProbeOneSpelling:
 
     def test_a_lower_case_serial_is_the_same_probe(self, bench) -> None:
         bench.console_text = "up\n"
-        ran = call("run_firmware", elf_path=str(bench.elf), probe_serial="aaaa0001")
+        ran = call("run_firmware", keep_probe=True, elf_path=str(bench.elf), probe_serial="aaaa0001")
         assert ran["status"] != result.FAILED, ran.get("error")
         # What list_probes marks as held, by the serial the programmer prints.
         assert "AAAA0001" in server.held_serials()
@@ -3285,7 +3295,7 @@ class TestEveryCallIsTracedToWhoAsked:
         monkeypatch.setattr(server, "_BY_ID_DIR", by_id)
         bench.shares = False  # so read_memory refuses, and says who holds it
         bench.console_text = "tick 0\n"
-        run = call("run_firmware", elf_path=str(bench.elf), probe_serial="AAAA0001", ctx=self._ctx("agent-a", "7"))
+        run = call("run_firmware", keep_probe=True, elf_path=str(bench.elf), probe_serial="AAAA0001", ctx=self._ctx("agent-a", "7"))
         assert run["status"] == result.VERIFIED, run
         refused = call("read_memory", probe_serial="AAAA0001", ctx=self._ctx("agent-b", "3"))
         assert refused["status"] == result.FAILED
@@ -3613,12 +3623,12 @@ class TestSampleValues:
     def test_beside_a_held_server_it_samples_shared_and_refuses_one_that_does_not_share(self, target, bench) -> None:
         """SV1, RM7."""
         bench.console_text = "tick 0\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         shared = call("sample_values", what=["0x24070000"], seconds=0.1)
         assert shared["status"] == result.VERIFIED
         call("release_probe")
         bench.shares = False
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         refused = call("sample_values", what=["0x24070000"], seconds=0.1)
         assert refused["status"] == result.FAILED
 
@@ -3696,7 +3706,7 @@ class TestListProbesMarksTheHeld:
 
     def test_a_held_probe_is_listed_and_marked(self, bench) -> None:
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         out = call("list_probes")
         assert_contract(out)
         [entry] = out["probes"]
@@ -3745,7 +3755,7 @@ class TestOptionBytesAreReadNeverWritten:
 
         monkeypatch.setattr(_FakeProbe, "__init__", remember)
         bench.console_text = "up\n"
-        call("run_firmware", elf_path=str(bench.elf))
+        call("run_firmware", keep_probe=True, elf_path=str(bench.elf))
         made.clear()
         out = call("read_option_bytes")
         assert out["status"] == result.VERIFIED and made and all(made) and list(bench.held) == ["AAA1"]

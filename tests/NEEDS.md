@@ -44,7 +44,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **RF2.** It is failed when the load did not complete, with GDB's own output.
 - **RF3.** A missing ELF is refused before the probe is touched. An image not linked for the family's RAM is refused before anything is loaded, and the refusal says whether reaching the board reset it.
 - **RF4.** It resets before loading and says so.
-- **RF5.** It keeps the probe afterwards unless `keep_probe` is false, and the result says which.
+- **RF5.** It lets go of the probe once the program starts unless `keep_probe` is true, and the result says which.
 - **RF6.** A load address nobody measured is disclosed on success, not only on refusal.
 
 ## release_probe (RP)

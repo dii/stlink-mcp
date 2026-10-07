@@ -154,15 +154,15 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
     run = await server.call("run_firmware", elf_path=str(images.elf["h7_ram"]), probe_serial=s, console_seconds=1.5)
     report.check(run["status"] == "verified" and "ram tick 0" in run.get("console", ""),
                  "H7: run_firmware is verified by the new image's own console", _why(run))
-    report.check(run.get("gdb_server_held") is True,
-                 "H7: run_firmware keeps the probe after the run", f"held {run.get('gdb_server_held')}")
+    report.check(run.get("gdb_server_held") is False,
+                 "H7: run_firmware lets go of the probe by default", f"held {run.get('gdb_server_held')}")
 
     first = await server.call("read_memory", address=H7_COUNTER, length_bytes=4, probe_serial=s)
     await anyio.sleep(1.0)
     second = await server.call("read_memory", address=H7_COUNTER, length_bytes=4, probe_serial=s)
     a, b = _counter(first, H7_COUNTER), _counter(second, H7_COUNTER)
     report.check(a is not None and b is not None and b > a,
-                 "H7: the image runs, read beside the held GDB server (its counter advances)",
+                 "H7: the image runs, read while it runs (its counter advances)",
                  f"{a and hex(a)} then {b and hex(b)}")
 
     await anyio.sleep(3.0)  # the running image prints while nothing has the port open
@@ -193,7 +193,7 @@ async def check_h7(server: Server, serial: str, images: Built, report: Report) -
 
     for name, stack, fp in (("h7_fault", "MSP", False), ("h7_fault_psp", "PSP", False), ("h7_fault_fp", "MSP", True)):
         elf = images.elf[name]
-        await server.call("run_firmware", elf_path=str(elf), probe_serial=s, console_seconds=3)
+        await server.call("run_firmware", elf_path=str(elf), probe_serial=s, console_seconds=3, keep_probe=True)
         await anyio.sleep(1.0)
         where = await server.call("locate_fault", probe_serial=s, elf_path=str(elf))
         if name == "h7_fault":
@@ -280,7 +280,7 @@ async def check_core_state(server: Server, serial: str, images: Built, report: R
     # it and halts it at the reset vector, which clears the fault registers;
     # with keep_probe=False the lockup and its fault status stay readable.
     lockup = str(images.elf["h7_lockup"])
-    await server.call("run_firmware", elf_path=lockup, probe_serial=s, console_seconds=2)
+    await server.call("run_firmware", elf_path=lockup, probe_serial=s, console_seconds=2, keep_probe=True)
     caught = await server.call("board_state", probe_serial=s)
     status = await server.call("read_fault_status", probe_serial=s)
     report.check(caught.get("core", {}).get("state") == "halted"
@@ -297,7 +297,8 @@ async def check_core_state(server: Server, serial: str, images: Built, report: R
                  and {f.get("bit") for f in status.get("faults", [])} >= {"FORCED", "UNDEFINSTR"},
                  "H7: with keep_probe=False the same lockup reads locked up, with its fault status",
                  f"{locked.get('core')}; {[f.get('bit') for f in status.get('faults', [])]}")
-    await server.call("run_firmware", elf_path=str(images.elf["h7_sleep"]), probe_serial=s, console_seconds=1)
+    await server.call("run_firmware", elf_path=str(images.elf["h7_sleep"]), probe_serial=s, console_seconds=1,
+                      keep_probe=True)
     await anyio.sleep(0.5)
     stale = await server.call("read_memory", address=H7_COUNTER, length_bytes=4, probe_serial=s)
     report.check(stale["status"] == "failed" and "CPUID" in stale.get("error", ""),
@@ -316,16 +317,16 @@ async def check_core_state(server: Server, serial: str, images: Built, report: R
 
 
 async def check_closed_port(server: Server, serial: str, images: Built, report: Report) -> None:
-    """A program that takes the SWD pins: the run is verified and keeps the
-    probe, a read beside it fails without guessing why, and after a release
+    """A program that takes the SWD pins, run with the default of letting go:
+    the run is verified, a read then fails without guessing why, and
     board_state gets back in with a connect under reset."""
     s, elf = serial, str(images.elf["h7_close_swd"])
     run = await server.call("run_firmware", elf_path=elf, probe_serial=s, console_seconds=1.5)
-    report.check(run["status"] == "verified" and run.get("gdb_server_held") is True,
-                 "H7: a program that takes the SWD pins runs verified, and the probe is kept", _why(run))
+    report.check(run["status"] == "verified" and run.get("gdb_server_held") is False,
+                 "H7: a program that takes the SWD pins runs verified, and the probe is let go", _why(run))
     read = await server.call("read_memory", address=H7_COUNTER, length_bytes=4, probe_serial=s)
     report.check(read["status"] == "failed",
-                 "H7: a read beside the held server then fails", _why(read))
+                 "H7: a read then fails", _why(read))
     await server.call("release_probe", probe_serial=s)
     board = await server.call("board_state", probe_serial=s)
     report.check(board["status"] == "verified" and board.get("connect_mode") == "UR" and board.get("target_was_reset") is True,
@@ -598,7 +599,7 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
                  "F4: the image runs (its counter advances)", f"{a and hex(a)} then {b and hex(b)}")
     beside = await server.call("sample_values", what=[F4_COUNTER], probe_serial=s, seconds=2)
     report.check(beside["status"] == "verified" and beside.get("values", {}).get(F4_COUNTER, {}).get("changes", 0) > 0,
-                 "F4: sample_values samples the counter beside run_firmware's held server",
+                 "F4: sample_values samples the counter while it runs",
                  f"{_why(beside)}; {beside.get('values')}; {beside.get('samples')} samples in {beside.get('seconds')} s")
     elf = images.elf["f4_fault"]
     await server.call("run_firmware", elf_path=str(elf), probe_serial=s, console_seconds=2)
@@ -622,7 +623,8 @@ async def check_f4(server: Server, serial: str, images: Built, report: Report, c
     await check_stops(server, "F4", s, images, report, "f4_vars", "h7_vars", "f4_vars_hang")
     await check_read_effects(server, "F4", s, images, report, "f4_read_effects", "ADC1", 0x40012000, 1, 0x4001204C,
                              0x40012308)
-    await server.call("run_firmware", elf_path=str(images.elf["f4_ram"]), probe_serial=s, console_seconds=0.5)
+    await server.call("run_firmware", elf_path=str(images.elf["f4_ram"]), probe_serial=s, console_seconds=0.5,
+                      keep_probe=True)
     ob = await server.call("read_option_bytes", probe_serial=s)
     report.check(ob["status"] == "verified" and (ob.get("read_protection") or {}).get("value") == "0xAA"
                  and "Write Protection" in ob.get("option_bytes", {}),
@@ -732,13 +734,13 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
                  "N6: capture_console reads the probe's own port", f"{_why(capture)}; port {capture.get('console_port')}")
     run = await server.call("run_firmware", elf_path=str(images.elf["n6_ram"]), probe_serial=s, console_seconds=1)
     report.check(run["status"] == "verified" and "executing this image's code" in run.get("verified_by", ""),
-                 "N6: a silent image is verified by program-counter samples read beside the held server", _why(run))
+                 "N6: a silent image is verified by program-counter samples read without halting", _why(run))
     first = await server.call("read_memory", address=N6_COUNTER, length_bytes=4, probe_serial=s)
     await anyio.sleep(1.0)
     second = await server.call("read_memory", address=N6_COUNTER, length_bytes=4, probe_serial=s)
     a, b = _counter(first, N6_COUNTER), _counter(second, N6_COUNTER)
     report.check(a is not None and b is not None and b > a,
-                 "N6: the image runs, read beside the held server (its counter advances)",
+                 "N6: the image runs, read while it runs (its counter advances)",
                  f"{a and hex(a)} then {b and hex(b)}")
 
     elf = images.elf["n6_fault"]
@@ -803,7 +805,8 @@ async def check_n6_closed(server: Server, serial: str, images: Built, report: Re
     """Close the N6's debug port as ST's start-up code does, and check what the
     tools say to it. Only a power cycle reopens it."""
     s = serial
-    await server.call("run_firmware", elf_path=str(images.elf["n6_close"]), probe_serial=s, console_seconds=1)
+    await server.call("run_firmware", elf_path=str(images.elf["n6_close"]), probe_serial=s, console_seconds=1,
+                      keep_probe=True)
     first = await server.call("read_memory", address=N6_COUNTER, length_bytes=4, probe_serial=s)
     await anyio.sleep(1.0)
     second = await server.call("read_memory", address=N6_COUNTER, length_bytes=4, probe_serial=s)

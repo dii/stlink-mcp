@@ -105,12 +105,13 @@ an ELF into RAM and start it, or `flash_firmware` to write flash. Without haltin
 
 Give `probe_serial` on every call: without it each call first lists the probes, which takes a \
 second or more and holds up every other board. Give addresses as "0x..." strings and files as \
-absolute paths. `run_firmware` keeps holding the probe, and while it does, a core that locks up is \
-reset, which clears its fault registers: when looking for a crash, run with `keep_probe=False`. \
-`reset_target` and `flash_firmware` stop the holding server first and say so. A call that halts or \
-resets the target says so. If the running program has closed the debug port, `board_state` can get \
-back in by resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up \
-code, only a power cycle does. An argument no tool parameter has is refused, not ignored.
+absolute paths. `run_firmware` lets go of the probe once the program starts; with \
+`keep_probe=True` a GDB server keeps holding it, and while it does, a core that locks up is reset, \
+which clears its fault registers. `reset_target` and `flash_firmware` stop a holding server first \
+and say so. A call that halts or resets the target says so. If the running program has closed the \
+debug port, `board_state` can get back in by resetting the target, and `reset_target` cannot; on \
+an STM32N6 running ST's start-up code, only a power cycle does. An argument no tool parameter has \
+is refused, not ignored.
 """
 
 
@@ -953,16 +954,16 @@ def run_firmware(
     probe_serial: str | None = None,
     console_seconds: float = 3.0,
     interface: Interface = "swd",
-    keep_probe: bool = True,
+    keep_probe: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Reset the target, load an ELF into its RAM, start it, and verify that it
-started: by its board's console output, or else by program-counter samples inside the
-image. Refuses an image not linked for RAM: vector table at board_state's
-`vector_table_addr`, every segment within 0x20000000-0x3FFFFFFF. Keeps the
-probe afterwards, and a core that then locks up is reset, clearing its fault
-registers; `keep_probe=False` lets go once the program starts, and
-release_probe says what that costs. No signing.
+started: by its board's console output, or else by program-counter samples
+inside the image. Refuses an image not linked for RAM: vector table at
+board_state's `vector_table_addr`, every segment within 0x20000000-0x3FFFFFFF.
+Lets go of the probe once the program starts; `keep_probe=True` keeps a GDB
+server holding it, and a core that then locks up is reset, clearing its fault
+registers. No signing.
     """
     too_long = _capture_seconds_problem(console_seconds, "console_seconds")
     if too_long:
@@ -1104,21 +1105,21 @@ release_probe says what that costs. No signing.
             **_held_disclosure(serial), **_server_output(gdb_server),
         )
 
-    # By default the server keeps the probe after the start. A program that
-    # closes the debug port (takes the SWD pins, stops a clock, sleeps without
-    # debug, or runs the STM32N6's usual start-up code) cannot then lock the
-    # debugger out, and the other tools read beside the server in ST's shared
-    # mode. Letting go after every run, as from b6e5aa8, turned such a program
-    # into a reset or a power cycle. Holding has its own cost: a held server
-    # resets and halts a core that locks up, which clears the fault registers
-    # (H7, F407 and N6, 2026-10-04). So the agent chooses, with keep_probe.
+    # By default the probe is let go once the program starts. Holding it from
+    # 108d2f8 was meant to keep a program that closes the debug port from locking
+    # the debugger out; it did not: a program that takes the SWD pins cut off a
+    # held server on the H7, and the STM32N6's usual start-up code closed its
+    # port under a held server (2026-10-07). Holding costs a reset of a core that
+    # locks up, which clears its fault registers (H7, F407 and N6, 2026-10-04),
+    # and stuck probes followed shared-mode holding on two boards. keep_probe
+    # keeps it held, for run_until and reads without a new GDB server.
 
     detail: dict[str, Any] = {
         "probe_serial": serial,
         "elf_path": str(elf),
         **_connection_fields(probe, info),
         **_held_disclosure(serial),
-        **({} if keep_probe or not quirks.debug_closes_on_run else {"warning": _RELEASE_WARNING}),
+        **({"warning": _CLOSES_WARNING} if quirks.debug_closes_on_run else {}),
         "console_port": port,
         "console_port_source": probe_info.console_source if probe_info else None,
         **({"console_note": probe_info.console_note}
@@ -1349,10 +1350,10 @@ def _held_disclosure(serial: str | None) -> dict[str, Any]:
     return disclosure
 
 
-_RELEASE_WARNING = (
-    "On an STM32N6 running ST's usual start-up code, the debug port stayed closed "
-    "after a release until a power cycle. board_state's family note says what in "
-    "the image does it."
+_CLOSES_WARNING = (
+    "On an STM32N6, an image built on ST's usual start-up code closes the debug port "
+    "until a power cycle, whether or not the probe is held. board_state's family note "
+    "says which line does it."
 )
 
 #: For a core halted by a vector catch while a server held its probe.
@@ -1472,7 +1473,7 @@ ST's start-up code, which needs a power cycle. `unverified` if nothing was held.
     if released and stops:
         detail["core_after"] = {s: _core_state_after_release(s, stop, interfaces[s]) for s, stop in stops.items()}
     if released and any(q.debug_closes_on_run for q in quirks):
-        detail["warning"] = _RELEASE_WARNING
+        detail["warning"] = _CLOSES_WARNING
 
     if not released:
         return unverified(
