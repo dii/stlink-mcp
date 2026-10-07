@@ -8,6 +8,7 @@ in /proc/net/tcp."""
 
 from __future__ import annotations
 
+import signal
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,8 @@ def test_a_probe_that_stopped_answering_is_named_as_the_probe() -> None:
     assert "other probe wired to the same board at the same time" in hint
 
 
+@pytest.mark.skipif(not hasattr(signal, "SIGKILL"),
+                    reason="no SIGKILL: on Windows there is no /proc and stop_idle_daemon returns at once")
 class TestAnIdleDaemonIsStopped:
     """X11. A model of /proc: processes as directories with comm and cmdline,
     a daemon that exits on SIGTERM unless told not to, and the daemon's socket

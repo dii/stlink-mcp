@@ -31,13 +31,17 @@ from stlink_mcp import faults, result, server
 from stlink_mcp import symbols as symbols_mod
 from stlink_mcp.toolchain import ToolchainError
 
+# A path that does not exist and is absolute everywhere: "/nonexistent.elf" has
+# no drive on Windows, so the server refuses it as relative before reaching the body.
+_NOWHERE = Path("/nonexistent").resolve()
+
 # Every tool, with the smallest argument set that reaches its body.
 TOOL_CALLS: dict[str, dict] = {
     "list_probes": {},
     "board_state": {},
-    "run_firmware": {"elf_path": "/nonexistent.elf"},
+    "run_firmware": {"elf_path": str(_NOWHERE / "x.elf")},
     "release_probe": {},
-    "flash_firmware": {"image_path": "/nonexistent.bin"},
+    "flash_firmware": {"image_path": str(_NOWHERE / "x.bin")},
     "read_memory": {"address": 0x20000000},
     "core_registers": {},
     "capture_console": {"seconds": 0.01},
@@ -46,8 +50,8 @@ TOOL_CALLS: dict[str, dict] = {
     "read_fault_status": {},
     "read_option_bytes": {},
     "locate_fault": {},
-    "run_until": {"elf_path": "/nonexistent.elf", "location": "main"},
-    "disassemble": {"elf_path": "/nonexistent.elf", "location": "main"},
+    "run_until": {"elf_path": str(_NOWHERE / "x.elf"), "location": "main"},
+    "disassemble": {"elf_path": str(_NOWHERE / "x.elf"), "location": "main"},
     "sample_values": {"what": ["0x24070000"], "seconds": 0.1},
 }
 
@@ -3231,6 +3235,7 @@ class TestFilesAreNamedTheSameWayEverywhere:
 
     def test_home_is_expanded_and_a_missing_elf_is_refused_before_the_probe(self, bench, untouched, monkeypatch, tmp_path) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))  # what Windows reads for ~
         out = call("board_state", elf_path="~/missing.elf")
         assert out["status"] == result.FAILED
         assert out["error"] == f"No such ELF: {tmp_path / 'missing.elf'}"

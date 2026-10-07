@@ -380,6 +380,15 @@ async def check_read_effects(server: Server, label: str, serial: str, images: Bu
         await server.call("release_probe", probe_serial=s)
 
 
+def _remove(folder: Path) -> None:
+    """Remove a folder this check made, and say so when that fails: ignoring
+    the failure left a Windows build folder behind unnoticed (2026-10-07)."""
+    try:
+        shutil.rmtree(folder)
+    except OSError as exc:
+        print(f"could not remove {folder}: {exc}", flush=True)
+
+
 def _daemon_idle() -> bool | None:
     """Whether ST's stlink-server runs with no ST-LINK GDB server to serve; None
     without /proc."""
@@ -408,9 +417,15 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
     await server.call("release_probe", probe_serial=s)
     var = await server.call("read_memory", probe_serial=s, symbol="g_state", elf_path=str(images.elf[own]))
     idle = _daemon_idle()
-    report.check(idle is False or idle is None,
-                 f"{label}: after release_probe and one call, ST's sharing daemon is not left running with no GDB server",
-                 f"daemon idle: {idle}")
+    if idle is None:
+        # Without /proc the server does not stop the daemon either, so a pass here
+        # would only say the daemon was never started (Windows, 2026-10-07).
+        print(f"SKIP  {label}: ST's sharing daemon after release_probe, not checked: no /proc to read processes from",
+              flush=True)
+    else:
+        report.check(not idle,
+                     f"{label}: after release_probe and one call, ST's sharing daemon is not left running with no GDB server",
+                     f"daemon idle: {idle}")
     value = var.get("value") or {}
     report.check(var["status"] == "verified" and value.get("temperature_mc") == -1234 and value.get("gain") == 1.5
                  and value.get("mode") == "MODE_RUN (3)" and value.get("flags") == {"a": 5, "b": 17, "c": 0xBEEF}
@@ -711,7 +726,7 @@ async def check_n6_flash(server: Server, serial: str, report: Report) -> None:
             why = "identical" if restored else "differs"
         report.check(restored, "N6 flash: the first 128 KB are written back and verified", why)
         if restored:
-            shutil.rmtree(folder, ignore_errors=True)
+            _remove(folder)
 
 
 async def check_n6(server: Server, serial: str, images: Built, report: Report) -> bool:
@@ -881,7 +896,7 @@ async def main() -> int:
         if args.keep_images:
             print(f"images kept in {image_dir}")
         else:
-            shutil.rmtree(image_dir, ignore_errors=True)
+            _remove(image_dir)
 
 
 async def _run(args: argparse.Namespace, images: Built) -> int:

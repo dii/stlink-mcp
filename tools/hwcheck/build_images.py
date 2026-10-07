@@ -9,6 +9,7 @@ run of hwcheck.py, so no build output is ever tracked or packaged.
 
 from __future__ import annotations
 
+import stat
 import subprocess
 import sys
 import tempfile
@@ -168,6 +169,9 @@ def build(out_dir: Path) -> Built:
             boot = out_dir / f"{image.name}-boot.bin"
             subprocess.run([str(signing_tool), "-bin", str(raw), "-nk", "-t", "fsbl", "-hv", "2.3",
                             "-align", "-o", str(boot), "-s"], check=True, capture_output=True)
+            # The signing tool writes its output read-only, and Windows will not delete a
+            # read-only file, so the build folder outlived the run there (2026-10-07).
+            boot.chmod(boot.stat().st_mode | stat.S_IWRITE)
             built.bin[f"{image.name}-boot"] = boot
     return built
 
