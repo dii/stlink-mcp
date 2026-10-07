@@ -564,3 +564,15 @@ The closed-port checks of `tools/hwcheck --n6-closed`, with the held-probe check
 
 After the release, in two runs of three, the N6's STLINK-V3 answered DEV_TCP_CMD_ERR to every connect until its USB power was cut, as the H7's STLINK-V3E did after programs took its SWD pins while held in shared mode. In the third, `board_state` fell back to access port 0 with access port 1 unreachable even through a reset, the closed port as before. A probe stuck this way, after a program closed the debug port under a held server in shared mode, is now seen on two boards with two probes.
 
+## The neighbours read again (2026-10-07)
+
+A red team of the README searched for MCP servers of the same shape, and each repository was then read through GitHub's API on 2026-10-07 (stars; last push):
+
+- Adancurusul/embedded-debugger-mcp (199; 2026-07-16): its README (line 47) supports "a probe-rs compatible debug probe such as ST-Link, J-Link, DAPLink, Black Magic Probe" or OpenOCD, so the README's list of its probes had left out ST-LINK.
+- shieldyguy/stm32-mcp (25; 2026-08-13): `src/stm32_mcp/flash.py` composes its own result lines, "Flash: OK" on OpenOCD's "** Programming Finished **", "Verify: OK" on "** Verified OK **" with `verify=True` by default, and "Reset: OK" whenever a reset was requested, with nothing checked; its TODO.md records "Build: OK" from its own `_summarize_build` with nothing compiled. The README had said it returns the tools' own text.
+- Helistana/mcp-stm32cubeide-server (1; 2026-08-13): as described.
+- Zeraissh/stm32-gdb-mcp (0; 2026-10-05; on PyPI): STM32 over GDB with OpenOCD, ST-LINK or J-Link; breakpoints, `step`, FreeRTOS, RTT, SWO and UART logging, PC sampling; results decoded with `suggested_next_actions`; its README says "Reads need a HALTED core." Not named before.
+- BlaineMoon30/STM32-DEBUG-MCP (0; 2026-10-04): "Supported OS : Windows"; OpenOCD and GDB or STM32_Programmer_CLI; hot-plug reads of a running board, which its README hedges ("On some setups HotPlug may still halt/reset"). Not named before.
+- Klievan/jlink-mcp (32; 2026-09-15): J-Link on Cortex-M; its README says of the defects its hardware tests found that "Every one of those reported success", and that its suites check parsed content, not that a call returned. Not named before.
+- Found and not named, for the reasons given: vividcode-ai/embedded-xLink-mcp, whose README matches embedded-debugger-mcp's Chinese README apart from its title and paths; NewNoob2002/jlink-mcp, a fork of Klievan/jlink-mcp; and several build-only or serial-only servers.
+

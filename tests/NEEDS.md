@@ -17,6 +17,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X8.** The access port that last worked for a probe is tried first, so a part whose working port is not 0 does not pay for a failed connect on every call (about 1.1 s on an STM32N6).
 - **X9.** Every client is told on connecting what the server is for, how to read a result and the usual order of calls, even one that shows its agent no tool descriptions; every tool it names exists.
 - **X10.** An argument no parameter has is refused, naming it and the nearest parameter, and nothing is done; it is never dropped.
+- **X12.** A file argument is taken the same way by every tool: `~` expanded, and a relative path refused, naming the server's working directory, before anything touches the probe.
 - **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
 
 ## list_probes (LP)
@@ -34,6 +35,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **BS4.** Program-counter samples are placed in the source when an ELF is given.
 - **BS5.** Every family value carries its provenance, and only `measured` ones are presented as seen to work.
 - **BS7.** On a part whose boot pins it knows how to read, it says whether the board is in development boot or flash boot, and says nothing when it cannot read them.
+- **BS8.** A missing ELF is refused before the probe is touched.
 - **BS6.** A core found halted by a vector catch beside a held server is reported as most likely a lockup the server reset, with `keep_probe=False` as the way to keep the fault.
 
 ## run_firmware (RF)

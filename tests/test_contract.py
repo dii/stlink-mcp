@@ -3192,6 +3192,40 @@ class TestAnExceptionIsStillAResult:
         assert out["target_was_reset"] is None
 
 
+class TestFilesAreNamedTheSameWayEverywhere:
+    """X12 and BS8. The README's client set-up starts the server in its own
+    checkout, so a relative path an agent gave from its project was looked up
+    there; "~" worked in some tools and not others; and board_state given a
+    missing ELF returned program-counter places with no source and no error."""
+
+    @pytest.fixture
+    def untouched(self, monkeypatch):
+        monkeypatch.setattr(_FakeProbe, "identify", lambda self, allow_reset=True: pytest.fail("the probe was touched"))
+
+    @pytest.mark.parametrize("name,args", [
+        ("run_firmware", {"elf_path": "build/app.elf"}),
+        ("flash_firmware", {"image_path": "build/app.bin", "address": "0x08000000"}),
+        ("disassemble", {"elf_path": "build/app.elf", "location": "main"}),
+        ("board_state", {"elf_path": "build/app.elf"}),
+        ("core_registers", {"elf_path": "build/app.elf"}),
+        ("locate_fault", {"elf_path": "build/app.elf"}),
+        ("run_until", {"elf_path": "build/app.elf", "location": "main"}),
+        ("read_memory", {"symbol": "g_state", "elf_path": "build/app.elf"}),
+        ("sample_values", {"what": ["g_state"], "elf_path": "build/app.elf"}),
+    ])
+    def test_a_relative_path_is_refused_naming_where_it_would_be_looked_up(self, bench, untouched, name, args) -> None:
+        out = call(name, **args)
+        assert_contract(out)
+        assert out["status"] == result.FAILED and "absolute path" in out["error"]
+        assert str(Path.cwd()) in out["error"]
+
+    def test_home_is_expanded_and_a_missing_elf_is_refused_before_the_probe(self, bench, untouched, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        out = call("board_state", elf_path="~/missing.elf")
+        assert out["status"] == result.FAILED
+        assert out["error"] == f"No such ELF: {tmp_path / 'missing.elf'}"
+
+
 class TestOneProbeOneSpelling:
     """A serial typed in lower case named the same probe to the programmer, but
     the server's record of what it holds was keyed by the spelling, so another

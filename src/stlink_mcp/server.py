@@ -104,13 +104,13 @@ an ELF into RAM and start it, or `flash_firmware` to write flash. Without haltin
 `locate_fault`. `reset_target` restarts it; `release_probe` when done.
 
 Give `probe_serial` on every call: without it each call first lists the probes, which takes a \
-second or more and holds up every other board. Give addresses as "0x..." strings. `run_firmware` \
-keeps holding the probe, and while it does, a core that locks up is reset, which clears its fault \
-registers: when looking for a crash, run with `keep_probe=False`. `reset_target` and \
-`flash_firmware` stop the holding server first and say so. A call that halts or resets the target \
-says so. If the running program has closed the debug port, `board_state` can get back in by \
-resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up code, only a \
-power cycle does. An argument no tool parameter has is refused, not ignored.
+second or more and holds up every other board. Give addresses as "0x..." strings and files as \
+absolute paths. `run_firmware` keeps holding the probe, and while it does, a core that locks up is \
+reset, which clears its fault registers: when looking for a crash, run with `keep_probe=False`. \
+`reset_target` and `flash_firmware` stop the holding server first and say so. A call that halts or \
+resets the target says so. If the running program has closed the debug port, `board_state` can get \
+back in by resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up \
+code, only a power cycle does. An argument no tool parameter has is refused, not ignored.
 """
 
 
@@ -344,6 +344,10 @@ def _listing_needed(probe_serial: str | None, console: bool) -> bool:
     return settings.console_is_bare_path()
 
 
+#: Tool parameters that name a file on the machine running the server.
+_FILE_ARGUMENTS = ("elf_path", "image_path")
+
+
 def _serialised(tool: _Tool) -> _Tool:
     """Run a tool body under the gate and its probe's lock. Applied under
     @mcp.tool() on every tool, and TestToolCallsShareOnlyWhatTheyMust fails for
@@ -360,11 +364,29 @@ def _serialised(tool: _Tool) -> _Tool:
         # locks, are keyed by serial, and the programmer prints them upper case.
         if takes_serial and isinstance(bound.get("probe_serial"), str):
             bound["probe_serial"] = bound["probe_serial"].strip().upper()
+        # A file is named the same way to every tool: "~" expanded, and a relative
+        # path refused, since it would be looked up from this server's working
+        # directory, which an MCP client need not set to the agent's project.
+        refusal = None
+        for name in _FILE_ARGUMENTS:
+            value = bound.get(name)
+            if isinstance(value, str) and value.strip():
+                path = Path(value.strip()).expanduser()
+                if not path.is_absolute():
+                    refusal = failed(
+                        f"{name} {value!r} is a relative path. This server looks files up from "
+                        f"its own working directory, {Path.cwd()}, which need not be your "
+                        f"project's (there it would be {Path.cwd() / path}). Give an absolute path."
+                    )
+                    break
+                bound[name] = str(path)
         serial = bound.get("probe_serial") if takes_serial else None
         caller = _caller_from(bound.get("ctx"))
         token = _CALLER.set(caller)
         try:
-            if serial is None or _listing_needed(serial, console):
+            if refusal is not None:
+                result = refusal
+            elif serial is None or _listing_needed(serial, console):
                 with _GATE.exclusive():
                     result = tool(*binding.args, **binding.kwargs)
             else:
@@ -792,6 +814,10 @@ the program and can get past a debug port the program closed; `target_was_reset`
 so. Never resets beside a GDB server holding the probe. `family.provenance`
 says which values were measured.
     """
+    # Checked before the connect, which may reset: a missing ELF used to come back
+    # as program-counter places with no function, file or line, and no error.
+    if elf_path and not Path(elf_path).exists():
+        return failed(f"No such ELF: {elf_path}")
     try:
         toolchain = _toolchain()
     except ToolchainError as exc:

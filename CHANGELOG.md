@@ -48,6 +48,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - `sample_values` and `disassemble` raised on hex digits without their `0x` prefix, such as "08000000", and returned no status; they now refuse them, as `read_memory` does.
 - `run_firmware` connected, possibly resetting the board, before finding that the ELF did not exist; it now checks first, and its refusals after the connect say whether the board was reset.
 - A failed `capture_swo` did not say that the trace output may have been left on.
+- A relative `elf_path` or `image_path` was looked up from the server's own working directory, which the README's client set-up makes the server's checkout, and failed as a missing file; it is now refused, naming that directory. `~` is expanded in every tool, where some did not. `board_state` given a missing ELF returned program-counter places with no source and no error; it now refuses before connecting.
 - A failed `run_firmware` did not say that the GDB server it started had reset and halted the target, and `run_until`'s refusals after attaching did not say that GDB had halted the core.
 - An exception a tool did not handle, such as the programmer timing out on a hung probe in `board_state`, reached the agent with no status; it is now a `failed` result that says whether the target was touched is not known.
 - A probe serial typed in lower case was not matched to the server holding that probe, so another call could reset beside it. Serials are now taken in upper case, as the programmer prints them.
