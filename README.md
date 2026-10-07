@@ -316,7 +316,7 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * It does not build your firmware. That is your build system's job.
 * It does not sign images, because signing needs keys and options that belong to your project rather than to a programmer.
 * Only ST-LINK with STM32CubeCLT is supported. There is no abstraction layer waiting for a second backend: adding OpenOCD would mean introducing one first.
-* Run on Fedora Linux 44 with STM32CubeCLT 1.22.0 and Python 3.12, with the on-board ST-LINK V3 probes of NUCLEO-N657X0-Q, NUCLEO-H743ZI2 and STM32H753I-EVAL2 boards, and with ST-LINK/V2 probes on an STM32H743's JTAG connector and on a custom STM32F407 board. Other Linux distributions should work and have not been run. macOS has not been tried. Windows 11 has been run with one NUCLEO-N657X0-Q, where every check for that board passed; SWO, JTAG, writing flash and the other boards have not been run there.
+* Run on Fedora Linux 44 with STM32CubeCLT 1.22.0 and Python 3.12, with the on-board ST-LINK V3 probes of NUCLEO-N657X0-Q, NUCLEO-H743ZI2 and STM32H753I-EVAL2 boards, and with ST-LINK/V2 probes on an STM32H743's JTAG connector and on a custom STM32F407 board. Other Linux distributions should work and have not been run. macOS has not been tried. Windows 11 has been run with one NUCLEO-N657X0-Q, where every check for that board passed but one that cannot look there, whether ST's sharing daemon was left running; SWO, JTAG, writing flash and the other boards have not been run there.
 * An ST-LINK/V2-1 has not been tried. If you hit a parsing problem on any probe, the captured `STM32_Programmer_CLI -l` output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
 
