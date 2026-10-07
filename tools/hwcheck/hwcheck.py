@@ -805,17 +805,16 @@ async def check_n6_closed(server: Server, serial: str, images: Built, report: Re
     """Close the N6's debug port as ST's start-up code does, and check what the
     tools say to it. Only a power cycle reopens it."""
     s = serial
-    await server.call("run_firmware", elf_path=str(images.elf["n6_close"]), probe_serial=s, console_seconds=1,
-                      keep_probe=True)
+    await server.call("run_firmware", elf_path=str(images.elf["n6_close"]), probe_serial=s, console_seconds=1)
     first = await server.call("read_memory", address=N6_COUNTER, length_bytes=4, probe_serial=s)
     await anyio.sleep(1.0)
     second = await server.call("read_memory", address=N6_COUNTER, length_bytes=4, probe_serial=s)
     a, b = _counter(first, N6_COUNTER), _counter(second, N6_COUNTER)
-    # Holding does not keep the port open once the image closes it (2026-10-07):
-    # the read beside the held server fails, and has to say why.
+    # The run lets go by default (2026-10-07); holding did not keep this port
+    # open either, and a probe held in shared mode then stuck in 3 runs of 4.
     report.check(first["status"] == "failed" and second["status"] == "failed"
                  and "closed" in first.get("error", "") + first.get("hint", ""),
-                 "N6 closed: under the held server, a read fails and names the closed port",
+                 "N6 closed: after the run lets go, a read fails and names the closed port",
                  f"{a and hex(a)} then {b and hex(b)}; {_why(first)}")
     await server.call("release_probe", probe_serial=s)
     read = await server.call("read_memory", address=N6_COUNTER, probe_serial=s)
