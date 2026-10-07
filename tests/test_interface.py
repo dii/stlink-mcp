@@ -133,6 +133,56 @@ class TestAServerThatNeverListensSaysWhy:
             runner.GdbServer(tc, 0, 61300, serial="AAAA0001").__enter__()
 
 
+class TestAFailedStartLeavesNothingBehind:
+    """X13. Found on Windows (2026-10-07): a server whose start failed left its
+    log's folder in the temporary directory, one more each time."""
+
+    @pytest.fixture
+    def temp(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(runner.tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(runner, "port_is_taken", lambda port: False)
+        monkeypatch.setattr(runner, "port_is_accepting", lambda port: False)
+        monkeypatch.setattr(runner, "_LISTEN_TIMEOUT", 0.3)
+        return tmp_path
+
+    @staticmethod
+    def _proc(exited: bool):
+        import io
+
+        class _Proc:
+            stdout = io.StringIO("Error in initializing ST-LINK device.\n")
+            stopped = False
+            def poll(self):
+                return 1 if exited or self.stopped else None
+            def terminate(self):
+                self.stopped = True
+            def wait(self, timeout=None):
+                return 1
+        return _Proc()
+
+    def _start(self, monkeypatch, popen) -> None:
+        monkeypatch.setattr(runner.subprocess, "Popen", popen)
+        tc = SimpleNamespace(gdb_server="srv", programmer_bin_dir="bin")
+        with pytest.raises((runner.RunError, OSError)):
+            runner.GdbServer(tc, 0, 61300, serial="AAAA0001").__enter__()
+
+    def test_a_server_that_cannot_be_started(self, temp, monkeypatch) -> None:
+        def missing(argv, **kw):
+            raise FileNotFoundError(argv[0])
+        self._start(monkeypatch, missing)
+        assert not list(temp.iterdir())
+
+    def test_a_server_that_exits_before_it_listens(self, temp, monkeypatch) -> None:
+        proc = self._proc(exited=True)
+        self._start(monkeypatch, lambda argv, **kw: proc)
+        assert not list(temp.iterdir())
+
+    def test_a_server_that_never_listens_is_stopped(self, temp, monkeypatch) -> None:
+        proc = self._proc(exited=False)
+        self._start(monkeypatch, lambda argv, **kw: proc)
+        assert proc.stopped and not list(temp.iterdir())
+
+
 class TestAnOldProbeIsNotCalledAbsent:
     """Captured 2026-10-01: an ST-LINK/V2 on V2J16S4 was listed by -l, then a
     connect naming its serial said "Serial number not found", and one by index

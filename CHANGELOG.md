@@ -52,6 +52,7 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 - A failed `run_firmware` did not say that the GDB server it started had reset and halted the target, and `run_until`'s refusals after attaching did not say that GDB had halted the core.
 - An exception a tool did not handle, such as the programmer timing out on a hung probe in `board_state`, reached the agent with no status; it is now a `failed` result that says whether the target was touched is not known.
 - A probe serial typed in lower case was not matched to the server holding that probe, so another call could reset beside it. Serials are now taken in upper case, as the programmer prints them.
+- A GDB server that failed to start, such as on a target that would not connect, left the folder for its log in the temporary directory. It is now removed.
 - `release_probe` read the core's state over SWD after a run over JTAG; it now uses the interface of the server it released.
 - A run that could not be sampled because the GDB server keeps the probe to itself now says why, and that `keep_probe=False` would let it be sampled.
 - `read_memory` read an ADC's common data register without a word, though on an STM32H743 reading it cleared EOC as reading the ADC's own data register does. CDR is now on the read-effects list.

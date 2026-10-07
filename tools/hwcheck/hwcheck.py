@@ -95,6 +95,7 @@ class Server:
 class Report:
     def __init__(self) -> None:
         self.rows: list[tuple[bool, str, str]] = []
+        self.skipped: list[str] = []
 
     def check(self, ok: bool, name: str, saw: str) -> bool:
         self.rows.append((ok, name, saw))
@@ -106,6 +107,11 @@ class Report:
                     print(f"          {line}", flush=True)
         CALLS.clear()
         return ok
+
+    def skip(self, name: str, why: str) -> None:
+        """A check that could not look, which is neither a pass nor a fail."""
+        self.skipped.append(name)
+        print(f"SKIP  {name}\n        {why}", flush=True)
 
     @property
     def failed(self) -> int:
@@ -420,8 +426,8 @@ async def check_names(server: Server, label: str, serial: str, images: Built, re
     if idle is None:
         # Without /proc the server does not stop the daemon either, so a pass here
         # would only say the daemon was never started (Windows, 2026-10-07).
-        print(f"SKIP  {label}: ST's sharing daemon after release_probe, not checked: no /proc to read processes from",
-              flush=True)
+        report.skip(f"{label}: after release_probe and one call, ST's sharing daemon is not left running with no GDB server",
+                    "not checked: no /proc to read processes from")
     else:
         report.check(not idle,
                      f"{label}: after release_probe and one call, ST's sharing daemon is not left running with no GDB server",
@@ -941,7 +947,8 @@ async def _run(args: argparse.Namespace, images: Built) -> int:
         async with Server() as server:
             await server.call("reset_target", probe_serial=h7)  # leave the H7 on its own firmware
 
-    print(f"\n{len(report.rows) - report.failed} passed, {report.failed} failed")
+    skipped = f", {len(report.skipped)} skipped" if report.skipped else ""
+    print(f"\n{len(report.rows) - report.failed} passed{skipped}, {report.failed} failed")
     return 1 if report.failed or not report.rows else 0
 
 

@@ -18,6 +18,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X9.** Every client is told on connecting what the server is for, how to read a result and the usual order of calls, even one that shows its agent no tool descriptions; every tool it names exists.
 - **X10.** An argument no parameter has is refused, naming it and the nearest parameter, and nothing is done; it is never dropped.
 - **X12.** A file argument is taken the same way by every tool: `~` expanded, and a relative path refused, naming the server's working directory, before anything touches the probe.
+- **X13.** A GDB server that fails to start leaves nothing behind: no process, and no folder for its log.
 - **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
 
 ## list_probes (LP)

@@ -74,8 +74,11 @@ def test_a_probe_that_stopped_answering_is_named_as_the_probe() -> None:
     assert "other probe wired to the same board at the same time" in hint
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGKILL"),
-                    reason="no SIGKILL: on Windows there is no /proc and stop_idle_daemon returns at once")
+# The tests that signal a daemon: Windows has no SIGKILL, and no /proc either, so
+# stop_idle_daemon returns there before any signal (test_without_proc_it_does_nothing).
+_signals = pytest.mark.skipif(not hasattr(signal, "SIGKILL"), reason="no SIGKILL on this system")
+
+
 class TestAnIdleDaemonIsStopped:
     """X11. A model of /proc: processes as directories with comm and cmdline,
     a daemon that exits on SIGTERM unless told not to, and the daemon's socket
@@ -118,6 +121,7 @@ class TestAnIdleDaemonIsStopped:
     DAEMON = (412, ("stlink-server", "/usr/bin/stlink-server"))
     GDB_SERVER = (500, ("ST-LINK_gdbserv", "/opt/st/stm32cubeclt_1.22.0/STLink-gdb-server/bin/ST-LINK_gdbserver"))
 
+    @_signals
     def test_with_no_gdb_server_the_daemon_is_stopped_and_the_connect_is_plain(self, machine) -> None:
         import signal
         state = machine(dict([self.DAEMON, (77, ("bash", "/usr/bin/bash"))]))
@@ -129,11 +133,13 @@ class TestAnIdleDaemonIsStopped:
         assert _probe()._connect_args(0)[-1] == "shared" and state.signals == []
         assert pm._list_argv(SimpleNamespace(programmer=Path("STM32_Programmer_CLI")))[-1] == "shared"
 
+    @_signals
     def test_a_listing_with_no_gdb_server_stops_it_too(self, machine) -> None:
         state = machine(dict([self.DAEMON]))
         assert "shared" not in pm._list_argv(SimpleNamespace(programmer=Path("STM32_Programmer_CLI")))
         assert state.signals
 
+    @_signals
     def test_one_that_ignores_sigterm_is_killed(self, machine) -> None:
         import signal
         state = machine(dict([self.DAEMON]), stubborn={412})

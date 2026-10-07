@@ -194,19 +194,24 @@ class GdbServer:
         argv += ["-l", "16", "-f", str(self.log_path)]
         if self.serial:
             argv += ["-i", self.serial]
-        self._proc = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-        )
-
-        deadline = time.monotonic() + _LISTEN_TIMEOUT
-        while time.monotonic() < deadline:
-            if port_is_accepting(self.port):
-                self._start_draining()
-                return self
-            if self._proc.poll() is not None:
-                out = strip_ansi(self._proc.stdout.read() if self._proc.stdout else "")
-                raise RunError(server_exit_message(out))
-            time.sleep(0.2)
+        # A start that fails stops what it started and removes the log's folder,
+        # which used to be left in the temporary directory (2026-10-07).
+        try:
+            self._proc = subprocess.Popen(
+                argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            deadline = time.monotonic() + _LISTEN_TIMEOUT
+            while time.monotonic() < deadline:
+                if port_is_accepting(self.port):
+                    self._start_draining()
+                    return self
+                if self._proc.poll() is not None:
+                    out = strip_ansi(self._proc.stdout.read() if self._proc.stdout else "")
+                    raise RunError(server_exit_message(out))
+                time.sleep(0.2)
+        except BaseException:
+            self.__exit__()
+            raise
 
         # Its output says why, and used to be thrown away here: the server was
         # stopped without its pipe being read (red-team RT8, 2026-09-03). Once it
