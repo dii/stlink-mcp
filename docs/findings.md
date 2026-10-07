@@ -547,3 +547,20 @@ Exploring why the loader fails (2026-10-06, the same evening), each step followe
 
 So `flash_firmware` reads the N6's boot pins (SYSCFG_BOOTSR, while the SYSCFG clock runs) and refuses in flash boot before the loader runs, and `board_state` reports the boot mode. On the board in flash boot: `board_state` read flash boot; `flash_firmware` refused and the image's counter went on advancing; after `reset_target` the image booted again, opened debug, and the probe reached the core.
 
+## The same tasks through stmcp (2026-10-05 and 10-06)
+
+phryniszak/stmcp, at commit 0ccdcfc (2026-08-20), an MCP server on the same STM32CubeCLT tools, was run on the seven bench tasks of "Agents using the server" above, through the same wrapper, with the same four agents, prompt and answer key, one run per agent and task, and scored against the key the same way. Read in its source the same week: a run counts as done when the command returns, its reads go through GDB and halt the core (its README says so), a reset returns the program counter unchecked, and nothing checks that the target runs the ELF it was given.
+
+| | right | partly | wrong | no answer | runs |
+| --- | --- | --- | --- | --- | --- |
+| stmcp | 10 | 10 | 5 | 3 | 28 |
+| stlink-mcp | 23 | 4 | 0 | 1 | 28 |
+
+stlink-mcp's runs are those of 2026-10-04, on its code that morning (the crash, fault, hang and silent-image tasks run again by the Claude agents after that afternoon's changes, and scored the same), one rerun of the port-closing task on 6f0b500, and the H7's Gemini runs on 2026-10-06; stmcp's are of 2026-10-05 and 10-06. So the two sides ran on different days and server versions. What stmcp's agents got no help with: two never reached the STM32N6's core, which is on access port 1, and two found it by trial; on the flash task, the F407's first connects failed at the default clock and two agents lowered it until one worked; a halt of a running target timed out in several runs; the ELF's entry point was taken for where a load leaves the program counter; and one agent took "Start operation achieved successfully" as the board running. The tasks were set and scored by this project's author, not blind, with one run per cell, so the totals are an indication, not a measurement of either server.
+
+## Holding does not keep the N6's port open (2026-10-07)
+
+The closed-port checks of `tools/hwcheck --n6-closed`, with the held-probe check added on 2026-10-04, ran for the first time: in the full run on all three boards, which otherwise passed 128 of 128, and in a run of the N6 alone. The image that makes ST's start-up store (SYSCFG clock off) was run by `run_firmware`, which kept its GDB server holding the probe in ST's shared mode. Reads beside the held server then failed, and in a separate run `core_registers` through the held server failed too: GDB's connect got no answer in 30 seconds. So holding the probe does not keep the N6's debug port open once that store runs. The August observation that it did (above) was of a GDB client kept connected throughout, which `run_firmware` no longer does after the start.
+
+After the release, in two runs of three, the N6's STLINK-V3 answered DEV_TCP_CMD_ERR to every connect until its USB power was cut, as the H7's STLINK-V3E did after programs took its SWD pins while held in shared mode. In the third, `board_state` fell back to access port 0 with access port 1 unreachable even through a reset, the closed port as before. A probe stuck this way, after a program closed the debug port under a held server in shared mode, is now seen on two boards with two probes.
+

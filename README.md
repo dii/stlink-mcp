@@ -8,6 +8,33 @@ Firmware development is a loop: change the code, build, load it onto the board, 
 
 With this server attached, the agent runs the loop itself. It identifies the board, loads the image, captures the console, reads the registers and the fault status, and decides what to change next from what the target actually did. You supervise the conclusions instead of relaying the evidence.
 
+## How it fits
+
+The agent edits and builds the firmware as it already does. This server is the part that reaches the board: it drives ST's tools, and returns what they did as a result that says what was checked.
+
+```mermaid
+flowchart LR
+    agent["AI coding agent"] -- "builds" --> project["Your firmware project"]
+    agent -- "MCP tool calls" --> server["stlink-mcp"]
+    server -- "result: verified, unverified or failed" --> agent
+    server --> clt["STM32CubeCLT: STM32_Programmer_CLI, ST-LINK_gdbserver, GDB"]
+    clt --> probe["ST-LINK probe"]
+    probe -- "SWD or JTAG, SWO" --> board["STM32 board"]
+    board -- "serial console, through the probe" --> server
+```
+
+What the agent does with it is the development loop, without a person relaying what the board did:
+
+```mermaid
+flowchart LR
+    edit["Edit"] --> build["Build"] --> load["Load or flash: run_firmware, flash_firmware"]
+    load --> observe["Observe: capture_console, sample_values, read_memory, board_state"]
+    observe --> ok{"Did it do what was intended?"}
+    ok -- "no" --> find["Find out why: read_fault_status, locate_fault, run_until, core_registers"]
+    find --> edit
+    ok -- "yes" --> next["Next change"]
+```
+
 ## Why the reports have to be true
 
 That loop is only as good as what the tools tell the agent. A developer catches a tool that overstates, because they hold information the tool never gave them: the LED that did not change, console text that looks like the previous build, the board in their hand. An agent has none of that. The text a tool returns is its entire model of the hardware, so a tool that reports success for something it did not do makes the agent confidently wrong, and the agent then writes that wrongness into code, commit messages and documentation, where it costs far more than the failed operation did.
@@ -34,7 +61,12 @@ An agent driving those tools inherits every one of them. So the rule here is:
 
 ## Who this is for
 
-Use it if your board has an ST-LINK, STM32CubeCLT is already installed, and you want an agent whose every report names what was observed on the target. It is debugging shaped for an agent rather than a person: sixteen tools, which read the target without stopping it where they can, and stop it only where they are asked to and say why it stopped. It does not build firmware, single-step, write memory or read RTT.
+Use it if your board has an ST-LINK, STM32CubeCLT is already installed, and you want an agent whose every report names what was observed on the target. It is debugging shaped for an agent rather than a person: sixteen tools, which read the target without stopping it where they can, and stop it only where they are asked to and say why it stopped. Four things are left out, each for a reason:
+
+* **Building firmware** is your build system's job, and the agent already runs it.
+* **Single-stepping** is how a person explores code. An agent gets more from one call that runs to a chosen point or until a variable is written, and then returns the call stack, the registers and why it stopped, than from one call per instruction.
+* **Writing memory** is left out until real use shows an agent needs it: a wrong write changes what the program does, and nothing in the result would show it.
+* **RTT** (SEGGER's Real Time Transfer, a ring buffer the firmware writes and a debugger reads) is not supported by ST's tools. `sample_values` already watches values while the program runs; reading RTT logs may come later.
 
 Use [embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp) if you need single-stepping, breakpoints you manage yourself, RTT, a J-Link or DAPLink probe, a target that is not an STM32, or Windows support beyond what is measured here. [Related projects](#related-projects) has the comparison.
 
@@ -86,7 +118,7 @@ claude mcp add stlink -e STLINK_MCP_CLT_ROOT=/opt/st/stm32cubeclt_1.22.0 -- uv -
 
 ## Telling the agent how to use it
 
-When it connects, the server gives every client a short guide: what it is for, how to read a result, and the usual order of calls. Claude Code shows it to the agent even when it has not loaded the tool descriptions. Some clients do not pass it on; for those, put the same text in your project's `AGENTS.md` or `GEMINI.md`:
+When it connects, the server gives every client a short guide: what it is for, how to read a result, and the usual order of calls. Claude Code shows it to the agent even when it has not loaded the tool descriptions. Some clients do not pass it on; for those, put the same text in your project's `AGENTS.md`, or whichever file your agent reads its instructions from:
 
 ```text
 stlink-mcp drives STM32 boards through an ST-LINK probe with ST's STM32CubeCLT tools.
@@ -127,16 +159,16 @@ The server assumes it is the only user of the probes, since its users are agents
 
 Whether to hold is a trade, and the agent makes it: `run_firmware(keep_probe=False)` lets go as soon as the program starts, and `release_probe` lets go later.
 
-- **Held**, the debugger stays connected whatever the program does, and only this server's tools and ST's own `STM32_Programmer_CLI -c port=SWD shared` reach the probe. But a core that locks up, by faulting inside its fault handler, is reset by the held server and halted at its reset vector, which clears the fault registers. Results that find a core halted that way say so and suggest running again with `keep_probe=False`.
-- **Released**, a lockup stays visible with its fault status. But a program can close the debug port, by taking the SWD pins for other use, turning off a clock the debug port needs, or sleeping with debug off. `board_state` then gets back in by reconnecting through a reset, which restarts the program; `reset_target` cannot. A program that takes the SWD pins cuts off a held server too.
+- **Held**, the reading tools work beside the server without a new connect, and only this server's tools and ST's own `STM32_Programmer_CLI -c port=SWD shared` reach the probe. But a core that locks up, by faulting inside its fault handler, is reset by the held server and halted at its reset vector, which clears the fault registers. Results that find a core halted that way say so and suggest running again with `keep_probe=False`. And holding does not keep open a debug port that the program closes, as below.
+- **Released**, a lockup stays visible with its fault status. But a program can close the debug port, by taking the SWD pins for other use, turning off a clock the debug port needs, or sleeping with debug off. `board_state` then gets back in by reconnecting through a reset, which restarts the program; `reset_target` cannot. Such a program cuts off a held server too.
 
-On the STM32N6, an image built from ST's FSBL template closes debug access port 1 when it starts, and once the probe is let go only a power cycle reopens it. The cause is one line at the end of ST's `system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out of `SystemInit`:
+On the STM32N6, an image built from ST's FSBL template closes debug access port 1 when it starts, and only a power cycle reopens it, whether or not the probe is held. The cause is one line at the end of ST's `system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out of `SystemInit`:
 
 ```c
 RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
 ```
 
-Remove that write and the port survives across runs. With the stock image, keeping the server is the difference between one power cycle per session and one per run.
+Remove that write and the port survives across runs.
 
 ### Running an image from RAM
 
@@ -276,6 +308,7 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * **run_firmware refuses the image.** It has to be linked for RAM; see [Running an image from RAM](#running-an-image-from-ram).
 * **flash_firmware refuses an ELF or HEX file.** See [Writing flash](#writing-flash): on most parts, write a .bin with `address`.
 * **An STM32N6 booted from flash cannot be reached.** The image has to open the debug port itself, or the board has to be in development boot; see [The STM32N6](#the-stm32n6).
+* **The probe answers DEV_TCP_CMD_ERR to every connect.** The probe itself is stuck, which an STLINK-V3 has done after a program closed the debug port while a server held the probe. Cut its USB power: unplug it, or switch its hub port off and on with `uhubctl` where the hub can. On a board with more than one probe on the debug lines, cut them all together.
 * **Other tools report the probe as held.** A GDB server holds the probe and `stlink-server` is not installed, so nothing can connect beside it. Install STM32CubeCLT's `stlink-server`, or call `release_probe`. After a program that closes the debug port, such as ST's stock start-up code on an STM32N6, the board may then need a power cycle before the next run.
 
 ## Limitations
@@ -289,13 +322,14 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 
 ## Related projects
 
-Three other MCP servers cover the same ground, and each does more than this one. The difference is what a result means.
+Other MCP servers drive STM32 boards, and several do more than this one: building, single-stepping, memory writes, RTT, other probes and other chips. What this one adds is that a result says what was checked. In the two read in source below, success means the command returned.
 
-* [Adancurusul/embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp) (Rust; probe-rs or OpenOCD underneath) has breakpoints, stepping, RTT, flash programming with an optional readback compare, J-Link and DAPLink probes, several architectures, and a fault tool that reports the registers without asserting a cause. Its success text is the backend call returning: `run` reports "resumed execution successfully" with nothing observed afterwards, `reset` prints a program counter from a snapshot that is allowed to fail and shows zero when it does, and `run_firmware` ends with "Firmware is now running on target" whether or not RTT was attached. Read from its source in September 2026; the file references are in [docs/findings.md](docs/findings.md).
+* [phryniszak/stmcp](https://github.com/phryniszak/stmcp) is the closest: an MCP server on the same STM32CubeCLT tools, built around a GDB session, with run, halt, reset and step, breakpoints, memory and register reads and writes, a decoded dump of the fault registers, and expression evaluation. Its reads go through GDB, so they halt the core, as its README says. A run counts as done when the command returns, and a reset's program counter comes back unchecked. **Compared on the same tasks:** seven bench tasks on three boards (a crash, a fault inside the fault handler, a hang, an image that prints nothing, an ADC result to read without disturbing the firmware, a program that closes the debug port, a flash write to confirm it boots), the same four AI agents (two Claude and two Gemini models), and one run per agent and task, 28 runs each. stmcp: 10 right, 10 partly right, 5 wrong, 3 with no answer. stlink-mcp: 23 right, 4 partly right, none wrong, 1 with no answer. stmcp's agents got no help where the tools did not check: two never reached the STM32N6's core, which is on access port 1; one took the programmer's "Start operation achieved successfully" as the board running; others took the ELF's entry point for where the program runs. This project's author set and scored the tasks, not blind, so read it as an indication; the details are in [docs/findings.md](docs/findings.md).
+* [Adancurusul/embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp) (Rust; probe-rs or OpenOCD underneath) has breakpoints, stepping, RTT, flash programming with an optional readback compare, J-Link and DAPLink probes, several architectures, and a fault tool that reports the registers without asserting a cause. Its success text is the backend call returning: `run` reports "resumed execution successfully" with nothing observed afterwards, `reset` prints a program counter from a snapshot that is allowed to fail and shows zero when it does, and `run_firmware` ends with "Firmware is now running on target" whether or not RTT was attached. The file references are in [docs/findings.md](docs/findings.md).
 * [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD, and adds a full serial toolset, memory writes by symbol and live memory monitoring. It returns the tools' own text; its TODO file records a build reported OK with nothing compiled.
 * [Helistana/mcp-stm32cubeide-server](https://github.com/Helistana/mcp-stm32cubeide-server) drives the same CubeIDE loop, with fault decoding, and is documented in Chinese.
 
-Here, a run is verified only by what the new image did, a result nobody watched says `unverified`, and no tool can set `ok` on its own. Every part-specific address carries a provenance that changes what the tool will do, and the tests were checked by putting each defect back and watching a test fail. What this project lacks against the three: building, memory writes, single-stepping and RTT; it stops the target only through `run_until`, one stop at a time.
+What this one does on every call: a run is verified only by what the new image did; a reset is checked against the image's reset vector; a stop is verified by the chip's own record of why it stopped; a read by name checks that the target runs that ELF; a read that would change a register is refused unless asked for; and every part-specific address says whether it was measured. In their source, neither stmcp nor embedded-debugger-mcp checks a run or a reset, and stmcp's reads halt the core. Choose one of the others when you need what this one leaves out ([Who this is for](#who-this-is-for)). The comparisons were read from their source in September and October 2026, and may since have changed.
 
 ## Licence
 

@@ -1419,12 +1419,11 @@ def release_probe(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Stop the GDB server holding a probe; with no serial, every probe's. Resumes a
-core run_until left halted. While held, the debugger stays connected whatever
-the program does, but a core that locks up is reset, clearing its fault
-registers. Once released, a program that closes the debug port keeps it closed
-until board_state reconnects through a reset, restarting the program, or, on an STM32N6
-running ST's start-up code, until a power cycle. `unverified` if nothing was
-held.
+core run_until left halted. While held, the reading tools work beside the
+server, but a core that locks up is reset, clearing its fault registers. A
+program that closes the debug port closes it held or not; board_state then gets
+back in through a reset, restarting the program, except on an STM32N6 running
+ST's start-up code, which needs a power cycle. `unverified` if nothing was held.
     """
     with _STATE:
         affected = [probe_serial] if probe_serial is not None else list(_held)

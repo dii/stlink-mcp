@@ -146,6 +146,12 @@ class FamilyQuirks:
     between runs, which is what runner.acquire_server does, and why releasing it
     is a one-way door until the board is power cycled.
 
+    Measured 2026-10-07, under the server as it is now held (GDB detached after the
+    start, the programmer beside it in ST's shared mode): the port closed anyway,
+    reads beside the server and a new GDB connect through it both failed, and in two
+    runs of three the STLINK-V3 then needed its USB power cut. Holding no longer
+    keeps the port open; what kept it open in August was a GDB client kept connected.
+
     So the flag drives the right behaviour for an unpatched image. It is the
     explanation that changed, not the workaround: this is a cost imposed by the
     image and removable in the image, not a limit of the part.
@@ -366,8 +372,8 @@ FAMILIES: dict[str, FamilyQuirks] = {
         debug_closes_on_run=True,
         agent_note=(
             "Core debug is on access port 1. ST's start-up code (SystemInit) turns the "
-            "SYSCFG clock off, which closes the debug port once the probe lets go, until "
-            "a power cycle. Booted from flash (BOOT1 low), the debug port stays closed "
+            "SYSCFG clock off, which closes the debug port until a power cycle, even while "
+            "run_firmware holds the probe. Booted from flash (BOOT1 low), the debug port stays closed "
             "unless the image opens it as its first act, in development builds only: "
             "HAL_BSEC_ConfigDebug and HAL_BSEC_UnlockDebug, that is 0xB451B400 to "
             "BSEC_DBGCR (0x56009E8C) and 0xB4 to BSEC_AP_UNLOCK (0x56009E90), every boot. "
