@@ -2,6 +2,30 @@
 
 An MCP server that lets an AI coding agent program, run and inspect an STM32 target over ST-LINK, with every result marked verified, unverified or failed, and the evidence for it. It runs locally, next to the board, and drives the STM32CubeCLT command line tools you already have installed.
 
+## Why the reports have to be true
+
+An agent working on firmware is only as good as what the tools tell it about the board. A developer catches a tool that overstates, because they hold information the tool never gave them: the LED that did not change, console text that looks like the previous build, the board in their hand. An agent has none of that. The text a tool returns is its entire model of the hardware, so a tool that reports success for something it did not do makes the agent confidently wrong, and the agent then writes that wrongness into code, commit messages and documentation, where it costs far more than the failed operation did.
+
+ST's command line tools do overstate. Three examples with an STM32N6:
+
+* `STM32_Programmer_CLI -s <address>` printed "Start operation achieved successfully" while the program counter never left the boot ROM.
+* `ST-LINK_gdbserver` printed "Failed to halt target". The core was fine; the server was on the wrong debug access port.
+* A GDB load against a running target completed cleanly and changed nothing, so the previous program carried on and its output read as a successful new run.
+
+An agent driving those tools inherits every one of them. So the rule here is:
+
+> **A tool reports success only after checking that the thing it was asked to do actually happened.**
+
+`run_firmware` reports success because the new image printed on its console, or because the program counter was seen inside it, not because GDB exited zero. Every result has one of three states, and no tool sets `ok` by hand:
+
+| `status` | `ok` | meaning |
+| --- | --- | --- |
+| `verified` | `true` | checked, and `verified_by` names the observation |
+| `unverified` | `false` | may well have worked, but nothing watched it |
+| `failed` | `false` | it did not work, and `error` says why |
+
+`unverified` is deliberately not `ok`: a run nobody watched is not a success, however likely it is to have worked. `unverified_because` says what was not checked, so it is not mistaken for a failure.
+
 ## Why you would want this
 
 Firmware development is a loop: change the code, build, load it onto the board, watch the console, read the fault registers when it hangs, change the code again. An agent that can only edit files does the first step and then waits for you to do the rest and report back. Every result reaches it as your summary of what you saw, and it reasons from that.
@@ -34,30 +58,6 @@ flowchart LR
     find --> edit
     ok -- "yes" --> next["Next change"]
 ```
-
-## Why the reports have to be true
-
-That loop is only as good as what the tools tell the agent. A developer catches a tool that overstates, because they hold information the tool never gave them: the LED that did not change, console text that looks like the previous build, the board in their hand. An agent has none of that. The text a tool returns is its entire model of the hardware, so a tool that reports success for something it did not do makes the agent confidently wrong, and the agent then writes that wrongness into code, commit messages and documentation, where it costs far more than the failed operation did.
-
-ST's command line tools do overstate. Three examples with an STM32N6:
-
-* `STM32_Programmer_CLI -s <address>` printed "Start operation achieved successfully" while the program counter never left the boot ROM.
-* `ST-LINK_gdbserver` printed "Failed to halt target". The core was fine; the server was on the wrong debug access port.
-* A GDB load against a running target completed cleanly and changed nothing, so the previous program carried on and its output read as a successful new run.
-
-An agent driving those tools inherits every one of them. So the rule here is:
-
-> **A tool reports success only after checking that the thing it was asked to do actually happened.**
-
-`run_firmware` reports success because the new image printed on its console, or because the program counter was seen inside it, not because GDB exited zero. Every result has one of three states, and no tool sets `ok` by hand:
-
-| `status` | `ok` | meaning |
-| --- | --- | --- |
-| `verified` | `true` | checked, and `verified_by` names the observation |
-| `unverified` | `false` | may well have worked, but nothing watched it |
-| `failed` | `false` | it did not work, and `error` says why |
-
-`unverified` is deliberately not `ok`: a run nobody watched is not a success, however likely it is to have worked. `unverified_because` says what was not checked, so it is not mistaken for a failure.
 
 ## Who this is for
 
