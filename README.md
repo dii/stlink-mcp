@@ -1,6 +1,6 @@
 # stlink-mcp
 
-An MCP server that lets an AI coding agent program, run and inspect an STM32 target over ST-LINK. It runs locally, next to the board, and drives the STM32CubeCLT command line tools you already have installed.
+An MCP server that lets an AI coding agent program, run and inspect an STM32 target over ST-LINK, with every result marked verified, unverified or failed, and the evidence for it. It runs locally, next to the board, and drives the STM32CubeCLT command line tools you already have installed.
 
 ## Why you would want this
 

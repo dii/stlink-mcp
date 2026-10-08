@@ -1,7 +1,7 @@
 [project]
 name = "stlink-mcp"
 dynamic = ["version"]
-description = "An MCP server for programming and inspecting STM32 targets over ST-LINK, where every tool verifies its own effect before reporting success."
+description = "An MCP server that lets an AI coding agent program, run and inspect STM32 targets over ST-LINK, with every result marked verified, unverified or failed, and the evidence for it."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Dawid Oosthuizen", email = "dawid.oosthuizen@gmail.com" }]
