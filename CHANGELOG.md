@@ -4,6 +4,15 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-08
+
+The README and the package description only; no change to the code.
+
+### Changed
+
+- The README opens with what a result means, and its first section is why the reports have to be true: ST's tools reporting success for things that did not happen, and the rule that follows.
+- The package description said every tool verifies its own effect before reporting success. A result can be `unverified`, and the description now says so.
+
 ## [0.8.0] - 2026-10-07
 
 Run on an STM32H7, an STM32N6 and an STM32F407 board on 2026-10-07. With `--flash` and the N6's closed-port section, `tools/hwcheck` passed the H7's 62 of 62, the N6's 24 of 24 with its flash checks 2 of 2 and the closed-port section 4 of 4, and the F407's 39 of 39; on the code this release carries, 112 of 112 without `--flash` or the closed-port section. On a Windows 11 laptop with an STM32N6 board, 23 passed, and the check of ST's sharing daemon reported itself skipped, since without /proc it cannot look. The N6 booted from its external flash with `tools/hwcheck/n6_flash_boot.py` on 2026-10-06.
@@ -207,7 +216,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/dii/stlink-mcp/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/dii/stlink-mcp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dii/stlink-mcp/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dii/stlink-mcp/compare/v0.5.0...v0.6.0
