@@ -266,6 +266,34 @@ class TestAClosedPortIsNamedAsACause:
         assert "closed" not in message and message.startswith("GDB server exited before listening")
 
 
+class TestARefusedProbeFirmwareIsNotAClosedPort:
+    """X14. From a user's report on a NUCLEO-G474RE (2026-10-27): ST-LINK_gdbserver
+    7.12.0 refused an STLINK-V3 on V3J9M3, which STM32_Programmer_CLI 2.21.0
+    still used. The fixture is the server output quoted in that report. The
+    closed-port explanation was put in front of it, on the error line alone,
+    so the reader was sent to the target when the probe was the cause."""
+
+    SERIAL = "0036003E3235511337333439"
+
+    def test_the_probe_firmware_is_named_as_the_cause(self) -> None:
+        message = runner.server_exit_message(
+            _banner("gdbserver_g4_old_probe_firmware.txt"), serial=self.SERIAL)
+        assert "V3J9M3" in message and "too old" in message
+        assert f"-sn {self.SERIAL} -update" in message
+        assert "closed" not in message and "power cycle" not in message
+        assert message.index("too old") < message.index("firmware upgrade required")
+
+    def test_the_closed_port_case_keeps_its_explanation(self) -> None:
+        """The N6 output also says a firmware update is available; that line
+        must not turn a closed port into a firmware problem."""
+        message = runner.server_exit_message(_banner("gdbserver_n6_ap1_closed.txt"), serial=self.SERIAL)
+        assert "closed" in message and "too old" not in message
+
+    def test_a_reason_nobody_has_seen_gets_no_explanation_in_front(self) -> None:
+        output = "Error in initializing ST-LINK device.\nReason: Something new.\n"
+        assert runner.server_exit_message(output).startswith("GDB server exited before listening")
+
+
 class TestAConnectUnderResetIsTheLastResort:
     """On an STM32H743 whose program had made the SWD pins inputs, a hotplug
     connect and a reset-pulse connect each failed after 30 s, and a connect

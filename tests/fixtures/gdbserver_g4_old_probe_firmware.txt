@@ -1,0 +1,3 @@
+Info : STLINKV3 v3J9M3, PID 0x374E
+Error in initializing ST-LINK device.
+Reason: ST-LINK firmware upgrade required. Please upgrade the ST-LINK firmware using the upgrade tool.

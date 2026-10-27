@@ -207,7 +207,9 @@ class GdbServer:
                     return self
                 if self._proc.poll() is not None:
                     out = strip_ansi(self._proc.stdout.read() if self._proc.stdout else "")
-                    raise RunError(server_exit_message(out))
+                    raise RunError(server_exit_message(
+                        out, serial=self.serial,
+                        upgrade_tool=Path(self.toolchain.gdb_server).parent / "STLinkUpgrade.jar"))
                 time.sleep(0.2)
         except BaseException:
             self.__exit__()
@@ -477,16 +479,47 @@ def release_all_servers() -> bool:
         return released
 
 
-def server_exit_message(output: str) -> str:
+_PROBE_FIRMWARE = re.compile(r"STLINK\S*\s+(v\d\S*?),", re.IGNORECASE)
+
+
+def server_exit_message(output: str, serial: str | None = None,
+                        upgrade_tool: Path | None = None) -> str:
     """Why the GDB server stopped before it listened, with its own output.
 
-    "Error in initializing ST-LINK device. Reason: Unknown. Please check power
-    and cabling to target." is what it printed for an STM32N6 whose debug
-    access port an image had closed, with the cabling fine and the part still
-    identifying to the programmer (measured 2026-10-02)."""
+    "Error in initializing ST-LINK device" is followed by a "Reason:" line, and
+    the explanation goes by that line, not by the error alone.
+
+    "Reason: Unknown. Please check power and cabling to target." is what it
+    printed for an STM32N6 whose debug access port an image had closed, with
+    the cabling fine and the part still identifying to the programmer
+    (measured 2026-10-02).
+
+    "Reason: ST-LINK firmware upgrade required." is what ST-LINK_gdbserver
+    7.12.0 printed for an STLINK-V3 on V3J9M3 that STM32_Programmer_CLI 2.21.0
+    still used (a user's report on a NUCLEO-G474RE, 2026-10-27). That one was
+    given the closed-port explanation too, which sent the reader to the target
+    when the cause was the probe."""
     message = f"GDB server exited before listening:\n{output.strip()}"
-    if "Error in initializing ST-LINK device" in output:
-        message = (
+    if "Error in initializing ST-LINK device" not in output:
+        return message
+    reason = next((line.strip() for line in output.splitlines()
+                   if line.strip().startswith("Reason:")), "")
+    if "firmware upgrade required" in reason.lower():
+        found = _PROBE_FIRMWARE.search(output)
+        firmware = f" ({found.group(1).upper()})" if found else ""
+        tool = str(upgrade_tool) if upgrade_tool is not None else "STLinkUpgrade.jar"
+        return (
+            f"The GDB server refused the probe's firmware{firmware} as too old. The "
+            "target is not the cause, and the programmer may still accept the same "
+            "firmware, so board_state and capture_console can keep working while "
+            "every tool that starts a GDB server fails like this. Updating the probe "
+            f"fixes it: {tool} does it in its window, or from a shell with the Java "
+            f"runtime in the install, `java -jar STLinkUpgrade.jar -sn "
+            f"{serial or '<serial>'} -update`, which programs only when the "
+            "firmware is older.\n" + message
+        )
+    if reason.startswith("Reason: Unknown"):
+        return (
             "The GDB server could not attach to the core, and its advice to check "
             "power and cabling is a guess. A debug access port that an image has "
             "closed fails exactly this way, as on an STM32N6 after its start-up "

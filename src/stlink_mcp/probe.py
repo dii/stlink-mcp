@@ -461,8 +461,9 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
     if any("Old ST-LINK firmware" in e for e in info.errors):
         return (
             "The probe's firmware is too old for this STM32CubeProgrammer, which "
-            "refuses to use it. STLinkUpgrade, in the STM32CubeCLT install, updates "
-            "it: select the probe, Open in update mode, Upgrade."
+            "refuses to use it. STLinkUpgrade.jar, beside the GDB server in the install, "
+            "updates it: in its window, or from a shell with the install's Java runtime, "
+            "`java -jar STLinkUpgrade.jar -sn <serial> -update`."
         )
     if any("Serial number not found" in e for e in info.errors):
         return (
@@ -470,8 +471,9 @@ def explain_connect_failure(info: TargetInfo, interface: str = SWD) -> str:
             "is attached, or its firmware is too old for this programmer: an "
             "ST-LINK/V2 on V2J16S4 was listed by list_probes and still could not be "
             "selected until it was upgraded (2026-10-01). list_probes shows the "
-            "attached probes with their firmware; STLinkUpgrade, in the STM32CubeCLT "
-            "install, updates an old one."
+            "attached probes with their firmware; STLinkUpgrade.jar, beside the GDB "
+            "server in the install, updates an old one, from a shell with "
+            "`java -jar STLinkUpgrade.jar -sn <serial> -update`."
         )
     # Each line is a cause and what can be done about it; the history behind
     # them is in docs/findings.md. The texts used to tell an agent to run shell

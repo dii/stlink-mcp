@@ -19,7 +19,9 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X10.** An argument no parameter has is refused, naming it and the nearest parameter, and nothing is done; it is never dropped.
 - **X12.** A file argument is taken the same way by every tool: `~` expanded, and a relative path refused, naming the server's working directory, before anything touches the probe.
 - **X13.** A GDB server that fails to start leaves nothing behind: no process, and no folder for its log.
+- **X14.** A GDB server that will not start is explained by the reason it printed: a probe whose firmware it refuses is named as the cause, with how to update it, and a cause it did not print is never put in front of its output.
 - **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
+- **T2.** With no complete STM32CubeCLT, the newest complete set of the same tools inside an STM32CubeIDE install is used, and the result says it came from STM32CubeIDE.
 
 ## list_probes (LP)
 
