@@ -27,15 +27,28 @@ class ToolchainError(RuntimeError):
 _EXE = ".exe" if os.name == "nt" else ""
 
 
+#: What a Toolchain from an STM32CubeIDE install says it is, in --check.
+CUBEIDE = "STM32CubeIDE"
+
+
 @dataclass(frozen=True)
 class Toolchain:
-    """Paths to the CubeCLT executables this server drives."""
+    """Paths to the CubeCLT executables this server drives.
+
+    An STM32CubeCLT install keeps the three tools in fixed folders under its
+    root. STM32CubeIDE carries the same tools, each in a plugin folder of its
+    own whose name changes with every release, so a toolchain from it names
+    those folders and leaves `root` as the CubeIDE install."""
 
     root: Path
     passed_over: tuple[Path, ...] = ()
     """Newer installs skipped because they lack one of the three executables."""
     also_incomplete: tuple[Path, ...] = ()
     """Other installs found when none was complete, for the error to name."""
+    source: str = "STM32CubeCLT"
+    programmer_home: Path | None = None
+    gdb_server_home: Path | None = None
+    gnu_home: Path | None = None
 
     @property
     def complete(self) -> bool:
@@ -43,7 +56,12 @@ class Toolchain:
 
     @property
     def programmer(self) -> Path:
-        return self.root / "STM32CubeProgrammer" / "bin" / f"STM32_Programmer_CLI{_EXE}"
+        return self.programmer_bin_dir / f"STM32_Programmer_CLI{_EXE}"
+
+    @property
+    def gnu_bin_dir(self) -> Path:
+        """The Arm GNU tools: GDB, addr2line, objdump, and gcc for the bench images."""
+        return (self.gnu_home or self.root / "GNU-tools-for-STM32") / "bin"
 
     # No signing_tool property. STM32_SigningTool_CLI sits next to the
     # programmer, and it is tempting to expose it, but this project does not
@@ -52,21 +70,21 @@ class Toolchain:
 
     @property
     def gdb_server(self) -> Path:
-        return self.root / "STLink-gdb-server" / "bin" / f"ST-LINK_gdbserver{_EXE}"
+        return (self.gdb_server_home or self.root / "STLink-gdb-server") / "bin" / f"ST-LINK_gdbserver{_EXE}"
 
     @property
     def gdb(self) -> Path:
-        return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-gdb{_EXE}"
+        return self.gnu_bin_dir / f"arm-none-eabi-gdb{_EXE}"
 
     @property
     def addr2line(self) -> Path:
         """Turns an address into a function and source line, given the ELF."""
-        return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-addr2line{_EXE}"
+        return self.gnu_bin_dir / f"arm-none-eabi-addr2line{_EXE}"
 
     @property
     def objdump(self) -> Path:
         """Disassembles the ELF, for the instruction at a fault or a stop."""
-        return self.root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-objdump{_EXE}"
+        return self.gnu_bin_dir / f"arm-none-eabi-objdump{_EXE}"
 
     @property
     def stlink_server(self) -> Path | None:
@@ -80,7 +98,7 @@ class Toolchain:
     @property
     def programmer_bin_dir(self) -> Path:
         """The GDB server needs this passed with -cp."""
-        return self.root / "STM32CubeProgrammer" / "bin"
+        return (self.programmer_home or self.root / "STM32CubeProgrammer") / "bin"
 
     def external_loader(self, name: str) -> Path:
         return self.programmer_bin_dir / "ExternalLoader" / name
@@ -99,9 +117,9 @@ class Toolchain:
                 if self.also_incomplete else ""
             )
             raise ToolchainError(
-                "STM32CubeCLT is incomplete at {root}. Missing:\n  {items}{others}\n"
+                "{source} is incomplete at {root}. Missing:\n  {items}{others}\n"
                 "Set STLINK_MCP_CLT_ROOT to your install, or install STM32CubeCLT.".format(
-                    root=self.root, items="\n  ".join(missing), others=others
+                    source=self.source, root=self.root, items="\n  ".join(missing), others=others
                 )
             )
 
@@ -140,6 +158,61 @@ _SEARCH_BASES = ("C:/ST",) if os.name == "nt" else ("/opt/st", "~/st", "/usr/loc
 _MAC_ROOT: Path | None = None if os.name == "nt" else Path("/Applications/STMicroelectronics/STM32CubeCLT")
 
 
+#: The plugin folders STM32CubeIDE keeps the three tools in, each holding a
+#: `tools` folder laid out like the matching CubeCLT one. Names as one user's
+#: STM32CubeIDE 2.0.0 on Linux had them (2026-10-27), for example
+#: com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.linux64_2.2.300.202508131133;
+#: the platform and the version stamp after the prefix change, so they are
+#: matched by prefix and the newest complete one is taken.
+_CUBEIDE_PLUGINS = (
+    "com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.",
+    "com.st.stm32cube.ide.mcu.externaltools.stlink-gdb-server.",
+    "com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.",
+)
+
+
+def _cubeide_toolchain(install: Path) -> Toolchain | None:
+    """The tools inside an STM32CubeIDE install, or None when any is missing.
+
+    The plugins are in `plugins` under the install on Linux, and in
+    `STM32CubeIDE/plugins` under it where the installer adds a level, as on
+    Windows; both are looked at. An install updated in place can keep older
+    plugin folders beside the new ones, so each tool comes from its newest
+    folder that has the executable."""
+    plugins = next((d for d in (install / "plugins", install / "STM32CubeIDE" / "plugins")
+                    if d.is_dir()), None)
+    if plugins is None:
+        return None
+    wanted = (
+        lambda home: Toolchain(root=install, programmer_home=home).programmer,
+        lambda home: Toolchain(root=install, gdb_server_home=home).gdb_server,
+        lambda home: Toolchain(root=install, gnu_home=home).gdb,
+    )
+    homes: list[Path] = []
+    for prefix, executable in zip(_CUBEIDE_PLUGINS, wanted):
+        folders = sorted(plugins.glob(prefix + "*"), key=_version_key, reverse=True)
+        home = next((f / "tools" for f in folders if executable(f / "tools").exists()), None)
+        if home is None:
+            return None
+        homes.append(home)
+    return Toolchain(root=install, source=CUBEIDE, programmer_home=homes[0],
+                     gdb_server_home=homes[1], gnu_home=homes[2])
+
+
+def _cubeide_installs() -> list[Path]:
+    """stm32cubeide* directories in the places CubeCLT is looked for, newest
+    first. Windows matches the name without regard to case."""
+    installs: list[Path] = []
+    for name in _SEARCH_BASES:
+        try:
+            base = Path(name).expanduser()
+        except RuntimeError:
+            continue
+        if base.is_dir():
+            installs.extend(sorted(base.glob("stm32cubeide*"), key=_version_key, reverse=True))
+    return installs
+
+
 def _candidate_roots() -> list[Path]:
     env = os.environ.get(_CLT_ROOT_ENV)
     if env:
@@ -161,7 +234,8 @@ def _candidate_roots() -> list[Path]:
 
 
 def find_toolchain() -> Toolchain:
-    """Locate STM32CubeCLT: the newest complete install when several are there.
+    """Locate STM32CubeCLT: the newest complete install when several are there,
+    and with none complete, the tools inside the newest complete STM32CubeIDE.
 
     Complete means the programmer, the GDB server and GDB all exist. Taking the
     newest install that merely had a programmer chose a broken newer install
@@ -172,15 +246,27 @@ def find_toolchain() -> Toolchain:
     for index, tc in enumerate(usable):
         if tc.complete:
             return Toolchain(root=tc.root, passed_over=tuple(t.root for t in usable[:index]))
+
+    # No complete CubeCLT. STM32CubeIDE carries the same three tools, and a
+    # machine with only the IDE used to need a folder of links made to look
+    # like CubeCLT (a user's report, 2026-10-27).
+    env = os.environ.get(_CLT_ROOT_ENV)
+    for install in ([Path(env).expanduser()] if env else _cubeide_installs()):
+        ide = _cubeide_toolchain(install)
+        if ide is not None:
+            return Toolchain(root=ide.root, source=CUBEIDE, programmer_home=ide.programmer_home,
+                             gdb_server_home=ide.gdb_server_home, gnu_home=ide.gnu_home,
+                             passed_over=tuple(t.root for t in usable))
+
     if usable:
         return Toolchain(root=usable[0].root, also_incomplete=tuple(t.root for t in usable[1:]))
 
-    env = os.environ.get(_CLT_ROOT_ENV)
     if env:
         raise ToolchainError(
             f"{_CLT_ROOT_ENV} is {env}, and there is no "
-            f"STM32CubeProgrammer/bin/STM32_Programmer_CLI{_EXE} under it. Point it at "
-            "the STM32CubeCLT install directory itself."
+            f"STM32CubeProgrammer/bin/STM32_Programmer_CLI{_EXE} under it, nor an "
+            "STM32CubeIDE plugins folder with the programmer, the GDB server and GDB. "
+            "Point it at the STM32CubeCLT or STM32CubeIDE install directory itself."
         )
     # Every place searched is named, not only the ones that existed. The
     # previous message fell back to "/opt/st, ~/st" when none existed, which
@@ -191,6 +277,7 @@ def find_toolchain() -> Toolchain:
         f"{', '.join(str(Path(b)) for b in _SEARCH_BASES)}"
         + (f", and at {_MAC_ROOT}" if _MAC_ROOT is not None else "")
         + (f"; found {found}, none with STM32_Programmer_CLI" if found else "")
+        + ", nor a complete STM32CubeIDE in stm32cubeide* directories in the same places"
         + f". Set {_CLT_ROOT_ENV} to the install directory."
     )
 

@@ -145,3 +145,88 @@ class TestTheNewestCompleteInstallIsChosen:
         self._install(base, "stm32cubeclt_1.18.0")
         new = self._install(base, "stm32cubeclt_1.22.0")
         assert find_toolchain().root == new and find_toolchain().passed_over == ()
+
+
+class TestCubeIDEsBundledToolsAreUsedWithoutCubeCLT:
+    """T2. From a user's report (2026-10-27): with STM32CubeIDE 2.0.0 and no
+    STM32CubeCLT, the server ran once a folder of links made the IDE's plugin
+    folders look like CubeCLT. The plugin names here are the ones in that
+    report; the platform and the version stamp change with every release."""
+
+    PROGRAMMER = "com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.linux64_2.2.300.202508131133"
+    SERVER = "com.st.stm32cube.ide.mcu.externaltools.stlink-gdb-server.linux64_2.2.300.202509021040"
+    GNU = "com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.13.3.rel1.linux64_1.0.100.202509120712"
+
+    @staticmethod
+    def _plugin(plugins, folder, rel):
+        from stlink_mcp.toolchain import _EXE
+        path = plugins / folder / "tools" / f"{rel}{_EXE}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+
+    def _ide(self, base, name="stm32cubeide_2.0.0", *, nested=False, server=True):
+        install = base / name
+        plugins = install / "STM32CubeIDE" / "plugins" if nested else install / "plugins"
+        self._plugin(plugins, self.PROGRAMMER, "bin/STM32_Programmer_CLI")
+        self._plugin(plugins, self.GNU, "bin/arm-none-eabi-gdb")
+        if server:
+            self._plugin(plugins, self.SERVER, "bin/ST-LINK_gdbserver")
+        return install
+
+    @pytest.fixture
+    def base(self, tmp_path, monkeypatch):
+        from stlink_mcp import toolchain
+        monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
+        monkeypatch.setattr(toolchain, "_SEARCH_BASES", (str(tmp_path),))
+        monkeypatch.setattr(toolchain, "_MAC_ROOT", tmp_path / "no-mac")
+        return tmp_path
+
+    def test_an_ide_alone_is_found_and_says_so(self, base) -> None:
+        from stlink_mcp.toolchain import CUBEIDE, find_toolchain
+        install = self._ide(base)
+        tc = find_toolchain()
+        tc.check()
+        assert tc.source == CUBEIDE and tc.root == install
+        assert tc.programmer.parent.parent.parent.name == self.PROGRAMMER
+        assert tc.gdb_server.parent.parent.parent.name == self.SERVER
+        assert tc.gdb.parent.parent.parent.name == self.GNU
+        assert (tc.programmer_bin_dir.parent / "Data_Base").parent.parent.name == self.PROGRAMMER
+
+    def test_the_layout_with_an_extra_level_is_found_too(self, base) -> None:
+        from stlink_mcp.toolchain import CUBEIDE, find_toolchain
+        self._ide(base, nested=True)
+        assert find_toolchain().source == CUBEIDE
+
+    def test_a_complete_cubeclt_is_still_preferred(self, base) -> None:
+        from stlink_mcp.toolchain import find_toolchain
+        self._ide(base)
+        clt = TestTheNewestCompleteInstallIsChosen._install(base, "stm32cubeclt_1.18.0")
+        tc = find_toolchain()
+        assert tc.root == clt and tc.source == "STM32CubeCLT"
+
+    def test_an_ide_beats_an_incomplete_cubeclt_and_names_it(self, base) -> None:
+        from stlink_mcp.toolchain import CUBEIDE, find_toolchain
+        install = self._ide(base)
+        clt = TestTheNewestCompleteInstallIsChosen._install(base, "stm32cubeclt_1.22.0", gdb_server=False)
+        tc = find_toolchain()
+        assert tc.source == CUBEIDE and tc.root == install and tc.passed_over == (clt,)
+
+    def test_an_ide_missing_a_tool_is_not_used(self, base) -> None:
+        from stlink_mcp.toolchain import ToolchainError, find_toolchain
+        self._ide(base, server=False)
+        with pytest.raises(ToolchainError, match="STM32CubeIDE"):
+            find_toolchain()
+
+    def test_the_newest_plugin_folder_with_the_tool_wins(self, base) -> None:
+        """An IDE updated in place can keep the old plugin beside the new one."""
+        from stlink_mcp.toolchain import find_toolchain
+        install = self._ide(base)
+        older = self.PROGRAMMER.replace("2.2.300.202508131133", "2.2.0.202403010000")
+        self._plugin(install / "plugins", older, "bin/STM32_Programmer_CLI")
+        assert find_toolchain().programmer.parent.parent.parent.name == self.PROGRAMMER
+
+    def test_the_setting_may_name_an_ide(self, tmp_path, monkeypatch) -> None:
+        from stlink_mcp.toolchain import CUBEIDE, find_toolchain
+        install = self._ide(tmp_path, "somewhere-else")
+        monkeypatch.setenv("STLINK_MCP_CLT_ROOT", str(install))
+        assert find_toolchain().source == CUBEIDE

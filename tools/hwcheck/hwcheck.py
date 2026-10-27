@@ -49,7 +49,7 @@ from mcp.client.stdio import stdio_client
 sys.path.insert(0, str(Path(__file__).parent))
 from build_images import Built, build  # noqa: E402
 
-from stlink_mcp.toolchain import _EXE, find_toolchain  # noqa: E402
+from stlink_mcp.toolchain import find_toolchain  # noqa: E402
 
 # The board names the probes report: a NUCLEO-H743ZI2 (MB1364C) reports NUCLEO-H743ZI.
 H7_BOARD, N6_BOARD = "NUCLEO-H743ZI", "NUCLEO-N657X0-Q"
@@ -133,7 +133,7 @@ def _answered(board: dict, label: str) -> bool:
 
 
 def _udf_address(elf: Path) -> int:
-    objdump = find_toolchain().root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-objdump{_EXE}"
+    objdump = find_toolchain().objdump
     listing = subprocess.run([str(objdump), "-d", str(elf)], capture_output=True, text=True, check=True).stdout
     match = re.search(r"^\s*([0-9a-f]+):\s+de00\s+udf", listing, re.M)
     if not match:

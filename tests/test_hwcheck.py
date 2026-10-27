@@ -25,7 +25,7 @@ def test_every_variant_names_a_linker_script_that_exists() -> None:
 def test_every_variant_builds(tmp_path) -> None:
     from stlink_mcp.toolchain import _EXE, ToolchainError, find_toolchain
     try:
-        gcc = find_toolchain().root / "GNU-tools-for-STM32" / "bin" / f"arm-none-eabi-gcc{_EXE}"
+        gcc = find_toolchain().gnu_bin_dir / f"arm-none-eabi-gcc{_EXE}"
     except ToolchainError:
         pytest.skip("no STM32CubeCLT install")
     if not gcc.exists():

@@ -95,7 +95,8 @@ def _check() -> int:
     except ToolchainError as exc:
         print(f"toolchain: {exc}")
         return 1
-    print(f"toolchain: {toolchain.root}")
+    source = getattr(toolchain, "source", "STM32CubeCLT")
+    print(f"toolchain: {toolchain.root}" + (f" ({source}'s bundled tools)" if source != "STM32CubeCLT" else ""))
     if getattr(toolchain, "passed_over", ()):
         passed = ", ".join(str(p) for p in toolchain.passed_over)
         print(f"  passed over as incomplete, though newer: {passed}")

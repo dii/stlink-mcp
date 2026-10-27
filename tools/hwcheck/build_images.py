@@ -142,7 +142,7 @@ class Built:
 
 def build(out_dir: Path) -> Built:
     toolchain = find_toolchain()
-    gnu = toolchain.root / "GNU-tools-for-STM32" / "bin"
+    gnu = toolchain.gnu_bin_dir
     gcc, objcopy = gnu / f"arm-none-eabi-gcc{_EXE}", gnu / f"arm-none-eabi-objcopy{_EXE}"
     signing_tool = toolchain.programmer.parent / f"STM32_SigningTool_CLI{_EXE}"
     if not gcc.exists():

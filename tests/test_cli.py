@@ -64,6 +64,14 @@ class TestCheck:
         assert str(Path("/opt/st/clt")) in out
         assert "0038004C3335510735383531" in out and "/dev/ttyACM0 (probe list)" in out
 
+    def test_tools_from_cubeide_are_named_as_such(self, machine, monkeypatch, capsys) -> None:
+        """T2. A user reading --check can tell the IDE's tools are in use."""
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(
+            root=Path("/opt/st/stm32cubeide_2.0.0"), source="STM32CubeIDE"))
+        with pytest.raises(SystemExit):
+            entry.main(["--check"])
+        assert "STM32CubeIDE's bundled tools" in capsys.readouterr().out
+
     def test_no_toolchain_exits_1_and_says_so(self, machine, monkeypatch, capsys) -> None:
         def missing():
             raise ToolchainError("No STM32CubeCLT install found.")
