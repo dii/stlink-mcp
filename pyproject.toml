@@ -83,11 +83,16 @@ testpaths = ["tests"]
 # ".dirty"; a checkout with no tag reports 0.0.0+N. Freeze tags under freeze/
 # are never read as versions.
 #
-# A tree with no git metadata at all, which is what GitHub's "Download ZIP" and
-# `git archive` produce, builds as 0.0.0+unknown rather than failing to install:
+# A tree with no git metadata, which is what GitHub's "Download ZIP" and
+# `git archive` produce, still says which tag it is: .gitattributes marks this
+# file export-subst, so the archive writes `git describe` into describe-subst
+# below, and versioningit reads it from there. Outside an archive the same
+# setting gives git describe's options. A tree that is neither, a plain copy
+# of the files, builds as 0.0.0+unknown rather than failing to install:
 # without default-version versioningit raised NotSdistError there, and
 # `uv sync` stopped before the README's first step had finished. "unknown" is
-# the honest answer, since nothing in such a tree says which commit it is.
+# the honest answer when nothing in the tree says which commit it is. A zip
+# install reported it too before export-subst (a user's report, 2026-10-27).
 [tool.hatch.version]
 source = "versioningit"
 
@@ -95,8 +100,8 @@ source = "versioningit"
 default-version = "0.0.0+unknown"
 
 [tool.versioningit.vcs]
-method = "git"
-match = ["v[0-9]*"]
+method = "git-archive"
+describe-subst = "$Format:%(describe:tags,match=v[0-9]*)$"
 default-tag = "v0.0.0"
 
 [tool.versioningit.tag2version]

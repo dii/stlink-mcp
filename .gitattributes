@@ -2,3 +2,6 @@
 # byte for byte. On Windows its line-ending conversion turned a captured SWO
 # log's LF into CRLF and broke a test that compares bytes (2026-10-02).
 tests/fixtures/** -text
+# GitHub's "Download ZIP" and `git archive` write the version into
+# pyproject.toml's describe-subst, so a tree with no .git still knows its tag.
+pyproject.toml export-subst
