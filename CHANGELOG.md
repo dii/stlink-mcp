@@ -4,6 +4,16 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- Without a complete STM32CubeCLT, the programmer, the GDB server and GDB inside an STM32CubeIDE install are used, each from its newest plugin folder that has it; `--check` names the source. `STLINK_MCP_CLT_ROOT` may name a CubeIDE install.
+- A tree from GitHub's "Download ZIP" or `git archive` reports its version from the tag; it reported `0.0.0+unknown`.
+
+### Fixed
+
+- A GDB server that refused the probe's firmware as too old was explained as a debug port the image had closed, on the error line alone. The explanation now follows the server's "Reason:" line: refused firmware names the probe's version and how to update it, and the closed-port text is kept for "Reason: Unknown". Reported on an STM32G474 whose programmer still used the same probe.
+- The hints for a probe whose firmware the programmer refuses give the upgrade tool's command line, since an agent cannot use its window.
+
 ## [0.8.1] - 2026-10-08
 
 The README and the package description only; no change to the code.
