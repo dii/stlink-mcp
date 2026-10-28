@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- From an STM32CubeIDE install, register names come from the SVD files in its product database plugin, so `read_memory` and `sample_values` decode them as with STM32CubeCLT. Run on the Linux bench with STM32CubeIDE 2.2.0 and no STM32CubeCLT in use: `tools/hwcheck` on the three boards passed 112 of 112, its images built with the IDE's compiler, and the programmer, the GDB server and GDB were each started from the IDE's plugin folders.
+
 ## [0.8.2] - 2026-10-28
 
 From a user's report on an STM32G474. Run on the Linux bench on 2026-10-28: `tools/hwcheck` on the STM32H7, STM32N6 and STM32F407 boards, without `--flash` or the closed-port section, passed 112 of 112. Finding the tools inside STM32CubeIDE is tested against that report's folder names, not run on an install.
