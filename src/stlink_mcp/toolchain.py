@@ -49,6 +49,7 @@ class Toolchain:
     programmer_home: Path | None = None
     gdb_server_home: Path | None = None
     gnu_home: Path | None = None
+    svd_home: Path | None = None
 
     @property
     def complete(self) -> bool:
@@ -57,6 +58,12 @@ class Toolchain:
     @property
     def programmer(self) -> Path:
         return self.programmer_bin_dir / f"STM32_Programmer_CLI{_EXE}"
+
+    @property
+    def svd_dir(self) -> Path:
+        """ST's SVD files, for register names. Not one of the three tools a
+        toolchain needs, so an install without them is still complete."""
+        return self.svd_home or self.root / "STMicroelectronics_CMSIS_SVD"
 
     @property
     def gnu_bin_dir(self) -> Path:
@@ -161,7 +168,8 @@ _MAC_ROOT: Path | None = None if os.name == "nt" else Path("/Applications/STMicr
 #: The plugin folders STM32CubeIDE keeps the three tools in, each holding a
 #: `tools` folder laid out like the matching CubeCLT one. Names as one user's
 #: STM32CubeIDE 2.0.0 on Linux had them (2026-10-27), for example
-#: com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.linux64_2.2.300.202508131133;
+#: com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.linux64_2.2.300.202508131133,
+#: and the same three in STM32CubeIDE 2.2.0 on the Linux bench (2026-10-28);
 #: the platform and the version stamp after the prefix change, so they are
 #: matched by prefix and the newest complete one is taken.
 _CUBEIDE_PLUGINS = (
@@ -195,8 +203,13 @@ def _cubeide_toolchain(install: Path) -> Toolchain | None:
         if home is None:
             return None
         homes.append(home)
+    # The SVD files are in the IDE's microcontroller product database, beside
+    # one for its microprocessors (STM32CubeIDE 2.2.0, 2026-10-28).
+    svds = sorted(plugins.glob("com.st.stm32cube.ide.mcu.productdb.debug_*"), key=_version_key, reverse=True)
+    svd = next((d / "resources" / "cmsis" / "STMicroelectronics_CMSIS_SVD" for d in svds
+                if (d / "resources" / "cmsis" / "STMicroelectronics_CMSIS_SVD").is_dir()), None)
     return Toolchain(root=install, source=CUBEIDE, programmer_home=homes[0],
-                     gdb_server_home=homes[1], gnu_home=homes[2])
+                     gdb_server_home=homes[1], gnu_home=homes[2], svd_home=svd)
 
 
 def _cubeide_installs() -> list[Path]:
@@ -256,6 +269,7 @@ def find_toolchain() -> Toolchain:
         if ide is not None:
             return Toolchain(root=ide.root, source=CUBEIDE, programmer_home=ide.programmer_home,
                              gdb_server_home=ide.gdb_server_home, gnu_home=ide.gnu_home,
+                             svd_home=ide.svd_home,
                              passed_over=tuple(t.root for t in usable))
 
     if usable:

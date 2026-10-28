@@ -1967,7 +1967,7 @@ def _registers_covered(toolchain: Toolchain, info: TargetInfo, start: int, lengt
                        svd: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """For a read in the device region: result fields naming the registers it
     covers, and what reading each is known to do."""
-    directory = svd_mod.svd_dir(toolchain.root)
+    directory = toolchain.svd_dir
     try:
         files, how = svd_mod.choose(directory, svd=svd, device_name=info.device_name,
                                     board=info.board, cpu=info.cpu)
@@ -2166,10 +2166,10 @@ def _read_register(register: str, svd: str | None, probe_serial: str | None, int
         connection = {"probe_serial": serial, **_connection_fields(probe, info)}
         try:
             found, file_name, how = svd_mod.resolve(
-                svd_mod.svd_dir(toolchain.root), register, svd=svd,
+                toolchain.svd_dir, register, svd=svd,
                 device_name=info.device_name, board=info.board, cpu=info.cpu,
             )
-            vendor = svd_mod.vendor_marks(svd_mod.svd_dir(toolchain.root))
+            vendor = svd_mod.vendor_marks(toolchain.svd_dir)
         except svd_mod.SvdError as exc:
             return failed(str(exc), **connection)
         effects = [{"register": f"{found.peripheral}.{found.name}", **read_effects_mod.describe(e)}
@@ -2280,9 +2280,9 @@ first, last, range and changes. `until`, such as "g_state.mode == MODE_RUN" or
         for register in registers:
             try:
                 found, file_name, _ = svd_mod.resolve(
-                    svd_mod.svd_dir(toolchain.root), register, svd=svd,
+                    toolchain.svd_dir, register, svd=svd,
                     device_name=info.device_name, board=info.board, cpu=info.cpu)
-                vendor = svd_mod.vendor_marks(svd_mod.svd_dir(toolchain.root))
+                vendor = svd_mod.vendor_marks(toolchain.svd_dir)
             except svd_mod.SvdError as exc:
                 neither = f"{register} is no variable in {Path(elf_path).name}, and as a register: " if elf_path else f"{register}: "
                 return failed(neither + str(exc), **connection)

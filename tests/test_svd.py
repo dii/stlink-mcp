@@ -19,7 +19,7 @@ from stlink_mcp.toolchain import ToolchainError, find_toolchain
 @pytest.fixture(scope="module")
 def svd_dir():
     try:
-        directory = svd.svd_dir(find_toolchain().root)
+        directory = find_toolchain().svd_dir
     except ToolchainError:
         pytest.skip("no STM32CubeCLT install")
     if not (directory / "STM32H743.svd").is_file():

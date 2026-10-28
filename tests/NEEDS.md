@@ -21,7 +21,7 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 - **X13.** A GDB server that fails to start leaves nothing behind: no process, and no folder for its log.
 - **X14.** A GDB server that will not start is explained by the reason it printed: a probe whose firmware it refuses is named as the cause, with how to update it, and a cause it did not print is never put in front of its output.
 - **T1.** The newest complete STM32CubeCLT install is used, by version number, and installs passed over are named.
-- **T2.** With no complete STM32CubeCLT, the newest complete set of the same tools inside an STM32CubeIDE install is used, and the result says it came from STM32CubeIDE.
+- **T2.** With no complete STM32CubeCLT, the newest complete set of the same tools inside an STM32CubeIDE install is used, and the result says it came from STM32CubeIDE; register names come from the SVD files it carries.
 
 ## list_probes (LP)
 

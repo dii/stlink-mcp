@@ -65,10 +65,6 @@ class Register:
         return (self.address, self.size_bits, tuple((f.name, f.offset, f.width) for f in self.fields))
 
 
-def svd_dir(toolchain_root: Path) -> Path:
-    return Path(toolchain_root) / "STMicroelectronics_CMSIS_SVD"
-
-
 def _int(text: str | None, default: int | None = None) -> int | None:
     if text is None:
         return default

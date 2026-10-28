@@ -1314,15 +1314,14 @@ class TestReadingByName:
         assert out["status"] == result.FAILED and says in out["error"]
 
     def _svd(self, monkeypatch):
-        from stlink_mcp import svd
         from stlink_mcp.toolchain import ToolchainError, find_toolchain
         try:
-            directory = svd.svd_dir(find_toolchain().root)
+            directory = find_toolchain().svd_dir
         except ToolchainError:
             pytest.skip("no STM32CubeCLT install")
         if not (directory / "STM32H743.svd").is_file():
             pytest.skip("no SVD files")
-        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(root=directory.parent))
+        monkeypatch.setattr(server, "_toolchain", lambda: SimpleNamespace(root=directory.parent, svd_dir=directory))
 
     def test_a_register_is_decoded_and_its_read_risk_said(self, bench, monkeypatch) -> None:
         self._svd(monkeypatch)

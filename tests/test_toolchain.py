@@ -69,6 +69,7 @@ class TestTheNotFoundMessageNamesWhereItLooked:
 
         monkeypatch.delenv("STLINK_MCP_CLT_ROOT", raising=False)
         monkeypatch.setattr(toolchain, "_candidate_roots", lambda: [])
+        monkeypatch.setattr(toolchain, "_cubeide_installs", lambda: [])
         with pytest.raises(toolchain.ToolchainError) as raised:
             toolchain.find_toolchain()
         message = str(raised.value)
@@ -224,6 +225,15 @@ class TestCubeIDEsBundledToolsAreUsedWithoutCubeCLT:
         older = self.PROGRAMMER.replace("2.2.300.202508131133", "2.2.0.202403010000")
         self._plugin(install / "plugins", older, "bin/STM32_Programmer_CLI")
         assert find_toolchain().programmer.parent.parent.parent.name == self.PROGRAMMER
+
+    def test_its_svd_files_come_from_the_product_database(self, base) -> None:
+        """Where STM32CubeIDE 2.2.0 keeps them on the Linux bench (2026-10-28)."""
+        from stlink_mcp.toolchain import find_toolchain
+        install = self._ide(base)
+        svds = (install / "plugins" / "com.st.stm32cube.ide.mcu.productdb.debug_2.2.500.202605201745"
+                / "resources" / "cmsis" / "STMicroelectronics_CMSIS_SVD")
+        svds.mkdir(parents=True)
+        assert find_toolchain().svd_dir == svds
 
     def test_the_setting_may_name_an_ide(self, tmp_path, monkeypatch) -> None:
         from stlink_mcp.toolchain import CUBEIDE, find_toolchain
