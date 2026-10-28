@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-28
+
+From a user's report on an STM32G474. Run on the Linux bench on 2026-10-28: `tools/hwcheck` on the STM32H7, STM32N6 and STM32F407 boards, without `--flash` or the closed-port section, passed 112 of 112. Finding the tools inside STM32CubeIDE is tested against that report's folder names, not run on an install.
+
 ### Added
 
 - Without a complete STM32CubeCLT, the programmer, the GDB server and GDB inside an STM32CubeIDE install are used, each from its newest plugin folder that has it; `--check` names the source. `STLINK_MCP_CLT_ROOT` may name a CubeIDE install.
@@ -226,7 +230,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/dii/stlink-mcp/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/dii/stlink-mcp/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/dii/stlink-mcp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dii/stlink-mcp/compare/v0.6.0...v0.7.0
