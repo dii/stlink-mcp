@@ -92,7 +92,13 @@ Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 ## Install
 
-With [uv](https://docs.astral.sh/uv/) installed:
+With [uv](https://docs.astral.sh/uv/) installed, the package on PyPI runs with no install step; `uvx stlink-mcp@0.8.5` pins a version:
+
+```sh
+uvx stlink-mcp --check
+```
+
+To work on the code, clone the repository and run it from there:
 
 ```sh
 git clone https://github.com/dii/stlink-mcp
@@ -109,8 +115,8 @@ uv run stlink-mcp --check
 {
   "mcpServers": {
     "stlink": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/stlink-mcp", "run", "stlink-mcp"],
+      "command": "uvx",
+      "args": ["stlink-mcp"],
       "env": { "STLINK_MCP_CLT_ROOT": "/opt/st/stm32cubeclt_1.22.0" }
     }
   }
@@ -120,8 +126,10 @@ uv run stlink-mcp --check
 The `env` block is where the [settings](#configuration) go, and is needed only for those you change. With Claude Code, the same thing is:
 
 ```sh
-claude mcp add stlink -e STLINK_MCP_CLT_ROOT=/opt/st/stm32cubeclt_1.22.0 -- uv --directory /path/to/stlink-mcp run stlink-mcp
+claude mcp add stlink -e STLINK_MCP_CLT_ROOT=/opt/st/stm32cubeclt_1.22.0 -- uvx stlink-mcp
 ```
+
+From a clone, the command is `uv --directory /path/to/stlink-mcp run stlink-mcp` in place of `uvx stlink-mcp`.
 
 ## Telling the agent how to use it
 
@@ -303,7 +311,7 @@ Everything in that file is `user-stated`, and there is no way to mark a value `m
 
 ## When something does not work
 
-Run `uv run stlink-mcp --check` first. It names what it found and what it did not.
+Run `stlink-mcp --check` first, with `uvx` or `uv run` in front of it as you installed it. It names what it found and what it did not.
 
 * **No STM32CubeCLT install found.** Set `STLINK_MCP_CLT_ROOT` to the directory that contains `STM32CubeProgrammer/bin`.
 * **No ST-LINK probes found.** On Linux the probe needs ST's udev rules, which STM32CubeCLT installs; unplug the probe and plug it in again after installing them. A probe the programmer lists but cannot read usually means a USB problem, and `list_probes` says so.
@@ -342,3 +350,5 @@ Choose one of the others when you need what this one leaves out ([Who this is fo
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+<!-- mcp-name: io.github.dii/stlink-mcp -->

@@ -4,6 +4,11 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- The package is published on PyPI as `stlink-mcp` from this version, so `uvx stlink-mcp` runs it with no clone. The README's client configuration and Claude Code command use that form; the clone form stays for working on the code. A GitHub Actions workflow publishes every `v*` tag through PyPI's trusted publishing, with no stored token.
+- The README carries the MCP Registry's ownership marker for `io.github.dii/stlink-mcp`, as a hidden comment.
+
 ## [0.8.4] - 2026-11-08
 
 The documentation only; no change to the code beyond the instructions the server gives every client. The repository goes public at this version.

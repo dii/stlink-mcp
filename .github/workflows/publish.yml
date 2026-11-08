@@ -1,0 +1,49 @@
+name: Publish
+
+# Every v* tag is built and published to PyPI through trusted publishing
+# (docs.pypi.org/trusted-publishers): the pypi environment of this repository
+# is the publisher PyPI knows, so no token is stored anywhere. Building and
+# publishing are separate jobs, so the build backend never runs under the
+# publishing identity. Run by hand from the Actions tab, it publishes whatever
+# ref it was started on; PyPI refuses a version with a local part, so a run on
+# a commit past the tag fails at the upload instead of publishing an 0.8.4+N.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: sdist and wheel
+    runs-on: ubuntu-latest
+    steps:
+      # Full history with tags: the version comes from the git tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv build --out-dir dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/stlink-mcp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
