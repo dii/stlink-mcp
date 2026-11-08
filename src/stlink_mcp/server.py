@@ -97,8 +97,9 @@ Every result has a status. verified: verified_by says what was observed. unverif
 worked, but nothing checked it, and unverified_because says why; this is not success. failed: \
 error says why. Read the status before the values.
 
-A usual session: `list_probes`, then `board_state` to identify the board; `run_firmware` to load \
-an ELF into RAM and start it, or `flash_firmware` to write flash. Without halting the program: \
+A usual session: `list_probes`, then `board_state` to identify the board. `run_firmware` loads an \
+ELF linked for RAM and starts it; a build linked for flash, the default from STM32CubeIDE and \
+CubeMX, goes `flash_firmware`, then `reset_target`, then `capture_console`. Without halting the program: \
 `capture_console`, `capture_swo`, `sample_values`, `read_memory`, `read_fault_status`, \
 `read_option_bytes` and `disassemble`. Halting it: `run_until`, `core_registers` and \
 `locate_fault`. `reset_target` restarts it; `release_probe` when done.
@@ -110,8 +111,8 @@ absolute paths. `run_firmware` lets go of the probe once the program starts; wit
 which clears its fault registers. `reset_target` and `flash_firmware` stop a holding server first \
 and say so. A call that halts or resets the target says so. If the running program has closed the \
 debug port, `board_state` can get back in by resetting the target, and `reset_target` cannot; on \
-an STM32N6 running ST's start-up code, only a power cycle does. An argument no tool parameter has \
-is refused, not ignored.
+an STM32N6 running ST's start-up code, only a power cycle does. An unknown argument is refused, \
+not ignored.
 """
 
 

@@ -1,6 +1,6 @@
 # stlink-mcp
 
-An MCP server that lets an AI coding agent program, run and inspect an STM32 target over ST-LINK, with every result marked verified, unverified or failed, and the evidence for it. It runs locally, next to the board, and drives the STM32CubeCLT command line tools you already have installed.
+An MCP server that lets an AI coding agent program, run and inspect an STM32 target over ST-LINK, with every result marked verified, unverified or failed, and the evidence for it. It runs locally, next to the board, and drives the STM32CubeCLT command line tools you already have installed. It reads variables and peripheral registers by name, from your ELF and ST's SVD files, without stopping the program; it refuses a read that would change what the firmware sees unless asked; and every result says whether the call halted or reset the target. With it attached, the agent runs the edit, build, load, observe loop itself, and you supervise its conclusions instead of relaying what the board did.
 
 ## Why the reports have to be true
 
@@ -26,11 +26,30 @@ An agent driving those tools inherits every one of them. So the rule here is:
 
 `unverified` is deliberately not `ok`: a run nobody watched is not a success, however likely it is to have worked. `unverified_because` says what was not checked, so it is not mistaken for a failure.
 
-## Why you would want this
+What the agent sees is a flat JSON object. A `run_firmware` result, with the fields as the server returns them and the values of an illustrative run on an STM32F407, looks like this:
 
-Firmware development is a loop: change the code, build, load it onto the board, watch the console, read the fault registers when it hangs, change the code again. An agent that can only edit files does the first step and then waits for you to do the rest and report back. Every result reaches it as your summary of what you saw, and it reasons from that.
+```json
+{
+  "probe_serial": "0670FF3433554B3043165632",
+  "elf_path": "/home/you/blink/build/blink.elf",
+  "interface": "swd",
+  "interface_clock_khz": 4000,
+  "console_port": "/dev/ttyACM0",
+  "console_port_source": "the probe's own port",
+  "load_address": "0x20000000",
+  "load_address_provenance": "measured",
+  "image_initial_sp": "0x20020000",
+  "image_entry_point": "0x200001a5",
+  "load_size_bytes": 6180,
+  "target_was_reset": true,
+  "console": "blink 0.3 starting\r\nLED on\r\n",
+  "ok": true,
+  "status": "verified",
+  "verified_by": "console output from this board's own port"
+}
+```
 
-With this server attached, the agent runs the loop itself. It identifies the board, loads the image, captures the console, reads the registers and the fault status, and decides what to change next from what the target actually did. You supervise the conclusions instead of relaying the evidence.
+Had the board printed nothing, `ok` would be `false`, `status` `unverified`, and `unverified_because` would say that the image loaded and started but nothing was heard in the capture window.
 
 ## How it fits
 
@@ -47,18 +66,6 @@ flowchart LR
     board -- "serial console, through the probe" --> server
 ```
 
-What the agent does with it is the development loop, without a person relaying what the board did:
-
-```mermaid
-flowchart LR
-    edit["Edit"] --> build["Build"] --> load["Load or flash: run_firmware, flash_firmware"]
-    load --> observe["Observe: capture_console, sample_values, read_memory, board_state"]
-    observe --> ok{"Did it do what was intended?"}
-    ok -- "no" --> find["Find out why: read_fault_status, locate_fault, run_until, core_registers"]
-    find --> edit
-    ok -- "yes" --> next["Next change"]
-```
-
 ## Who this is for
 
 Use it if your board has an ST-LINK, STM32CubeCLT is already installed, and you want an agent whose every report names what was observed on the target. It is debugging shaped for an agent rather than a person: sixteen tools, which read the target without stopping it where they can, stop it only where they are asked to, and say so whenever a call halted or reset it. Four things are left out, each for a reason:
@@ -72,7 +79,7 @@ Use [stm32-gdb-mcp](https://github.com/Zeraissh/stm32-gdb-mcp) or [embedded-debu
 
 ## Status
 
-Alpha. Three device IDs are measured on hardware: 0x413 on an STM32F407, 0x450 on an STM32H743 and 0x486 on an STM32N657. The rest of the range is seeded at run time from STMicroelectronics' own device databases in your STM32CubeCLT install (with STM32CubeCLT 1.22.0, 96 more device IDs), and every value from there is labelled as such. Device IDs whose databases name several separate SRAM banks (`0x42B`, `0x42C`, `0x472` and `0x49A` in that version) are refused rather than guessed; `board_state` names the addresses it would not choose between, and a board file settles it. A part the database does not know still identifies itself, and every tool but `run_firmware` works on it, `flash_firmware` with a .bin and `address`.
+Alpha. Three device IDs are measured on hardware: 0x413 on an STM32F407, 0x450 on an STM32H743 and 0x486 on an STM32N657. The rest of the range is seeded at run time from STMicroelectronics' own device databases in your STM32CubeCLT install (with STM32CubeCLT 1.22.0, 96 more device IDs), and every value from there is labelled as such. Device IDs whose databases name several separate SRAM banks (`0x42B`, `0x42C`, `0x472` and `0x49A` in that version) are refused rather than guessed; `board_state` names the addresses it would not choose between, and a board file settles it. A part the database does not know still identifies itself. Every tool but `run_firmware` works on it; `flash_firmware` needs a .bin and an `address` there.
 
 Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) and are read from the git tag; a build past the last tag reports the tag plus the number of commits since it, as in `0.1.0+3`. A tree from GitHub's "Download ZIP" carries the same version; a plain copy of the files with neither reports `0.0.0+unknown`. The public API is the sixteen tools below, their parameters and result fields, and the `stlink-mcp` command line. At 0.y.z any of it may change. What has to happen before 1.0 is in [ROADMAP.md](ROADMAP.md), the measurements behind the claims in this file are in [docs/findings.md](docs/findings.md), changes are in [CHANGELOG.md](CHANGELOG.md), and how to report a problem or contribute a board you have measured is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -94,7 +101,7 @@ uv sync
 uv run stlink-mcp --check
 ```
 
-`--check` reports the toolchain it found, the vendor database, any board file and the probes attached, then exits without starting the server. It lists probes the same way `list_probes` does, which neither halts nor resets them. On Linux, like every programmer call here, it first stops ST's `stlink-server` if no ST-LINK GDB server is running (see [Holding the probe](#holding-the-probe)).
+`--check` reports the toolchain it found, the vendor database, any board file and the probes attached, then exits without starting the server. It lists probes the same way `list_probes` does, which neither halts nor resets them.
 
 ## Use it from an MCP client
 
@@ -125,9 +132,9 @@ stlink-mcp drives STM32 boards through an ST-LINK probe with ST's STM32CubeCLT t
 
 Every result has a status. verified: verified_by says what was observed. unverified: it may have worked, but nothing checked it, and unverified_because says why; this is not success. failed: error says why. Read the status before the values.
 
-A usual session: `list_probes`, then `board_state` to identify the board; `run_firmware` to load an ELF into RAM and start it, or `flash_firmware` to write flash. Without halting the program: `capture_console`, `capture_swo`, `sample_values`, `read_memory`, `read_fault_status`, `read_option_bytes` and `disassemble`. Halting it: `run_until`, `core_registers` and `locate_fault`. `reset_target` restarts it; `release_probe` when done.
+A usual session: `list_probes`, then `board_state` to identify the board. `run_firmware` loads an ELF linked for RAM and starts it; a build linked for flash, the default from STM32CubeIDE and CubeMX, goes `flash_firmware`, then `reset_target`, then `capture_console`. Without halting the program: `capture_console`, `capture_swo`, `sample_values`, `read_memory`, `read_fault_status`, `read_option_bytes` and `disassemble`. Halting it: `run_until`, `core_registers` and `locate_fault`. `reset_target` restarts it; `release_probe` when done.
 
-Give `probe_serial` on every call: without it each call first lists the probes, which takes a second or more and holds up every other board. Give addresses as "0x..." strings and files as absolute paths. `run_firmware` lets go of the probe once the program starts; with `keep_probe=True` a GDB server keeps holding it, and while it does, a core that locks up is reset, which clears its fault registers. `reset_target` and `flash_firmware` stop a holding server first and say so. A call that halts or resets the target says so. If the running program has closed the debug port, `board_state` can get back in by resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up code, only a power cycle does. An argument no tool parameter has is refused, not ignored.
+Give `probe_serial` on every call: without it each call first lists the probes, which takes a second or more and holds up every other board. Give addresses as "0x..." strings and files as absolute paths. `run_firmware` lets go of the probe once the program starts; with `keep_probe=True` a GDB server keeps holding it, and while it does, a core that locks up is reset, which clears its fault registers. `reset_target` and `flash_firmware` stop a holding server first and say so. A call that halts or resets the target says so. If the running program has closed the debug port, `board_state` can get back in by resetting the target, and `reset_target` cannot; on an STM32N6 running ST's start-up code, only a power cycle does. An unknown argument is refused, not ignored.
 ```
 
 ## Tools
@@ -140,7 +147,7 @@ Give `probe_serial` on every call: without it each call first lists the probes, 
 | `flash_firmware` | Writes a raw binary (.bin), an ELF or an Intel HEX file to flash, for the board to boot | Reads every written range back; only an identical readback is `verified`. Says what its erase took beyond the image. Does not start the image. See [Writing flash](#writing-flash) |
 | `read_memory` | Reads 32-bit words, a variable by name, or a peripheral register by name, without halting or resetting the target | The words themselves. A variable is `verified` only when the target runs the ELF it was decoded with. Refuses a short read, and a register whose [read changes state](#reads-that-change-state) unless told `read_effects_ok` |
 | `sample_values` | Samples up to eight variables, addresses or registers together, a few times a second for up to 60 s, without halting the program | Each value as itself if it never changed, or as first, last, range, number of changes and when it first changed, with how many samples found the core running, halted or otherwise. `until` stops at the first sample where a condition holds. A change and change back between two samples does not show |
-| `core_registers` | Reads the core registers, halting the core for the read; with the ELF, the call stack with each frame's arguments and locals | The registers themselves. Says whether the core runs afterwards. Without the ELF it may reset to reach the core, and says so; with it, it refuses instead |
+| `core_registers` | Reads the core registers, halting the core for the read; with the ELF, the call stack with each frame's arguments and locals | The registers themselves. Says whether the core runs afterwards. Without the ELF, a core it cannot reach as it runs is reached through a reset, and the result says so. With the ELF it refuses instead of resetting, so the call stack it returns is always the running program's |
 | `run_until` | Runs the target until it reaches a function, a line or an address, or writes a variable, and holds the core there | `verified` only when the chip's debug fault status register names a breakpoint or a watchpoint at the stop. A time limit that runs out is `unverified`. See [Stopping the target](#stopping-the-target) |
 | `read_fault_status` | Reads and decodes the Cortex-M fault registers, without halting or resetting the target | The raw registers, a plain-English diagnosis, and the faulting address when the hardware recorded it. A clean read beside a held GDB server that caught a vector is `unverified`. Refuses Cortex-M0, M0+, M1 and M23 cores, which have no such registers |
 | `locate_fault` | Finds the instruction that faulted, from the exception frame, halting the core for the read | The stacked PC, from the stack EXC_RETURN in LR names; with the ELF, its function, line and instruction. `unverified` when the words found do not look like a frame. Never resets, since a reset loses the fault |
@@ -160,15 +167,7 @@ Give `probe_serial` on every call: without it each call first lists the probes, 
 - A core that locks up, by faulting inside its fault handler, is reset by the held server and halted at its reset vector, which clears the fault registers. Results that find a core halted that way say so.
 - Shared mode needs ST's `stlink-server`, which STM32CubeCLT installs on the PATH. Without it the server keeps the probe to itself, and `read_memory`, `sample_values`, `read_fault_status`, `locate_fault`, `read_option_bytes`, `capture_swo`, and `disassemble` given a probe, refuse until `release_probe`. Probes have stuck after a program closed the debug port under a held server in shared mode; see [When something does not work](#when-something-does-not-work).
 
-The server assumes it is the only user of the probes, since its users are agents: on Linux, when no ST-LINK GDB server is running on the machine, it stops `stlink-server` before its next programmer call, so that a probe the daemon kept open can be reached. It does not do this on other systems. A debugger in an IDE sharing a probe with it is not supported.
-
-On the STM32N6, an image built from ST's FSBL template closes debug access port 1 when it starts, and only a power cycle reopens it, whether or not the probe is held. The cause is one line at the end of ST's `system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out of `SystemInit`:
-
-```c
-RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
-```
-
-Remove that write and the port survives across runs.
+ST's `stlink-server` is the daemon that lets a GDB server and the programmer share one probe, and this server needs it only while a GDB server holds a probe. The rest of the time the daemon is in the way: a probe it keeps open cannot be reached by the programmer. So on Linux, when no ST-LINK GDB server is running on the machine, the server stops `stlink-server` before its next programmer call, and `--check` does the same. It does not do this on other systems. The server assumes it is the only user of the probes, since its users are agents; a debugger in an IDE sharing a probe with it is not supported.
 
 ### Running an image from RAM
 
@@ -187,7 +186,13 @@ The STM32N6 has no internal flash: its boot ROM copies an image from the board's
 - To boot from flash (BOOT1 low), an image needs ST's header. On a part whose secure-boot fuse is not blown, a header with no keys will do: `STM32_SigningTool_CLI -bin image.bin -nk -t fsbl -hv 2.3 -align -o image-boot.bin`, then write `image-boot.bin`.
 - The boot ROM leaves the debug port closed in flash boot. For the debugger to reach a flash-booted image, the image must open it as its first act, on every boot, in development builds only: ST's `HAL_BSEC_ConfigDebug` and `HAL_BSEC_UnlockDebug`, which write 0xB451B400 to `BSEC_DBGCR` and 0xB4 to `BSEC_AP_UNLOCK`. After a reset, the image opens it again and the probe gets back in.
 - Write the external flash in development boot (BOOT1 high). After a flash boot, ST's flash loader hangs the core and only a power cycle brings the board back, so `flash_firmware` reads the boot pins first and refuses in flash boot. `board_state` reports the boot mode it reads.
-- ST's start-up code turns off a clock the debug port needs, which closes the port once the probe lets go; see [Holding the probe](#holding-the-probe).
+- An image built from ST's FSBL template closes debug access port 1 when it starts, whether or not the probe is held, and only a power cycle reopens it. The cause is one line at the end of ST's `system_stm32n6xx_fsbl.c`, which switches the SYSCFG clock off on the way out of `SystemInit`:
+
+  ```c
+  RCC->APB4ENCR2 = RCC_APB4ENCR2_SYSCFGENC;   /* deactivate SYSCFG clock */
+  ```
+
+  Remove that write and the port survives across runs.
 
 ### More than one board
 
@@ -316,7 +321,7 @@ Run `uv run stlink-mcp --check` first. It names what it found and what it did no
 * It does not build your firmware. That is your build system's job.
 * It does not sign images, because signing needs keys and options that belong to your project rather than to a programmer.
 * Only ST-LINK with STM32CubeCLT is supported. There is no abstraction layer waiting for a second backend: adding OpenOCD would mean introducing one first.
-* Run on Fedora Linux 44 with STM32CubeCLT 1.22.0 and Python 3.12, with the on-board ST-LINK V3 probes of NUCLEO-N657X0-Q, NUCLEO-H743ZI2 and STM32H753I-EVAL2 boards, and with ST-LINK/V2 probes on an STM32H743's JTAG connector and on a custom STM32F407 board. Other Linux distributions should work and have not been run. macOS has not been tried. Windows 11 has been run with one NUCLEO-N657X0-Q, where every check for that board passed but one that cannot look there, whether ST's sharing daemon was left running; SWO, JTAG, writing flash and the other boards have not been run there.
+* Run on Fedora Linux 44 with STM32CubeCLT 1.22.0 and Python 3.12, with the on-board ST-LINK V3 probes of NUCLEO-N657X0-Q, NUCLEO-H743ZI2 and STM32H753I-EVAL2 boards, and with ST-LINK/V2 probes on an STM32H743's JTAG connector and on a custom STM32F407 board. Other Linux distributions should work and have not been run. macOS has not been tried. Windows 11 has been run with one NUCLEO-N657X0-Q, and every check for that board passed. The one check that could not run there looks at whether ST's sharing daemon was left running, which the server manages only on Linux. SWO, JTAG, writing flash and the other boards have not been run on Windows.
 * An ST-LINK/V2-1 has not been tried. If you hit a parsing problem on any probe, the captured `STM32_Programmer_CLI -l` output is the useful bug report.
 * It is not affiliated with STMicroelectronics.
 
@@ -327,12 +332,12 @@ Other MCP servers drive STM32 boards, and several do more than this one: buildin
 * [phryniszak/stmcp](https://github.com/phryniszak/stmcp) is the closest in its tools: an MCP server on the same STM32CubeCLT tools, built around a GDB session, with run, halt, reset and step, breakpoints, memory and register reads and writes, a decoded dump of the fault registers, and expression evaluation. Its reads go through GDB, so they halt the core, as its README says. A run counts as done when the command returns, and a reset's program counter comes back unchecked. **Compared on the same tasks:** seven bench tasks on three boards (a crash, a fault inside the fault handler, a hang, an image that prints nothing, an ADC result to read without disturbing the firmware, a program that closes the debug port, a flash write to confirm it boots), the same four AI agents (two Claude and two Gemini models), and one run per agent and task, 28 runs each. stmcp: 10 right, 10 partly right, 5 wrong, 3 with no answer. stlink-mcp: 23 right, 4 partly right, none wrong, 1 with no answer. stmcp's agents got no help where the tools did not check: two never reached the STM32N6's core, which is on access port 1; one took the programmer's "Start operation achieved successfully" as the board running; others took the ELF's entry point for where the program runs. This project's author set and scored the tasks, not blind, so read it as an indication; the details are in [docs/findings.md](docs/findings.md).
 * [Zeraissh/stm32-gdb-mcp](https://github.com/Zeraissh/stm32-gdb-mcp) is the closest in purpose: STM32-specific and built for agents, over GDB with OpenOCD, ST-LINK or J-Link, with breakpoints, stepping, FreeRTOS awareness, fault reconstruction, RTT and SWO logging, and decoded, structured results with suggested next steps. Its reads need a halted core, as its README says.
 * [Adancurusul/embedded-debugger-mcp](https://github.com/Adancurusul/embedded-debugger-mcp) (Rust; probe-rs or OpenOCD underneath) has breakpoints, stepping, RTT, flash programming with an optional readback compare, ST-LINK, J-Link, DAPLink and other probe-rs probes, several architectures, and a fault tool that reports the registers without asserting a cause. Its success text is the backend call returning: `run` reports "resumed execution successfully" with nothing observed afterwards, `reset` prints a program counter from a snapshot that is allowed to fail and shows zero when it does, and `run_firmware` ends with "Firmware is now running on target" whether or not RTT was attached. The file references are in [docs/findings.md](docs/findings.md).
-* [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD, and adds a full serial toolset, memory writes by symbol and live memory monitoring. It reports its own result lines: "Flash: OK" and "Verify: OK" on OpenOCD's own banners, "Reset: OK" whenever a reset was asked for, with nothing checked, and its TODO file records "Build: OK" with nothing compiled.
+* [shieldyguy/stm32-mcp](https://github.com/shieldyguy/stm32-mcp) builds with the STM32CubeIDE headless builder, flashes and reads memory through OpenOCD, and adds a full serial toolset, memory writes by symbol and live memory monitoring. It reports its own result lines: "Flash: OK" and "Verify: OK" on OpenOCD's own banners, "Reset: OK" whenever a reset was asked for, with nothing checked.
 * [Helistana/mcp-stm32cubeide-server](https://github.com/Helistana/mcp-stm32cubeide-server) drives the same CubeIDE loop, with fault decoding, and is documented in Chinese.
 * [BlaineMoon30/STM32-DEBUG-MCP](https://github.com/BlaineMoon30/STM32-DEBUG-MCP), for Windows only, builds, flashes and debugs through OpenOCD and GDB or STM32_Programmer_CLI, and reads a running board through the programmer's hot-plug connect, as this one does.
 * [Klievan/jlink-mcp](https://github.com/Klievan/jlink-mcp), for SEGGER J-Link probes on Cortex-M, makes this project's argument for its own tests: on a real board, calls that went wrong had reported success, so its tests check what came back rather than that a call returned.
 
-What this one does on every call: a run is verified only by what the new image did; a reset is checked against the image's reset vector; a stop is verified by the chip's own record of why it stopped; a read by name checks that the target runs that ELF; a read that would change a register is refused unless asked for; and every part-specific address says whether it was measured. In their source, neither stmcp nor embedded-debugger-mcp checks a run or a reset, shieldyguy's "Reset: OK" is not a check, and the reads of stmcp and stm32-gdb-mcp halt the core. Choose one of the others when you need what this one leaves out ([Who this is for](#who-this-is-for)). Each was read on or before 7 October 2026, and may since have changed.
+Choose one of the others when you need what this one leaves out ([Who this is for](#who-this-is-for)). Each was read on or before 7 October 2026, and may since have changed.
 
 ## Licence
 

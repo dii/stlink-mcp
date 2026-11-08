@@ -34,9 +34,8 @@ The gates before 1.0:
 
 1. Every promise in the README has a measurement behind it in the ledger in [docs/findings.md](docs/findings.md), and `tools/hwcheck` checks it on the boards.
 2. The tool signatures and result fields are declared stable, as a beta.
-3. One report from a user outside the project, on a board the README does not list.
+3. One report from a user outside the project, on a board the README does not list. Met on 2026-10-27: a run on an STM32G474, recorded in [docs/findings.md](docs/findings.md).
 4. Windows is either supported, after the checks not yet run there (SWO, JTAG, writing flash, and the H7 and F407 boards), or documented as run once on one board.
-5. The README is read by the author before the repository goes public.
 
 ## After 1.0
 

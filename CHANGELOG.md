@@ -6,7 +6,9 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ### Changed
 
+- The README, after an outside read before the repository goes public: the opening names what the server does beyond loading an image; a `run_firmware` result is shown as the agent sees it; the usual-session guide, in the README and in the instructions the server gives every client, says that a flash-linked build goes `flash_firmware`, `reset_target`, `capture_console`, since `run_firmware` takes only an image linked for RAM; `stlink-server` is explained in one place; the STM32N6 start-up note sits in its own section; the second diagram, a repeated section and a remark on another project's TODO file are gone; and four compressed sentences are plainer.
 - The related-projects section of the README says when the other servers were last read in source.
+- ROADMAP: the outside-report gate is recorded as met on 2026-10-27, and the author's read of the README before going public is no longer listed, having happened.
 
 ## [0.8.3] - 2026-10-28
 
