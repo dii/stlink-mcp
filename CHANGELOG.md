@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-08
+
+A tool's refusal rules change, so the minor version moves. Run on the bench on 2026-11-08: three board-file cases on the STM32H7, and `tools/hwcheck --flash` on the STM32H7 and STM32N6 (the STM32F407 board was not attached).
+
 ### Changed
 
 - `flash_firmware` writes an ELF or HEX file on a flash base nobody measured, when the base comes from ST's database or a board file and lies in the main-flash window 0x08000000 to 0x0800FFFF; a .bin without `address` still needs a measured base, because there the tool chooses the address. A base that is absent, assumed, outside the window or behind an external loader is refused by name, as is a part whose connect gives no flash size. Every ELF or HEX result after the connect carries `flash_base_provenance` and `flash_range_checked`. The design was red-teamed before it was built (docs/design-0.9.0-flash-gate.md): the first version would have let a board file naming RAM report a RAM write as a verified flash write, which the window prevents.
@@ -269,7 +273,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dii/stlink-mcp/compare/v0.8.6...v0.9.0
 [0.8.6]: https://github.com/dii/stlink-mcp/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/dii/stlink-mcp/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/dii/stlink-mcp/compare/v0.8.3...v0.8.4
