@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-11-08
+
+The first version on PyPI. No change to the code.
+
 ### Added
 
 - The package is published on PyPI as `stlink-mcp` from this version, so `uvx stlink-mcp` runs it with no clone. The README's client configuration and Claude Code command use that form; the clone form stays for working on the code. A GitHub Actions workflow publishes every `v*` tag through PyPI's trusted publishing, with no stored token.
@@ -251,7 +255,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/dii/stlink-mcp/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/dii/stlink-mcp/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/dii/stlink-mcp/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/dii/stlink-mcp/compare/v0.8.1...v0.8.2
