@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+
+- The related-projects section of the README says when the other servers were last read in source.
+
 ## [0.8.3] - 2026-10-28
 
 ### Added
