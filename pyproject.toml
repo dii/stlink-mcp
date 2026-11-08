@@ -69,6 +69,7 @@ include = [
     "README.md",
     "ROADMAP.md",
     "pyproject.toml",
+    "server.json",
     "uv.lock",
 ]
 

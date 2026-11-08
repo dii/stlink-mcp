@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- Listed in the MCP Registry as `io.github.dii/stlink-mcp`: `server.json` in the repository root describes the PyPI package, its `uvx` start and its settings, and the publish workflow sends it to the registry after each tag reaches PyPI, with the version set from the tag.
+
 ## [0.8.5] - 2026-11-08
 
 The first version on PyPI. No change to the code.

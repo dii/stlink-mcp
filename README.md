@@ -92,7 +92,7 @@ Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 
 ## Install
 
-With [uv](https://docs.astral.sh/uv/) installed, the package on PyPI runs with no install step; `uvx stlink-mcp@0.8.5` pins a version:
+With [uv](https://docs.astral.sh/uv/) installed, the package on PyPI runs with no install step; `uvx stlink-mcp@0.8.5` pins a version. MCP clients that browse the [MCP Registry](https://registry.modelcontextprotocol.io/) find it as `io.github.dii/stlink-mcp`.
 
 ```sh
 uvx stlink-mcp --check

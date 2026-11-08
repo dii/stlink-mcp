@@ -1,0 +1,68 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.dii/stlink-mcp",
+  "title": "stlink-mcp",
+  "description": "Program, run and inspect STM32 targets over ST-LINK; every result verified, unverified or failed.",
+  "websiteUrl": "https://github.com/dii/stlink-mcp",
+  "repository": {
+    "url": "https://github.com/dii/stlink-mcp",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "stlink-mcp",
+      "version": "0.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "STLINK_MCP_CLT_ROOT",
+          "description": "STM32CubeCLT (or STM32CubeIDE) install directory, when it is not in a standard place",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        },
+        {
+          "name": "STLINK_MCP_BOARDS",
+          "description": "TOML file describing boards this project has not characterised; defaults to ~/.config/stlink-mcp/boards.toml if it exists",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        },
+        {
+          "name": "STLINK_MCP_NO_VENDOR_SEED",
+          "description": "Set to anything to run on measured and user-stated data only, with no seeding from ST's device databases",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "STLINK_MCP_CONSOLE",
+          "description": "Serial console per probe, SERIAL=/dev/ttyUSB0, comma-separated for several; for a console that is not the probe's own",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "STLINK_MCP_CONSOLE_BAUD",
+          "description": "Console baud rate",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "115200",
+          "format": "number"
+        },
+        {
+          "name": "STLINK_MCP_GDB_PORT",
+          "description": "First GDB server port; each probe's server takes this port and the next",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "61234",
+          "format": "number"
+        }
+      ]
+    }
+  ]
+}
