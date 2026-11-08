@@ -4,6 +4,10 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-08
+
+The documentation only; no change to the code beyond the instructions the server gives every client. The repository goes public at this version.
+
 ### Changed
 
 - The README, after an outside read before the repository goes public: the opening names what the server does beyond loading an image; a `run_firmware` result is shown as the agent sees it; the usual-session guide, in the README and in the instructions the server gives every client, says that a flash-linked build goes `flash_firmware`, `reset_target`, `capture_console`, since `run_firmware` takes only an image linked for RAM; `stlink-server` is explained in one place; the STM32N6 start-up note sits in its own section; the second diagram, a repeated section and a remark on another project's TODO file are gone; and four compressed sentences are plainer.
@@ -242,7 +246,8 @@ First tagged version. Alpha: any tool signature or result field may still change
 - Board files for describing a board the server does not know.
 - Linux only, MIT licence.
 
-[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/dii/stlink-mcp/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/dii/stlink-mcp/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/dii/stlink-mcp/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/dii/stlink-mcp/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/dii/stlink-mcp/compare/v0.8.0...v0.8.1
