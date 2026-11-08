@@ -8,7 +8,8 @@ almost every STM32 and refusing only where something is genuinely unknown.
 Nothing here produces a `measured` value. Every entry comes out labelled
 `vendor-db`, except the access port, which is not in the databases at all and
 comes out `assumed`. What the label changes is real: `flash_firmware` will not
-write to an unmeasured base unless the caller names the address, and
+choose a .bin's address from an unmeasured base, confines an ELF or HEX file on
+one to the main-flash window and names the label in every such result, and
 `board_state` reports an unmeasured access port as a warning.
 
 THREE THINGS THE DATA DOES NOT DO, all measured rather than assumed, and all

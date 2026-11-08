@@ -660,11 +660,13 @@ def load_user_boards(path: Path) -> dict[int, FamilyQuirks]:
     EVERYTHING LOADED IS `user-stated`, AND THE FILE CANNOT SAY OTHERWISE. There
     is no way to declare a value `measured` here, and the omission is the point:
     this server cannot tell a value someone measured from a value someone typed,
-    and `measured` is the label that unlocks the write path in
-    `flash_firmware`. If a config file could assert it, a typo would unlock an
-    irreversible operation. Someone who has genuinely measured their board can
-    still flash it by passing the address explicitly, which records the claim as
-    theirs.
+    and `measured` is the label that lets `flash_firmware` choose a .bin's
+    address from the base and write an ELF or HEX file outside the main-flash
+    window. If a config file could assert it, a typo would unlock an
+    irreversible operation. A stated base inside that window (0x08000000 to
+    0x0800FFFF) is enough for an ELF or HEX file, whose addresses are its own,
+    and the result names the base as user-stated; a .bin is flashed by passing
+    the address explicitly, which records the claim as yours.
     """
     try:
         raw = tomllib.loads(path.read_text())
@@ -703,9 +705,10 @@ def load_user_boards(path: Path) -> dict[int, FamilyQuirks]:
                     "label its own values; everything in it is user-stated. "
                     "That is not a comment on your measurements: this server "
                     "cannot tell a measured value from a typed one, and "
-                    "'measured' is what lets flash_firmware write without an "
-                    "explicit address. Pass `address` when you flash, and the "
-                    "claim is recorded as yours."
+                    "'measured' is what lets flash_firmware choose a .bin's "
+                    "address from the base. An ELF or HEX file is written on a "
+                    "stated base inside the main-flash window; for a .bin, pass "
+                    "`address` when you flash, and the claim is recorded as yours."
                 )
 
         # An unknown key is rejected rather than ignored. Ignoring it is the

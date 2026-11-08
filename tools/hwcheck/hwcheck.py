@@ -813,10 +813,13 @@ async def check_n6(server: Server, serial: str, images: Built, report: Report) -
     ob = await server.call("read_option_bytes", probe_serial=s)
     report.check(ob["status"] == "failed" and "not supported for STM32N6" in ob.get("error", ""),
                  "N6: read_option_bytes fails with ST's reason, the part having none", _why(ob))
-    no_size = await server.call("flash_firmware", image_path=ram_elf, probe_serial=s)
-    report.check(no_size["status"] == "failed" and "no flash size" in no_size.get("error", ""),
-                 "N6: flash_firmware refuses an ELF, its connect giving no flash size to check it against",
-                 _why(no_size))
+    behind_loader = await server.call("flash_firmware", image_path=ram_elf, probe_serial=s)
+    report.check(behind_loader["status"] == "failed" and "external loader" in behind_loader.get("error", "")
+                 and behind_loader.get("flash_base_provenance") == "measured"
+                 and behind_loader.get("flash_range_checked") is None,
+                 "N6: flash_firmware refuses an ELF, the part's flash being behind an external loader, "
+                 "and names the base's provenance (0.9.0; before, the refusal cited the missing flash size)",
+                 _why(behind_loader))
     await check_names(server, "N6", s, images, report, "n6_vars", "h7_vars", "0x46028000", "board name")
     await server.call("release_probe", probe_serial=s)
     return True

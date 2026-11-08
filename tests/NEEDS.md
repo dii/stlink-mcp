@@ -59,11 +59,11 @@ The cross-cutting needs N1 to N9 are AGENTS.md's, and are not restated here. The
 ## flash_firmware (FF)
 
 - **FF1.** It takes a raw binary, an ELF or an Intel HEX file, and refuses anything else, and a file with no bytes to write, before touching the probe.
-- **FF2.** It refuses a flash base nobody measured unless the caller gives the address of a raw binary.
+- **FF2.** It refuses to choose a write address from a flash base nobody measured: a .bin without `address` needs a measured base.
 - **FF3.** It is verified only when every byte written reads back the same, run by run.
 - **FF4.** It says what its erase took beside the image in the 128 KB blocks the image touches; a byte the image writes is never counted as taken, and none is counted twice.
 - **FF5.** It stops a server holding the probe first, and says so.
-- **FF6.** Every run of bytes an ELF or HEX file writes lies inside the part's flash, from its measured base for the connect's "NVM size"; anything else, or a part whose connect gives no size, is refused before anything is written, and so is `address` with such a file, since the file says where.
+- **FF6.** Every run of bytes an ELF or HEX file writes lies inside the part's flash, from its recorded base for the connect's "NVM size", where the base is measured, or comes from the vendor database or a board file and lies in the main-flash window 0x08000000 to 0x0800FFFF; a base that is absent, assumed, outside that window or behind an external loader is refused, as is a part whose connect gives no size, and so is `address` with such a file, since the file says where; every result after the connect, refusal or write, carries the base's provenance and the range checked, null where there is none.
 - **FF7.** A write that fails partway says flash may already have changed.
 - **FF8.** On a part whose external loader hangs the core once the board has booted from that flash (the STM32N6), a write is refused before the loader runs when the boot pins read flash boot, saying to set development boot; the board keeps running.
 - **FF9.** After a write, the next step says what the part's boot ROM needs to boot the image and to debug it there, where the family records it.

@@ -1004,8 +1004,9 @@ registers. No signing.
     quirks = info.quirks
     # Disclosed on the SUCCESS path, not only on a refusal.
     #
-    # flash_firmware refuses an unmeasured base and names the provenance in the
-    # refusal, so a caller there cannot miss it. This tool ACTS on an unmeasured
+    # flash_firmware names the base's provenance in every ELF or HEX result and
+    # refuses to choose a .bin's address from an unmeasured base, so a caller
+    # there cannot miss it. This tool ACTS on an unmeasured
     # load address by design - a wrong one is undone by a reset and the console is
     # a real observation - and it used to return `verified` with no hint that the
     # address came from ST's database rather than a board. An agent could then
@@ -1533,12 +1534,12 @@ def flash_firmware(
     interface: Interface = "swd",
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Program an image into flash for standalone boot: a raw .bin at `address`, or
-at the part's flash base, or an ELF or Intel HEX file at the addresses inside
-it, which must lie in the part's flash. Without `address` the flash base must
-be measured (board_state's `family.provenance`). Verified only when every byte
-written reads back the same. Does not sign or start the image; `next_step` says how it boots. Prefer run_firmware
-while developing.
+    """Program an image into flash: a raw .bin at `address` or at a measured flash
+base, or an ELF or HEX file at its own addresses, inside the part's flash; on a
+base from ST's database or a board file, only inside the main-flash window; the
+result names the base's provenance. Verified only when every byte reads back
+the same. Does not sign or start the image; `next_step` says how it boots.
+Prefer run_firmware while developing.
     """
     released: dict[str, Any] = {}
     return {**_flash_firmware(image_path, probe_serial, address, interface, released), **released}
@@ -1599,47 +1600,43 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
         )
 
     quirks = info.quirks
+    range_fields: dict[str, Any] = {}
     if runs is None:
         target_address = explicit if explicit is not None else quirks.flash_base
         if target_address is None:
             return failed(
                 f"No flash base recorded for {quirks.name}; pass address explicitly."
             )
-    else:
-        target_address = None
-
-    # The write path does not act on a value nobody has measured.
-    #
-    # Elsewhere this server will act on an unmeasured address and let the
-    # observation decide, because a RAM load that used the wrong base is undone
-    # by a reset and there IS an observation: the target either produces console
-    # output or it does not. Neither is true here. This tool writes persistently,
-    # and its readback confirms what was written, not that it went to the right
-    # place.
-    #
-    # An explicit `address` is a different matter and is allowed: the caller has
-    # said where to write, so it is their claim rather than the table's guess.
-    # An ELF or HEX file names its own addresses, and the flash base is then
-    # what they are checked against, so it must be measured.
-    if explicit is None and not quirks.is_measured("flash_base"):
-        return failed(
-            f"The flash base for {quirks.name} is "
-            f"{quirks.provenance_of('flash_base')}, not measured on hardware, and "
-            "this tool writes permanently. Its readback confirms what was "
-            "written, not that the address was the right one.",
-            hint=(
-                "Either pass a .bin with `address` explicitly, which records the "
-                "choice as yours, or confirm the base by running an image from RAM "
-                "first, which is reversible and self-verifying."
-            ),
-            **_after_failure(probe),
-        )
-    if runs is not None:
-        refusal = _outside_flash(image, runs, quirks, info)
-        if refusal:
-            return failed(refusal, image_path=str(image), runs=_listed(runs), **_after_failure(probe))
-    else:
+        # A .bin without `address` is the one write whose address this tool
+        # CHOOSES, from the flash base, and it does not choose from a value
+        # nobody has measured: this tool writes persistently, and its readback
+        # confirms what was written, not that it went to the right place. An
+        # explicit `address` is the caller's claim and is allowed.
+        if explicit is None and not quirks.is_measured("flash_base"):
+            return failed(
+                f"The flash base for {quirks.name} is "
+                f"{quirks.provenance_of('flash_base')}, not measured on hardware, and "
+                "this tool writes permanently. Its readback confirms what was "
+                "written, not that the address was the right one.",
+                hint=(
+                    "Either pass a .bin with `address` explicitly, which records the "
+                    "choice as yours, or confirm the base by running an image from RAM "
+                    "first, which is reversible and self-verifying."
+                ),
+                **_after_failure(probe),
+            )
         runs = [image_mod.Run(target_address, image.read_bytes())]
+    else:
+        # An ELF or HEX file names its own addresses; the base only decides
+        # whether to refuse, so it need not be measured, but an unmeasured one
+        # is confined to the main-flash window (0.9.0, after a red-team: a
+        # board file naming RAM would otherwise make a RAM write read back
+        # identical and report verified).
+        target_address = None
+        range_fields, refusal = _elf_gate(image, runs, quirks, info)
+        if refusal:
+            return failed(refusal, image_path=str(image), runs=_listed(runs),
+                          **range_fields, **_after_failure(probe))
 
     # FF8: on the STM32N6, ST's external loader hangs the core once the board has
     # booted from its flash; the session is lost and only a power cycle brings the
@@ -1658,7 +1655,7 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
     # the result said nothing of it (2026-10-03). The bytes beside the image in
     # the blocks it touches are read before and after the write, and the
     # difference is reported.
-    spans = _beside(runs)
+    spans = _beside(runs, _flash_bounds(quirks, info, runs))
     before = _read_spans(probe, quirks.external_loader, spans)
 
     try:
@@ -1672,6 +1669,7 @@ def _flash_firmware(image_path: str, probe_serial: str | None, address: int | st
         "image_path": str(image),
         "image_size_bytes": image_size,
         **({"address": _hex(target_address)} if target_address is not None else {"runs": _listed(runs)}),
+        **range_fields,
         "target_was_reset": probe.target_was_reset,
         "signing_required": quirks.requires_signing,
         "programmer_output": output.strip().splitlines()[-3:],
@@ -1734,6 +1732,73 @@ def _listed(runs: list[image_mod.Run]) -> list[dict[str, Any]]:
     return [{"address": _hex(r.address), "bytes": len(r.data)} for r in runs]
 
 
+#: Where an ELF or HEX file may be written on a base nobody measured: the
+#: main-flash window every STM32 with internal flash starts in, the same rule
+#: the vendor seeding applies (vendordb._FLASH_PREFIX) stated as numbers. A
+#: measured base is not confined to it. The bound is what keeps a board file's
+#: typo from admitting a write to RAM, OTP or option bytes: on the parts whose
+#: manuals this project has checked (RM0090, RM0433) nothing of the kind lies
+#: between 0x08000000 and the window plus the largest flash size the connect
+#: reports; the README names the families checked.
+_FLASH_WINDOW = (0x08000000, 0x0800FFFF)
+
+
+def _flash_fields(quirks: FamilyQuirks, info: TargetInfo) -> dict[str, Any]:
+    """The two fields every ELF or HEX result after the connect carries: the
+    base's provenance, and the range the file's runs are checked against."""
+    if quirks.flash_base is None:
+        return {"flash_base_provenance": None, "flash_range_checked": None}
+    fields: dict[str, Any] = {"flash_base_provenance": quirks.provenance_of("flash_base")}
+    if info.nvm_size is None:
+        fields["flash_range_checked"] = {"low": _hex(quirks.flash_base), "high": None,
+                                         "size_from": "none: the connect gave no NVM size"}
+    else:
+        fields["flash_range_checked"] = {"low": _hex(quirks.flash_base),
+                                         "high": _hex(quirks.flash_base + info.nvm_size - 1),
+                                         "size_from": "the connect's NVM size"}
+    return fields
+
+
+def _elf_gate(image: Path, runs: list[image_mod.Run], quirks: FamilyQuirks,
+              info: TargetInfo) -> tuple[dict[str, Any], str | None]:
+    """Whether an ELF or HEX file may be written here: the result fields, and the
+    refusal or None. Tested in this order, each refusal naming what to do."""
+    fields = _flash_fields(quirks, info)
+    if quirks.flash_base is None:
+        return fields, f"No flash base is recorded for {quirks.name}; pass a .bin with `address`."
+    if quirks.external_loader is not None:
+        fields["flash_range_checked"] = None
+        return fields, (f"This part's flash is behind an external loader, and the addresses in "
+                        f"{image.name} cannot be checked against it; write a .bin with `address`.")
+    provenance = quirks.provenance_of("flash_base")
+    if provenance == quirks_mod.ASSUMED:
+        fields["flash_range_checked"] = None
+        return fields, (f"The flash base for {quirks.name} is assumed, not measured on hardware and "
+                        "not stated by any source, and this tool writes permanently; pass a .bin "
+                        "with `address`.")
+    if provenance != quirks_mod.MEASURED and not (_FLASH_WINDOW[0] <= quirks.flash_base <= _FLASH_WINDOW[1]):
+        fields["flash_range_checked"] = None
+        where = ("stated in your board file" if provenance == quirks_mod.USER_STATED
+                 else f"from {provenance}")
+        return fields, (f"The flash base {where}, {_hex(quirks.flash_base)}, lies outside the window "
+                        f"this tool writes ELF or HEX files to on a part it has not measured, "
+                        f"{_hex(_FLASH_WINDOW[0])} to {_hex(_FLASH_WINDOW[1])}; pass a .bin with `address`.")
+    return fields, _outside_flash(image, runs, quirks, info)
+
+
+def _flash_bounds(quirks: FamilyQuirks, info: TargetInfo,
+                  runs: list[image_mod.Run]) -> tuple[int, int] | None:
+    """The flash range the erase report may read within, when the base and the
+    size are known and every run lies inside it; otherwise None, and the report
+    reads whole blocks as it always has."""
+    if quirks.flash_base is None or info.nvm_size is None:
+        return None
+    low, high = quirks.flash_base, quirks.flash_base + info.nvm_size
+    if all(low <= r.address and r.end <= high for r in runs):
+        return low, high
+    return None
+
+
 def _outside_flash(image: Path, runs: list[image_mod.Run], quirks: FamilyQuirks,
                    info: TargetInfo) -> str | None:
     """Why an ELF or HEX file's runs must not be written here, or None."""
@@ -1746,7 +1811,8 @@ def _outside_flash(image: Path, runs: list[image_mod.Run], quirks: FamilyQuirks,
     if not outside:
         return None
     listed = ", ".join(f"{len(r.data)} bytes at 0x{r.address:08X}" for r in outside[:4])
-    return (f"{image.name} writes outside this part's flash, 0x{low:08X} to 0x{high - 1:08X}: {listed}. "
+    return (f"{image.name} writes outside this part's flash as recorded by "
+            f"{quirks.provenance_of('flash_base')}, 0x{low:08X} to 0x{high - 1:08X}: {listed}. "
             "An image linked for RAM, run_firmware's kind, looks like this. Nothing was written.")
 
 
@@ -1758,14 +1824,21 @@ _ERASE_WINDOW = 0x20000
 _READ_TOGETHER = 0x1000
 
 
-def _beside(runs: list[image_mod.Run]) -> list[tuple[int, int]]:
+def _beside(runs: list[image_mod.Run],
+            bounds: tuple[int, int] | None = None) -> list[tuple[int, int]]:
     """The bytes no run writes in the 128 KB blocks the runs touch, as
-    [start, end) spans: what a sector erase may take without the image saying."""
+    [start, end) spans: what a sector erase may take without the image saying.
+    Within `bounds`, the part's flash range, when it is known: a part with less
+    flash than a block is not read past its end (0.9.0)."""
     spans: list[tuple[int, int]] = []
     ordered = sorted(runs, key=lambda r: r.address)
     blocks = sorted({b for r in ordered for b in range(r.address // _ERASE_WINDOW, -(-r.end // _ERASE_WINDOW))})
     for block in blocks:
         cursor, high = block * _ERASE_WINDOW, (block + 1) * _ERASE_WINDOW
+        if bounds is not None:
+            cursor, high = max(cursor, bounds[0]), min(high, bounds[1])
+            if cursor >= high:
+                continue
         for run in ordered:
             if run.end <= cursor or run.address >= high:
                 continue

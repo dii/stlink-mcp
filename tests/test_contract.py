@@ -2331,8 +2331,9 @@ class TestAResettingConnectIsReportedWhetherOrNotItConnects:
 class TestASeededAddressIsDisclosedWhereItIsUsed:
     """RT1 and RT8 from the phase 2 red-team.
 
-    `flash_firmware` refuses an unmeasured base and names the provenance in the
-    refusal, so a caller there cannot miss it. `run_firmware` ACTS on an unmeasured
+    `flash_firmware` names the base's provenance in every ELF or HEX result and
+    refuses to choose a .bin's address from an unmeasured base, so a caller there
+    cannot miss it. `run_firmware` ACTS on an unmeasured
     load address by design - a wrong one is undone by a reset and the console is a
     real observation - and it used to return `verified` with nothing in the payload
     saying the address came from ST's database rather than a board. An agent could
@@ -2783,6 +2784,112 @@ class TestAnElfOrHexIsWrittenWhereItSays:
         monkeypatch.setattr(_FakeProbe, "identify", lambda self, allow_reset=True: pytest.fail("the probe was touched"))
         out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"), address="0x08000000")
         assert out["status"] == result.FAILED and "carries the addresses" in out["error"]
+
+    # 0.9.0: an ELF or HEX file on a base nobody measured (design-0.9.0-flash-gate.md).
+
+    def _with_quirks(self, monkeypatch, **changes):
+        from stlink_mcp import quirks as quirks_mod
+        base = quirks_mod.for_device_id(0x413)  # the measured F407 entry
+        fields = {f: getattr(base, f) for f in ("name", "access_port", "ram_load_base", "vector_table_addr",
+                                                "flash_base", "notes")}
+        fields.update(changes)
+        entry = quirks_mod.FamilyQuirks(**fields)
+        monkeypatch.setattr(probe_mod, "for_device_id", lambda did: entry)
+        return entry
+
+    def test_an_elf_on_a_vendor_db_base_in_the_window_is_written(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0: the base only decides whether to refuse; the file says where."""
+        from stlink_mcp import quirks as quirks_mod
+        self._with_quirks(monkeypatch, default_provenance=quirks_mod.VENDOR_DB)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.VERIFIED and f407.writes == 1
+        assert out["flash_base_provenance"] == "vendor-db"
+        assert out["flash_range_checked"] == {"low": "0x08000000", "high": "0x080FFFFF",
+                                              "size_from": "the connect's NVM size"}
+
+    def test_a_hex_on_a_user_stated_base_in_the_window_is_written(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0."""
+        from stlink_mcp import quirks as quirks_mod
+        self._with_quirks(monkeypatch, default_provenance=quirks_mod.USER_STATED)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.hex"))
+        assert out["status"] == result.VERIFIED and out["flash_base_provenance"] == "user-stated"
+
+    @pytest.mark.parametrize("base, admitted", [(0x0800FFFF, True), (0x08010000, False), (0x10000000, False)])
+    def test_the_window_edges_for_a_user_stated_base(self, f407, monkeypatch, base, admitted) -> None:
+        """FF6, 0.9.0: a board file naming RAM must not make a RAM write read back as a flash write."""
+        from stlink_mcp import quirks as quirks_mod
+        self._with_quirks(monkeypatch, default_provenance=quirks_mod.USER_STATED, flash_base=base)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and f407.writes == 0
+        if admitted:  # past the window test; the range check refuses the file, which lies below the base
+            assert "outside this part's flash as recorded by user-stated" in out["error"]
+            assert out["flash_range_checked"]["low"] == "0x0800FFFF"
+        else:
+            assert "outside the window" in out["error"] and "board file" in out["error"]
+            assert out["flash_base_provenance"] == "user-stated" and out["flash_range_checked"] is None
+
+    def test_a_measured_base_is_not_confined_to_the_window(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0: the window applies to unmeasured bases only (a test-only entry;
+        no measured part has internal flash there)."""
+        self._with_quirks(monkeypatch, flash_base=0x10040000)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "outside the window" not in out["error"]
+        assert "outside this part's flash as recorded by measured" in out["error"]
+
+    def test_an_assumed_base_is_refused_with_the_fields(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0."""
+        from stlink_mcp import quirks as quirks_mod
+        self._with_quirks(monkeypatch, default_provenance=quirks_mod.ASSUMED)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "assumed" in out["error"] and f407.writes == 0
+        assert out["flash_base_provenance"] == "assumed" and out["flash_range_checked"] is None
+
+    def test_a_part_with_no_base_is_refused_without_a_provenance_word(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0: a seeded or board-file entry carries a label even with no value."""
+        from stlink_mcp import quirks as quirks_mod
+        self._with_quirks(monkeypatch, default_provenance=quirks_mod.VENDOR_DB, flash_base=None)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "No flash base is recorded" in out["error"]
+        assert "vendor-db" not in out["error"] and f407.writes == 0
+        assert out["flash_base_provenance"] is None and out["flash_range_checked"] is None
+
+    def test_a_base_behind_an_external_loader_is_refused_even_with_a_flash_size(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0: the N6 refuses today only because its banner gives no size."""
+        self._with_quirks(monkeypatch, flash_base=0x70000000, external_loader="x.stldr")
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and "external loader" in out["error"] and f407.writes == 0
+        assert out["flash_base_provenance"] == "measured" and out["flash_range_checked"] is None
+
+    def test_a_refusal_for_no_flash_size_carries_the_fields(self, f407, monkeypatch) -> None:
+        """FF6, 0.9.0."""
+        monkeypatch.setattr(_FakeProbe, "nvm_size", None)
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED
+        assert out["flash_range_checked"] == {"low": "0x08000000", "high": None,
+                                              "size_from": "none: the connect gave no NVM size"}
+
+    def test_a_refusal_before_the_connect_carries_no_fields(self, f407) -> None:
+        """FF6, 0.9.0: nothing about the part is known yet."""
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"), address="0x08000000")
+        assert out["status"] == result.FAILED
+        assert "flash_base_provenance" not in out and "flash_range_checked" not in out
+
+    def test_the_results_after_a_write_carry_the_fields(self, f407) -> None:
+        """FF6, 0.9.0: a readback that fails, and one that differs."""
+        f407.fail_read_at = 0x08004000
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.UNVERIFIED and out["flash_base_provenance"] == "measured"
+        f407.fail_read_at, f407.corrupt = None, 0x08004003
+        out = call("flash_firmware", image_path=str(self.FIX / "flash_runs.elf"))
+        assert out["status"] == result.FAILED and out["flash_range_checked"]["high"] == "0x080FFFFF"
+
+    def test_the_erase_report_stays_inside_a_small_flash(self) -> None:
+        """FF4, 0.9.0: a 64 KB part is not read past its end; without bounds, as before."""
+        from stlink_mcp import image as image_mod
+        runs = [image_mod.Run(0x08000000, b"\x00" * 0x100)]
+        assert server._beside(runs, (0x08000000, 0x08010000)) == [(0x08000100, 0x08010000)]
+        assert server._beside(runs) == [(0x08000100, 0x08020000)]
+        assert server._beside([image_mod.Run(0x08100000, b"\x00" * 8)], (0x08000000, 0x08010000)) == []
 
     def test_a_write_that_fails_says_flash_may_have_changed(self, f407) -> None:
         """FF7."""

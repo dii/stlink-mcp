@@ -4,6 +4,12 @@ Notable changes to stlink-mcp are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Changed
+
+- `flash_firmware` writes an ELF or HEX file on a flash base nobody measured, when the base comes from ST's database or a board file and lies in the main-flash window 0x08000000 to 0x0800FFFF; a .bin without `address` still needs a measured base, because there the tool chooses the address. A base that is absent, assumed, outside the window or behind an external loader is refused by name, as is a part whose connect gives no flash size. Every ELF or HEX result after the connect carries `flash_base_provenance` and `flash_range_checked`. The design was red-teamed before it was built (docs/design-0.9.0-flash-gate.md): the first version would have let a board file naming RAM report a RAM write as a verified flash write, which the window prevents.
+- The erase report stays inside the part's flash when the base and size are known, so a part with less flash than a 128 KB block is not read past its end.
+- The refusal of a file writing outside the part's flash names the base's provenance.
+
 ## [0.8.6] - 2026-11-08
 
 The first version in the MCP Registry. No change to the code.
